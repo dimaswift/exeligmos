@@ -1,0 +1,588 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		06F61AE4E6D677B05E1F26FF /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AA771FEF8F1439B8C22F84E /* SharedViews.swift */; };
+		0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */; };
+		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
+		22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A7C096DCD9F7577546E63A /* SettingsView.swift */; };
+		2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */; };
+		31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */; };
+		350F03141DC5AF24A8E8C539 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED4F9AF52D61D654A5C63C7 /* RootView.swift */; };
+		3A352A24CA6539B5AA096F11 /* CaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BCEE1F54899D79E29687187 /* CaptureView.swift */; };
+		482C82DF26BFCB98C4D65115 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BFEA87F6EA243E541D15FE7 /* AppServices.swift */; };
+		4C8CA36AA3A8BD095C43A3C3 /* ClockDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */; };
+		5496DCEDE6A2EC6826D904C7 /* eclipse_times.db in Resources */ = {isa = PBXBuildFile; fileRef = BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */; };
+		59227DED7F89BB1BEB194661 /* CPlusPlusEclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */; };
+		5A6D58421E75F58CB38EC48D /* LocalExportServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */; };
+		5DB2419448F0945916D97208 /* NotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */; };
+		7283A4D9A7650EC64088EB86 /* saros.db in Resources */ = {isa = PBXBuildFile; fileRef = 1AA405BE7C14E8DB1A80D2CF /* saros.db */; };
+		72B907EA1B9D614611951BE9 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C391FB837FAA81EF9A1D423F /* ExportService.swift */; };
+		7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 810C0A3E37210050EA9773EA /* CatalogView.swift */; };
+		89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */; };
+		97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */; };
+		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
+		C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */; };
+		C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8072651E8AE5C7C39EC512D /* ArchiveView.swift */; };
+		CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */; };
+		D6CEB223176444B02D602DB0 /* BundledSolarEclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D70425E56BEB65E632655B2F /* BundledSolarEclipseService.swift */; };
+		D931AE0271736D1F1208198B /* MediaStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */; };
+		EA7B6F58455666A76E719BA1 /* eclipse_info.db in Resources */ = {isa = PBXBuildFile; fileRef = 76E9E6EB19D2AD2F20AE959E /* eclipse_info.db */; };
+		EECF3B46E1C7D16EEC306A4B /* SarosClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */; };
+		EF3054358820F684AD5D315E /* Resonance.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16E33843D12AFBD6A69B9FA /* Resonance.swift */; };
+		FA7A3351463DABA7D573857F /* EntityEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 246FCF65FF5518283A599C02 /* EntityEditorView.swift */; };
+		FDF290699FFD81EDD50C2BFF /* SarosClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD35701B7925466AD215607E /* SarosClockTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0FC29A339861D702E09DFC7C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A6395EBE5491A03D0CF3CC7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4589DE551739F91922B242AB;
+			remoteInfo = SarosHarmonicJournal;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
+		0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
+		1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
+		1BCEE1F54899D79E29687187 /* CaptureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptureView.swift; path = SarosHarmonicJournal/Views/CaptureView.swift; sourceTree = "<group>"; };
+		246FCF65FF5518283A599C02 /* EntityEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityEditorView.swift; path = SarosHarmonicJournal/Views/EntityEditorView.swift; sourceTree = "<group>"; };
+		3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CPlusPlusEclipseService.swift; path = SarosHarmonicJournal/Services/CPlusPlusEclipseService.swift; sourceTree = "<group>"; };
+		41A7C096DCD9F7577546E63A /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = SarosHarmonicJournal/Views/SettingsView.swift; sourceTree = "<group>"; };
+		51B47D3B5A3E80817B4CAA8B /* SarosHarmonicJournal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SarosHarmonicJournal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackedEntity.swift; path = SarosHarmonicJournal/Data/TrackedEntity.swift; sourceTree = "<group>"; };
+		5ED4F9AF52D61D654A5C63C7 /* RootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RootView.swift; path = SarosHarmonicJournal/App/RootView.swift; sourceTree = "<group>"; };
+		5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalRecord.swift; path = SarosHarmonicJournal/Data/JournalRecord.swift; sourceTree = "<group>"; };
+		6E74732CDAEDECE4CC6A34B5 /* SarosHarmonicJournalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SarosHarmonicJournalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityFactory.swift; path = SarosHarmonicJournal/Data/EntityFactory.swift; sourceTree = "<group>"; };
+		76E9E6EB19D2AD2F20AE959E /* eclipse_info.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = eclipse_info.db; path = SarosHarmonicJournal/Resources/SolarData/eclipse_info.db; sourceTree = "<group>"; };
+		7AA771FEF8F1439B8C22F84E /* SharedViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedViews.swift; path = SarosHarmonicJournal/Views/SharedViews.swift; sourceTree = "<group>"; };
+		7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NotificationScheduler.swift; path = SarosHarmonicJournal/Services/NotificationScheduler.swift; sourceTree = "<group>"; };
+		7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosClock.swift; path = SarosHarmonicJournal/Domain/SarosClock.swift; sourceTree = "<group>"; };
+		810C0A3E37210050EA9773EA /* CatalogView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogView.swift; path = SarosHarmonicJournal/Views/CatalogView.swift; sourceTree = "<group>"; };
+		82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioRecorder.swift; path = SarosHarmonicJournal/Services/AudioRecorder.swift; sourceTree = "<group>"; };
+		8BFEA87F6EA243E541D15FE7 /* AppServices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppServices.swift; path = SarosHarmonicJournal/App/AppServices.swift; sourceTree = "<group>"; };
+		9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseModels.swift; path = SarosHarmonicJournal/Domain/EclipseModels.swift; sourceTree = "<group>"; };
+		ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosHarmonicJournalApp.swift; path = SarosHarmonicJournal/App/SarosHarmonicJournalApp.swift; sourceTree = "<group>"; };
+		BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = eclipse_times.db; path = SarosHarmonicJournal/Resources/SolarData/eclipse_times.db; sourceTree = "<group>"; };
+		C16E33843D12AFBD6A69B9FA /* Resonance.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Resonance.swift; path = SarosHarmonicJournal/Domain/Resonance.swift; sourceTree = "<group>"; };
+		C391FB837FAA81EF9A1D423F /* ExportService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExportService.swift; path = SarosHarmonicJournal/Services/ExportService.swift; sourceTree = "<group>"; };
+		C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LocalExportServer.swift; path = SarosHarmonicJournal/Services/LocalExportServer.swift; sourceTree = "<group>"; };
+		CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseService.swift; path = SarosHarmonicJournal/Services/EclipseService.swift; sourceTree = "<group>"; };
+		D70425E56BEB65E632655B2F /* BundledSolarEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BundledSolarEclipseService.swift; path = SarosHarmonicJournal/Services/BundledSolarEclipseService.swift; sourceTree = "<group>"; };
+		DD35701B7925466AD215607E /* SarosClockTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosClockTests.swift; path = SarosHarmonicJournalTests/SarosClockTests.swift; sourceTree = "<group>"; };
+		F1130915A1EB1D483B261DA9 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = SarosHarmonicJournal/Resources/Assets.xcassets; sourceTree = "<group>"; };
+		F8072651E8AE5C7C39EC512D /* ArchiveView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ArchiveView.swift; path = SarosHarmonicJournal/Views/ArchiveView.swift; sourceTree = "<group>"; };
+		FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ClockDashboardView.swift; path = SarosHarmonicJournal/Views/ClockDashboardView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C0A962DD34F88F7558044BC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5079EED9392015210AD98763 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1C69C62B3175B71F070E74A8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				51B47D3B5A3E80817B4CAA8B /* SarosHarmonicJournal.app */,
+				6E74732CDAEDECE4CC6A34B5 /* SarosHarmonicJournalTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */ = {
+			isa = PBXGroup;
+			children = (
+				DD35701B7925466AD215607E /* SarosClockTests.swift */,
+			);
+			name = SarosHarmonicJournalTests;
+			sourceTree = "<group>";
+		};
+		7B2A3DB3E69DC7E6E0C4A778 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F1130915A1EB1D483B261DA9 /* Assets.xcassets */,
+				0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */,
+				76E9E6EB19D2AD2F20AE959E /* eclipse_info.db */,
+				BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */,
+				1AA405BE7C14E8DB1A80D2CF /* saros.db */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		86AB1C569345615094E42E77 /* SarosHarmonicJournal */ = {
+			isa = PBXGroup;
+			children = (
+				7B2A3DB3E69DC7E6E0C4A778 /* Resources */,
+				8BFEA87F6EA243E541D15FE7 /* AppServices.swift */,
+				5ED4F9AF52D61D654A5C63C7 /* RootView.swift */,
+				ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */,
+				710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
+				5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
+				59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */,
+				9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */,
+				C16E33843D12AFBD6A69B9FA /* Resonance.swift */,
+				7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */,
+				82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */,
+				D70425E56BEB65E632655B2F /* BundledSolarEclipseService.swift */,
+				3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */,
+				CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */,
+				C391FB837FAA81EF9A1D423F /* ExportService.swift */,
+				C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */,
+				0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */,
+				7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */,
+				F8072651E8AE5C7C39EC512D /* ArchiveView.swift */,
+				1BCEE1F54899D79E29687187 /* CaptureView.swift */,
+				810C0A3E37210050EA9773EA /* CatalogView.swift */,
+				FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */,
+				246FCF65FF5518283A599C02 /* EntityEditorView.swift */,
+				41A7C096DCD9F7577546E63A /* SettingsView.swift */,
+				7AA771FEF8F1439B8C22F84E /* SharedViews.swift */,
+			);
+			name = SarosHarmonicJournal;
+			sourceTree = "<group>";
+		};
+		A6FAFA372ECA40B56820B7D1 = {
+			isa = PBXGroup;
+			children = (
+				1C69C62B3175B71F070E74A8 /* Products */,
+				CBCFDD27257B252E345A21CB /* Frameworks */,
+				86AB1C569345615094E42E77 /* SarosHarmonicJournal */,
+				35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */,
+			);
+			sourceTree = "<group>";
+		};
+		CBCFDD27257B252E345A21CB /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				E055D99DD4336DFFD2A7B81F /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E055D99DD4336DFFD2A7B81F /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4589DE551739F91922B242AB /* SarosHarmonicJournal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B42DCA020915EEDBD7DB43D1 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournal" */;
+			buildPhases = (
+				E2BCB4B66D7FE5AA54071563 /* Sources */,
+				5079EED9392015210AD98763 /* Frameworks */,
+				EAFBC29E9BF9F4A2FDAA8FD8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SarosHarmonicJournal;
+			productName = SarosHarmonicJournal;
+			productReference = 51B47D3B5A3E80817B4CAA8B /* SarosHarmonicJournal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B1D227DBDE348C208CD4A1E5 /* SarosHarmonicJournalTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 290D409985D0D458E2ED2DE6 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalTests" */;
+			buildPhases = (
+				4BB46C720958D2537291C885 /* Sources */,
+				1C0A962DD34F88F7558044BC /* Frameworks */,
+				8B94473B2492A870054B049D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2C3CB8907724FAD865932D67 /* PBXTargetDependency */,
+			);
+			name = SarosHarmonicJournalTests;
+			productName = SarosHarmonicJournalTests;
+			productReference = 6E74732CDAEDECE4CC6A34B5 /* SarosHarmonicJournalTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A6395EBE5491A03D0CF3CC7 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					4589DE551739F91922B242AB = {
+						CreatedOnToolsVersion = 26.5;
+						DevelopmentTeam = BRJ7VGZ8KW;
+						ProvisioningStyle = Automatic;
+					};
+					B1D227DBDE348C208CD4A1E5 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 4589DE551739F91922B242AB;
+					};
+				};
+			};
+			buildConfigurationList = AC23209F804AD3420BA96C3F /* Build configuration list for PBXProject "SarosHarmonicJournal" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A6FAFA372ECA40B56820B7D1;
+			productRefGroup = 1C69C62B3175B71F070E74A8 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4589DE551739F91922B242AB /* SarosHarmonicJournal */,
+				B1D227DBDE348C208CD4A1E5 /* SarosHarmonicJournalTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8B94473B2492A870054B049D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EAFBC29E9BF9F4A2FDAA8FD8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA7B6F58455666A76E719BA1 /* eclipse_info.db in Resources */,
+				5496DCEDE6A2EC6826D904C7 /* eclipse_times.db in Resources */,
+				1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */,
+				0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */,
+				7283A4D9A7650EC64088EB86 /* saros.db in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4BB46C720958D2537291C885 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FDF290699FFD81EDD50C2BFF /* SarosClockTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E2BCB4B66D7FE5AA54071563 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				482C82DF26BFCB98C4D65115 /* AppServices.swift in Sources */,
+				350F03141DC5AF24A8E8C539 /* RootView.swift in Sources */,
+				2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */,
+				CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
+				97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
+				31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */,
+				AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */,
+				EF3054358820F684AD5D315E /* Resonance.swift in Sources */,
+				EECF3B46E1C7D16EEC306A4B /* SarosClock.swift in Sources */,
+				89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */,
+				D6CEB223176444B02D602DB0 /* BundledSolarEclipseService.swift in Sources */,
+				59227DED7F89BB1BEB194661 /* CPlusPlusEclipseService.swift in Sources */,
+				C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */,
+				72B907EA1B9D614611951BE9 /* ExportService.swift in Sources */,
+				5A6D58421E75F58CB38EC48D /* LocalExportServer.swift in Sources */,
+				D931AE0271736D1F1208198B /* MediaStorage.swift in Sources */,
+				5DB2419448F0945916D97208 /* NotificationScheduler.swift in Sources */,
+				C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */,
+				3A352A24CA6539B5AA096F11 /* CaptureView.swift in Sources */,
+				7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */,
+				4C8CA36AA3A8BD095C43A3C3 /* ClockDashboardView.swift in Sources */,
+				FA7A3351463DABA7D573857F /* EntityEditorView.swift in Sources */,
+				22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */,
+				06F61AE4E6D677B05E1F26FF /* SharedViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2C3CB8907724FAD865932D67 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = SarosHarmonicJournal;
+			target = 4589DE551739F91922B242AB /* SarosHarmonicJournal */;
+			targetProxy = 0FC29A339861D702E09DFC7C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		059C89B2DE9FE39175179330 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Exeligmos;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.weather";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1CA26B6A6CA8B15C032071F5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SarosHarmonicJournal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SarosHarmonicJournal";
+			};
+			name = Debug;
+		};
+		4F7FADA4DF97B10868DC8A89 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		8A3D28401BC7EDD158F68213 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SarosHarmonicJournal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SarosHarmonicJournal";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		9A214D7B1556EDC95DFF9192 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Exeligmos;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.weather";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		9F17529B632EBF8DA5769910 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		290D409985D0D458E2ED2DE6 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A3D28401BC7EDD158F68213 /* Release */,
+				1CA26B6A6CA8B15C032071F5 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AC23209F804AD3420BA96C3F /* Build configuration list for PBXProject "SarosHarmonicJournal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4F7FADA4DF97B10868DC8A89 /* Debug */,
+				9F17529B632EBF8DA5769910 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B42DCA020915EEDBD7DB43D1 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A214D7B1556EDC95DFF9192 /* Release */,
+				059C89B2DE9FE39175179330 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A6395EBE5491A03D0CF3CC7 /* Project object */;
+}
