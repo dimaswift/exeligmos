@@ -1,3 +1,4 @@
+import CoreLocation
 import CoreTransferable
 import PhotosUI
 import SwiftData
@@ -15,11 +16,14 @@ struct CaptureView: View {
     var onSaved: () -> Void
 
     @StateObject private var audioRecorder = AudioRecorder()
+    @StateObject private var locationProvider = RecordLocationProvider()
     @State private var text = ""
-    @State private var emoji = ""
-    @State private var photoItem: PhotosPickerItem?
-    @State private var pendingPhoto: PendingPhotoAttachment?
+    @State private var emoji = JournalRecordMarkers.random()
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var pendingCameraMedia: [PendingMediaAttachment] = []
+    @State private var pendingAttachedPhotos: [PendingMediaAttachment] = []
     @State private var isLoadingPhoto = false
+    @State private var isCameraPresented = false
     @State private var errorMessage: String?
     @State private var isSaving = false
 
@@ -65,12 +69,18 @@ struct CaptureView: View {
                     .lineLimit(4...10)
                     .textContentType(.none)
 
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Label(pendingPhoto == nil ? "Add photo" : "Change photo", systemImage: "photo")
+                Button {
+                    isCameraPresented = true
+                } label: {
+                    Label("Capture photo", systemImage: "camera.viewfinder")
                 }
-                .onChange(of: photoItem) { _, newItem in
+
+                PhotosPicker(selection: $photoItems, matching: .images) {
+                    Label("Add from library", systemImage: "photo")
+                }
+                .onChange(of: photoItems) { _, newItems in
                     Task {
-                        await loadPhoto(from: newItem)
+                        await loadPhotos(from: newItems)
                     }
                 }
 
@@ -80,10 +90,25 @@ struct CaptureView: View {
                         Text("Loading photo")
                             .foregroundStyle(.secondary)
                     }
-                } else if let pendingPhoto {
-                    PendingPhotoRow(photo: pendingPhoto) {
-                        photoItem = nil
-                        self.pendingPhoto = nil
+                }
+
+                if !pendingCameraMedia.isEmpty {
+                    PendingMediaGroup(title: "Camera captures") {
+                        ForEach(pendingCameraMedia) { media in
+                            PendingMediaRow(media: media) {
+                                pendingCameraMedia.removeAll { $0.id == media.id }
+                            }
+                        }
+                    }
+                }
+
+                if !pendingAttachedPhotos.isEmpty {
+                    PendingMediaGroup(title: "Attached images") {
+                        ForEach(pendingAttachedPhotos) { media in
+                            PendingMediaRow(media: media) {
+                                pendingAttachedPhotos.removeAll { $0.id == media.id }
+                            }
+                        }
                     }
                 }
 
@@ -119,36 +144,50 @@ struct CaptureView: View {
                 }
             }
         }
+        .task {
+            locationProvider.prepare()
+        }
         .alert("Capture failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
+        .fullScreenCover(isPresented: $isCameraPresented) {
+            MirrorCameraView { media in
+                pendingCameraMedia.append(PendingMediaAttachment(
+                    media: media,
+                    displayName: "\(media.type.recordDisplayName) \(pendingCameraMedia.count + 1)"
+                ))
+            }
+        }
     }
 
     @MainActor
-    private func loadPhoto(from item: PhotosPickerItem?) async {
-        pendingPhoto = nil
-        guard let item else { return }
+    private func loadPhotos(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
 
         isLoadingPhoto = true
-        defer { isLoadingPhoto = false }
+        defer {
+            isLoadingPhoto = false
+            photoItems = []
+        }
 
         do {
-            guard let pickedPhoto = try await item.loadTransferable(type: PickedPhotoTransfer.self) else {
-                errorMessage = "The selected photo could not be loaded."
-                photoItem = nil
-                return
-            }
+            for item in items {
+                guard let pickedPhoto = try await item.loadTransferable(type: PickedPhotoTransfer.self) else {
+                    continue
+                }
 
-            pendingPhoto = PendingPhotoAttachment(
-                data: pickedPhoto.data,
-                fileExtension: preferredFileExtension(for: item),
-                displayName: "Photo attached"
-            )
+                pendingAttachedPhotos.append(PendingMediaAttachment(
+                    data: pickedPhoto.data,
+                    sourceURL: nil,
+                    fileExtension: preferredFileExtension(for: item),
+                    type: .photo,
+                    displayName: "Attached image \(pendingAttachedPhotos.count + 1)"
+                ))
+            }
         } catch {
             errorMessage = error.localizedDescription
-            photoItem = nil
         }
     }
 
@@ -165,13 +204,14 @@ struct CaptureView: View {
 
         do {
             var mediaItems: [JournalMediaItem] = []
-            if let pendingPhoto {
+            for pendingMedia in pendingCameraMedia {
                 mediaItems.append(
-                    try MediaStorage.saveData(
-                        pendingPhoto.data,
-                        fileExtension: pendingPhoto.fileExtension,
-                        type: .photo
-                    )
+                    try pendingMedia.save()
+                )
+            }
+            for pendingMedia in pendingAttachedPhotos {
+                mediaItems.append(
+                    try pendingMedia.save()
                 )
             }
             if let audioItem = audioRecorder.consumeLastItem() {
@@ -183,26 +223,30 @@ struct CaptureView: View {
                 date: Date(),
                 harmonicDepth: harmonicDepth
             )
+            let coordinate = locationProvider.coordinate
 
             let record = JournalRecord(
                 entityID: entity.id,
                 text: text.nilIfBlank,
-                emoji: emoji.nilIfBlank,
+                emoji: emoji.nilIfBlank ?? JournalRecordMarkers.random(),
                 mediaItems: mediaItems,
                 saros: reading.saros,
                 harmonicDepth: reading.harmonicDepth,
                 octalAddress: reading.octalAddress,
                 binIndex: reading.binIndex,
                 phase: reading.phase,
-                triggerType: .manual
+                triggerType: .manual,
+                latitude: coordinate?.latitude,
+                longitude: coordinate?.longitude
             )
 
             modelContext.insert(record)
             try modelContext.save()
             text = ""
-            emoji = ""
-            photoItem = nil
-            pendingPhoto = nil
+            emoji = JournalRecordMarkers.random()
+            photoItems = []
+            pendingCameraMedia = []
+            pendingAttachedPhotos = []
             onSaved()
             dismiss()
         } catch {
@@ -211,43 +255,141 @@ struct CaptureView: View {
     }
 }
 
-private struct PendingPhotoAttachment {
-    let data: Data
+private final class RecordLocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published private(set) var coordinate: CLLocationCoordinate2D?
+
+    private let manager = CLLocationManager()
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func prepare() {
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        coordinate = locations.last?.coordinate
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+}
+
+private struct PendingMediaAttachment: Identifiable {
+    let id = UUID()
+    let data: Data?
+    let sourceURL: URL?
     let fileExtension: String
+    let type: MediaType
     let displayName: String
 
+    init(
+        data: Data?,
+        sourceURL: URL?,
+        fileExtension: String,
+        type: MediaType,
+        displayName: String
+    ) {
+        self.data = data
+        self.sourceURL = sourceURL
+        self.fileExtension = fileExtension
+        self.type = type
+        self.displayName = displayName
+    }
+
+    init(media: MirrorCameraCapturedMedia, displayName: String) {
+        self.data = media.data
+        self.sourceURL = media.sourceURL
+        self.fileExtension = media.fileExtension
+        self.type = media.type
+        self.displayName = displayName
+    }
+
     var uiImage: UIImage? {
-        UIImage(data: data)
+        guard let data else { return nil }
+        return UIImage(data: data)
     }
 
     var sizeDescription: String {
-        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+        if let data {
+            return ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+        }
+        if let sourceURL,
+           let size = try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+        }
+        return "Pending"
+    }
+
+    func save() throws -> JournalMediaItem {
+        if let data {
+            return try MediaStorage.saveData(data, fileExtension: fileExtension, type: type)
+        }
+        if let sourceURL {
+            return try MediaStorage.saveFile(at: sourceURL, fileExtension: fileExtension, type: type)
+        }
+        throw PendingMediaError.missingSource
     }
 }
 
-private struct PendingPhotoRow: View {
-    let photo: PendingPhotoAttachment
+private struct PendingMediaGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct PendingMediaRow: View {
+    let media: PendingMediaAttachment
     let remove: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            if let image = photo.uiImage {
+            if let image = media.uiImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: 58, height: 58)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
-                Image(systemName: "photo")
+                Image(systemName: media.type.systemImage)
                     .font(.title2)
                     .frame(width: 58, height: 58)
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(photo.displayName)
+                Text(media.displayName)
                     .font(.subheadline)
-                Text("\(photo.fileExtension.uppercased()) · \(photo.sizeDescription)")
+                Text("\(media.fileExtension.uppercased()) · \(media.sizeDescription)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -258,7 +400,39 @@ private struct PendingPhotoRow: View {
                 Image(systemName: "xmark.circle.fill")
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove photo")
+            .accessibilityLabel("Remove media")
+        }
+    }
+}
+
+private enum PendingMediaError: LocalizedError {
+    case missingSource
+
+    var errorDescription: String? {
+        "The captured media could not be found."
+    }
+}
+
+private extension MediaType {
+    var systemImage: String {
+        switch self {
+        case .photo, .symbolicPhoto:
+            "photo"
+        case .video:
+            "video"
+        case .audio:
+            "waveform"
+        }
+    }
+
+    var recordDisplayName: String {
+        switch self {
+        case .video:
+            "Video capture"
+        case .photo, .symbolicPhoto:
+            "Camera capture"
+        case .audio:
+            "Audio"
         }
     }
 }

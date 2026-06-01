@@ -7,6 +7,23 @@ struct JournalExportArchive: Codable {
     let records: [JournalRecordSnapshot]
 }
 
+struct RecordExportArchive: Codable {
+    let appVersion: String
+    let exportTimestamp: Date
+    let entityTitle: String
+    let record: JournalRecordSnapshot
+    let media: [RecordExportMediaSnapshot]
+}
+
+struct RecordExportMediaSnapshot: Codable, Identifiable {
+    let id: UUID
+    let type: MediaType
+    let createdAt: Date
+    let originalLocalPath: String
+    let exportedPath: String?
+    let included: Bool
+}
+
 struct TrackedEntitySnapshot: Codable, Identifiable {
     let id: UUID
     let createdAt: Date
@@ -71,6 +88,55 @@ final class ExportService {
         return root
     }
 
+    func exportRecordZIP(record: JournalRecord, entityTitle: String) throws -> URL {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        var entries: [StoredZipEntry] = []
+        var mediaSnapshots: [RecordExportMediaSnapshot] = []
+
+        for item in record.mediaItems {
+            let source = MediaStorage.url(for: item)
+            let fileName = exportedMediaFileName(for: item, source: source)
+            let exportedPath = "media/\(fileName)"
+
+            if FileManager.default.fileExists(atPath: source.path) {
+                entries.append(StoredZipEntry(path: exportedPath, data: try Data(contentsOf: source)))
+                mediaSnapshots.append(RecordExportMediaSnapshot(
+                    id: item.id,
+                    type: item.type,
+                    createdAt: item.createdAt,
+                    originalLocalPath: item.localPath,
+                    exportedPath: exportedPath,
+                    included: true
+                ))
+            } else {
+                mediaSnapshots.append(RecordExportMediaSnapshot(
+                    id: item.id,
+                    type: item.type,
+                    createdAt: item.createdAt,
+                    originalLocalPath: item.localPath,
+                    exportedPath: nil,
+                    included: false
+                ))
+            }
+        }
+
+        let archive = RecordExportArchive(
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
+            exportTimestamp: Date(),
+            entityTitle: entityTitle,
+            record: JournalRecordSnapshot(record: record),
+            media: mediaSnapshots
+        )
+        entries.insert(StoredZipEntry(path: "record.json", data: try encoder.encode(archive)), at: 0)
+
+        let destination = try recordExportURL(entityTitle: entityTitle, record: record)
+        try StoredZipArchive.write(entries: entries, to: destination)
+        return destination
+    }
+
     private func exportRootDirectory() throws -> URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let formatter = DateFormatter()
@@ -82,12 +148,192 @@ final class ExportService {
 
     private func copyMedia(records: [JournalRecordSnapshot], to mediaDirectory: URL) throws {
         for item in records.flatMap(\.mediaItems) {
-            let source = URL(fileURLWithPath: item.localPath)
+            let source = MediaStorage.url(for: item)
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
             let destination = mediaDirectory.appendingPathComponent(source.lastPathComponent)
             if !FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.copyItem(at: source, to: destination)
             }
+        }
+    }
+
+    private func recordExportURL(entityTitle: String, record: JournalRecord) throws -> URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let title = sanitizedFilenameComponent(entityTitle)
+        let stamp = formatter.string(from: Date())
+        return documents.appendingPathComponent("SarosRecord-\(title)-\(stamp)-\(record.id.uuidString.prefix(8)).zip")
+    }
+
+    private func exportedMediaFileName(for item: JournalMediaItem, source: URL) -> String {
+        let pathExtension = source.pathExtension
+        if pathExtension.isEmpty {
+            return item.id.uuidString
+        }
+        return "\(item.id.uuidString).\(pathExtension)"
+    }
+
+    private func sanitizedFilenameComponent(_ value: String) -> String {
+        let cleaned = String(value.map { character in
+            character.isLetter || character.isNumber ? character : "-"
+        })
+        let trimmed = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return String((trimmed.isEmpty ? "Record" : trimmed).prefix(48))
+    }
+}
+
+private struct StoredZipEntry {
+    let path: String
+    let data: Data
+}
+
+private enum StoredZipArchive {
+    private struct CentralDirectoryRecord {
+        let nameData: Data
+        let crc32: UInt32
+        let size: UInt32
+        let localHeaderOffset: UInt32
+    }
+
+    enum ArchiveError: LocalizedError {
+        case entryTooLarge(String)
+        case archiveTooLarge
+        case invalidPath(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .entryTooLarge(let path):
+                "The file \(path) is too large for this ZIP exporter."
+            case .archiveTooLarge:
+                "The record archive is too large for this ZIP exporter."
+            case .invalidPath(let path):
+                "The archive path \(path) could not be encoded."
+            }
+        }
+    }
+
+    static func write(entries: [StoredZipEntry], to url: URL) throws {
+        var archive = Data()
+        var centralDirectory: [CentralDirectoryRecord] = []
+
+        for entry in entries {
+            guard let nameData = entry.path.data(using: .utf8), nameData.count <= Int(UInt16.max) else {
+                throw ArchiveError.invalidPath(entry.path)
+            }
+            guard entry.data.count <= Int(UInt32.max) else {
+                throw ArchiveError.entryTooLarge(entry.path)
+            }
+            guard archive.count <= Int(UInt32.max) else {
+                throw ArchiveError.archiveTooLarge
+            }
+
+            let crc32 = CRC32.checksum(entry.data)
+            let size = UInt32(entry.data.count)
+            let localHeaderOffset = UInt32(archive.count)
+
+            archive.appendUInt32(0x0403_4B50)
+            archive.appendUInt16(20)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt32(crc32)
+            archive.appendUInt32(size)
+            archive.appendUInt32(size)
+            archive.appendUInt16(UInt16(nameData.count))
+            archive.appendUInt16(0)
+            archive.append(nameData)
+            archive.append(entry.data)
+
+            centralDirectory.append(CentralDirectoryRecord(
+                nameData: nameData,
+                crc32: crc32,
+                size: size,
+                localHeaderOffset: localHeaderOffset
+            ))
+        }
+
+        guard archive.count <= Int(UInt32.max), centralDirectory.count <= Int(UInt16.max) else {
+            throw ArchiveError.archiveTooLarge
+        }
+        let centralDirectoryOffset = UInt32(archive.count)
+
+        for record in centralDirectory {
+            archive.appendUInt32(0x0201_4B50)
+            archive.appendUInt16(20)
+            archive.appendUInt16(20)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt32(record.crc32)
+            archive.appendUInt32(record.size)
+            archive.appendUInt32(record.size)
+            archive.appendUInt16(UInt16(record.nameData.count))
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt16(0)
+            archive.appendUInt32(0)
+            archive.appendUInt32(record.localHeaderOffset)
+            archive.append(record.nameData)
+        }
+
+        guard archive.count <= Int(UInt32.max) else {
+            throw ArchiveError.archiveTooLarge
+        }
+        let centralDirectorySize = UInt32(archive.count) - centralDirectoryOffset
+        let entryCount = UInt16(centralDirectory.count)
+
+        archive.appendUInt32(0x0605_4B50)
+        archive.appendUInt16(0)
+        archive.appendUInt16(0)
+        archive.appendUInt16(entryCount)
+        archive.appendUInt16(entryCount)
+        archive.appendUInt32(centralDirectorySize)
+        archive.appendUInt32(centralDirectoryOffset)
+        archive.appendUInt16(0)
+
+        try archive.write(to: url, options: [.atomic])
+    }
+}
+
+private enum CRC32 {
+    private static let table: [UInt32] = (0..<256).map { index in
+        var crc = UInt32(index)
+        for _ in 0..<8 {
+            if crc & 1 == 1 {
+                crc = (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >>= 1
+            }
+        }
+        return crc
+    }
+
+    static func checksum(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in data {
+            let index = Int((crc ^ UInt32(byte)) & 0xFF)
+            crc = (crc >> 8) ^ table[index]
+        }
+        return crc ^ 0xFFFF_FFFF
+    }
+}
+
+private extension Data {
+    mutating func appendUInt16(_ value: UInt16) {
+        var littleEndian = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndian) { buffer in
+            append(contentsOf: buffer)
+        }
+    }
+
+    mutating func appendUInt32(_ value: UInt32) {
+        var littleEndian = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndian) { buffer in
+            append(contentsOf: buffer)
         }
     }
 }
@@ -115,6 +361,15 @@ private extension TrackedEntitySnapshot {
 
 private extension JournalRecordSnapshot {
     init(record: JournalRecord) {
+        let portableMediaItems = record.mediaItems.map { item in
+            JournalMediaItem(
+                id: item.id,
+                type: item.type,
+                localPath: MediaStorage.portablePath(for: item),
+                createdAt: item.createdAt
+            )
+        }
+
         self.init(
             id: record.id,
             entityID: record.entityID,
@@ -122,7 +377,7 @@ private extension JournalRecordSnapshot {
             eventDate: record.eventDate,
             text: record.text,
             emoji: record.emoji,
-            mediaItems: record.mediaItems,
+            mediaItems: portableMediaItems,
             saros: record.saros,
             harmonicDepth: record.harmonicDepth,
             octalAddress: record.octalAddress,
@@ -135,4 +390,3 @@ private extension JournalRecordSnapshot {
         )
     }
 }
-

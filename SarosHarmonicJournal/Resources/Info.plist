@@ -22,12 +22,23 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Local export can share journal archive files on your nearby network when you start the server.</string>
+	<string>Local sync can back up and restore private journal records through a server on your nearby network.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The symbolic camera lets you capture mirrored images for private journal records.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Location lets records remember where they were created for private map lookup and export.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Audio recording lets you attach private voice notes to journal records.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Photo access lets you attach selected images to private journal records.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Photo saving lets mirrored camera captures be written to your camera roll.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

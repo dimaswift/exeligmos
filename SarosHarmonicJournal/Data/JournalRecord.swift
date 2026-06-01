@@ -3,8 +3,18 @@ import SwiftData
 
 enum MediaType: String, Codable, CaseIterable {
     case photo
+    case symbolicPhoto
     case video
     case audio
+
+    var isImage: Bool {
+        switch self {
+        case .photo, .symbolicPhoto:
+            true
+        case .video, .audio:
+            false
+        }
+    }
 }
 
 struct JournalMediaItem: Codable, Hashable, Identifiable {
@@ -106,4 +116,3 @@ final class JournalRecord {
         set { mediaItemsJSON = (try? JSONEncoder().encode(newValue)) ?? Data() }
     }
 }
-

@@ -6,12 +6,13 @@ final class AppServices: ObservableObject {
     let clockService: any SarosClockService
     let notificationScheduler: NotificationScheduler
     let exportService: ExportService
+    let syncService: SyncService
 
     init(eclipseService: any EclipseService = CPlusPlusEclipseService()) {
         self.eclipseService = eclipseService
         self.clockService = DefaultSarosClockService(eclipseService: eclipseService)
         self.notificationScheduler = .shared
         self.exportService = ExportService()
+        self.syncService = SyncService()
     }
 }
-

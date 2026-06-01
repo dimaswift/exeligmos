@@ -24,12 +24,33 @@ enum JournalFormatters {
     }()
 }
 
+enum JournalRecordMarkers {
+    static let fallback = "✦"
+
+    private static let choices = [
+        "✨", "🌙", "☀️", "🪐", "🌀", "🔥", "🌊", "🌿",
+        "🧭", "🔮", "🕯️", "💠", "🎐", "🪞", "⚡️", "🌑"
+    ]
+
+    static func random() -> String {
+        choices.randomElement() ?? fallback
+    }
+
+    static func marker(from value: String?) -> String {
+        value.nilIfBlank ?? fallback
+    }
+}
+
 enum JournalSettings {
     static let harmonicDepthKey = "harmonicDepth"
+    static let countdownMinimumTierKey = "countdownMinimumTier"
     static let notificationTierPreferencesKey = "notificationTierPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
+    static let syncServerURLKey = "syncServerURL"
+    static let autoSyncEnabledKey = "autoSyncEnabled"
     static let defaultHarmonicDepth = 7
+    static let defaultCountdownMinimumTier = 4
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21
     static let supportedHarmonicDepth = 3...8
@@ -41,6 +62,15 @@ enum JournalSettings {
 
     static func clampedCatalogCentury(_ value: Int) -> Int {
         min(max(value, supportedCatalogCenturies.lowerBound), supportedCatalogCenturies.upperBound)
+    }
+
+    static func supportedCountdownTiers(for harmonicDepth: Int) -> ClosedRange<Int> {
+        1...max(1, clampedHarmonicDepth(harmonicDepth) - 1)
+    }
+
+    static func clampedCountdownMinimumTier(_ value: Int, harmonicDepth: Int) -> Int {
+        let range = supportedCountdownTiers(for: harmonicDepth)
+        return min(max(value, range.lowerBound), range.upperBound)
     }
 
     static func centuryLabel(_ century: Int) -> String {

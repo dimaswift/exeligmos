@@ -1,7 +1,42 @@
+import UIKit
 import XCTest
 @testable import SarosHarmonicJournal
 
 final class SarosClockTests: XCTestCase {
+    func testPhotoBoothMirrorReflectsPositiveSide() throws {
+        let image = Self.splitColorImage()
+        let mirrored = try XCTUnwrap(
+            MirrorReflectionProcessor.process(image, edges: MirrorReflectionPreset.photoBooth)
+        )
+        let rightPixel = try Self.pixelColor(in: mirrored, x: 3, y: 1)
+
+        XCTAssertGreaterThan(rightPixel.red, 180)
+        XCTAssertLessThan(rightPixel.blue, 80)
+    }
+
+    func testSymbolicCameraComposerBuildsFourMirroredTiles() throws {
+        let frontImage = try XCTUnwrap(CIImage(image: Self.splitColorImage(left: .red, right: .blue)))
+        let backImage = try XCTUnwrap(CIImage(image: Self.splitColorImage(left: .green, right: .yellow)))
+        let composite = try XCTUnwrap(SymbolicCameraImageComposer.compose(
+            frontImage: frontImage,
+            backImage: backImage,
+            frontAngle: .pi / 2,
+            backAngle: .pi / 2,
+            outputSize: 80
+        ))
+
+        let topLeft = try Self.pixelColor(in: composite, x: 10, y: 10)
+        let topRight = try Self.pixelColor(in: composite, x: 70, y: 10)
+        let bottomLeft = try Self.pixelColor(in: composite, x: 10, y: 70)
+        let bottomRight = try Self.pixelColor(in: composite, x: 70, y: 70)
+
+        XCTAssertGreaterThan(topLeft.red, 180)
+        XCTAssertGreaterThan(topRight.blue, 180)
+        XCTAssertGreaterThan(bottomLeft.green, 120)
+        XCTAssertGreaterThan(bottomRight.red, 180)
+        XCTAssertGreaterThan(bottomRight.green, 180)
+    }
+
     func testCatalogCenturyBoundsDefaultWindow() throws {
         let bounds = CatalogCenturyBounds(
             startCentury: JournalSettings.defaultCatalogStartCentury,
@@ -53,6 +88,43 @@ final class SarosClockTests: XCTestCase {
         components.month = month
         components.day = day
         return calendar.date(from: components) ?? .distantPast
+    }
+
+    private static func splitColorImage() -> UIImage {
+        splitColorImage(left: .red, right: .blue)
+    }
+
+    private static func splitColorImage(left: UIColor, right: UIColor) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 4, height: 2), format: format).image { context in
+            left.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            right.setFill()
+            context.fill(CGRect(x: 2, y: 0, width: 2, height: 2))
+        }
+    }
+
+    private static func pixelColor(in image: UIImage, x: Int, y: Int) throws -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
+        let width = Int(image.size.width)
+        let height = Int(image.size.height)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let cgImage = image.cgImage else {
+            throw XCTSkip("Could not read test image pixels.")
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let offset = (y * width + x) * 4
+        return (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
     }
 
     func testHalfPhaseMapsToMiddleOctalBin() throws {
@@ -121,6 +193,61 @@ final class SarosClockTests: XCTestCase {
 
         let expected = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 0.25)
         XCTAssertEqual(reading.nextFlipDate.timeIntervalSinceReferenceDate, expected.timeIntervalSinceReferenceDate, accuracy: 0.01)
+    }
+
+    func testCountdownMinimumTierTargetsNextQualifiedCarry() throws {
+        let binCount = 512.0
+        let now = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 9.2 / binCount)
+        let reading = try SarosClockCalculator.reading(
+            saros: 141,
+            previous: Fixtures.previous,
+            next: Fixtures.next,
+            now: now,
+            harmonicDepth: 3
+        )
+
+        let countdown = reading.countdown(minimumTier: 1, now: now)
+
+        XCTAssertEqual(reading.binIndex, 9)
+        XCTAssertEqual(countdown.targetBinIndex, 16)
+        XCTAssertEqual(countdown.targetOctalAddress, "020")
+        XCTAssertEqual(countdown.flipTier, 1)
+    }
+
+    func testOctalAddressDateMapping() throws {
+        let reading = try SarosClockCalculator.reading(
+            saros: 141,
+            previous: Fixtures.previous,
+            next: Fixtures.next,
+            now: Fixtures.previous.date,
+            harmonicDepth: 2
+        )
+
+        let index = reading.binIndex(forOctalAddress: "10")
+        let date = reading.date(forBinIndex: index)
+
+        XCTAssertEqual(index, 8)
+        XCTAssertEqual(
+            date.timeIntervalSinceReferenceDate,
+            Fixtures.previous.date.addingTimeInterval(Fixtures.interval / 8).timeIntervalSinceReferenceDate,
+            accuracy: 0.01
+        )
+        XCTAssertEqual(reading.octalAddress(forBinIndex: index), "10")
+    }
+
+    func testQualifiedFlipStrideUsesCountdownTierLogic() throws {
+        let now = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 0.2)
+        let reading = try SarosClockCalculator.reading(
+            saros: 141,
+            previous: Fixtures.previous,
+            next: Fixtures.next,
+            now: now,
+            harmonicDepth: 7
+        )
+
+        XCTAssertEqual(reading.qualifiedFlipStride(forTier: 3), 512)
+        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, tier: 3), 512)
+        XCTAssertEqual(reading.previousQualifiedFlipBin(atOrBefore: 1_100, tier: 3), 1_024)
     }
 
     func testInvalidDepthThrows() {
@@ -215,7 +342,9 @@ final class EntityAndExportTests: XCTestCase {
             octalAddress: "123",
             binIndex: 83,
             phase: 0.2,
-            triggerType: .manual
+            triggerType: .manual,
+            latitude: 12.34,
+            longitude: 56.78
         )
 
         let archive = ExportService().makeArchive(entities: [entity], records: [record])
@@ -225,6 +354,39 @@ final class EntityAndExportTests: XCTestCase {
         XCTAssertEqual(archive.entities[0].saros, 141)
         XCTAssertEqual(archive.records[0].octalAddress, "123")
         XCTAssertEqual(archive.records[0].text, "A note")
+        XCTAssertEqual(archive.records[0].latitude, 12.34)
+        XCTAssertEqual(archive.records[0].longitude, 56.78)
+    }
+
+    func testRecordZIPExportContainsMetadataAndMediaEntries() throws {
+        let mediaID = UUID()
+        let mediaURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(mediaID.uuidString)
+            .appendingPathExtension("txt")
+        try Data("payload".utf8).write(to: mediaURL, options: [.atomic])
+        defer { try? FileManager.default.removeItem(at: mediaURL) }
+
+        let record = JournalRecord(
+            entityID: UUID(),
+            text: "A note",
+            mediaItems: [
+                JournalMediaItem(id: mediaID, type: .audio, localPath: mediaURL.path)
+            ],
+            saros: 141,
+            harmonicDepth: 3,
+            octalAddress: "123",
+            binIndex: 83,
+            phase: 0.2,
+            triggerType: .manual
+        )
+
+        let exportURL = try ExportService().exportRecordZIP(record: record, entityTitle: "Anchor")
+        defer { try? FileManager.default.removeItem(at: exportURL) }
+
+        let data = try Data(contentsOf: exportURL)
+        XCTAssertEqual(data.prefix(2), Data([0x50, 0x4B]))
+        XCTAssertNotNil(data.range(of: Data("record.json".utf8)))
+        XCTAssertNotNil(data.range(of: Data("media/\(mediaID.uuidString).txt".utf8)))
     }
 }
 

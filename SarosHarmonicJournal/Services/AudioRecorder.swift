@@ -51,7 +51,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         isRecording = false
 
         if let currentURL {
-            lastItem = JournalMediaItem(type: .audio, localPath: currentURL.path)
+            lastItem = JournalMediaItem(type: .audio, localPath: MediaStorage.relativePath(for: currentURL))
         }
         currentURL = nil
     }
