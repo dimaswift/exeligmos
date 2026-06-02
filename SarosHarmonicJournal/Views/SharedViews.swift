@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum JournalFormatters {
     static let date: DateFormatter = {
@@ -24,6 +25,49 @@ enum JournalFormatters {
     }()
 }
 
+extension Color {
+    init(hex: String, fallback: Color = .green) {
+        let raw = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        guard let value = UInt64(raw, radix: 16) else {
+            self = fallback
+            return
+        }
+
+        let red: Double
+        let green: Double
+        let blue: Double
+        switch raw.count {
+        case 3:
+            red = Double((value >> 8) & 0xF) / 15
+            green = Double((value >> 4) & 0xF) / 15
+            blue = Double(value & 0xF) / 15
+        default:
+            red = Double((value >> 16) & 0xFF) / 255
+            green = Double((value >> 8) & 0xFF) / 255
+            blue = Double(value & 0xFF) / 255
+        }
+        self = Color(red: red, green: green, blue: blue)
+    }
+
+    var hexRGBString: String {
+        let uiColor = UIColor(self)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return "#00D084"
+        }
+
+        return String(
+            format: "#%02X%02X%02X",
+            Int(red * 255),
+            Int(green * 255),
+            Int(blue * 255)
+        )
+    }
+}
+
 enum JournalRecordMarkers {
     static let fallback = "✦"
 
@@ -43,18 +87,17 @@ enum JournalRecordMarkers {
 
 enum JournalSettings {
     static let harmonicDepthKey = "harmonicDepth"
-    static let countdownMinimumTierKey = "countdownMinimumTier"
-    static let notificationTierPreferencesKey = "notificationTierPreferences"
+    static let notificationRarityPreferencesKey = "notificationRarityPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
     static let syncServerURLKey = "syncServerURL"
     static let autoSyncEnabledKey = "autoSyncEnabled"
     static let defaultHarmonicDepth = 7
-    static let defaultCountdownMinimumTier = 4
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21
     static let supportedHarmonicDepth = 3...8
     static let supportedCatalogCenturies = 1...30
+    static let averageSarosPeriod: TimeInterval = 6_585.3211 * 24 * 60 * 60
 
     static func clampedHarmonicDepth(_ value: Int) -> Int {
         min(max(value, supportedHarmonicDepth.lowerBound), supportedHarmonicDepth.upperBound)
@@ -62,15 +105,6 @@ enum JournalSettings {
 
     static func clampedCatalogCentury(_ value: Int) -> Int {
         min(max(value, supportedCatalogCenturies.lowerBound), supportedCatalogCenturies.upperBound)
-    }
-
-    static func supportedCountdownTiers(for harmonicDepth: Int) -> ClosedRange<Int> {
-        1...max(1, clampedHarmonicDepth(harmonicDepth) - 1)
-    }
-
-    static func clampedCountdownMinimumTier(_ value: Int, harmonicDepth: Int) -> Int {
-        let range = supportedCountdownTiers(for: harmonicDepth)
-        return min(max(value, range.lowerBound), range.upperBound)
     }
 
     static func centuryLabel(_ century: Int) -> String {
@@ -87,6 +121,107 @@ enum JournalSettings {
             }
         }
         return "\(century)\(suffix)"
+    }
+}
+
+enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable {
+    case common
+    case rare
+    case epic
+    case legendary
+    case mythic
+    case saros
+
+    var id: String { rawValue }
+
+    var order: Int {
+        switch self {
+        case .common: 2
+        case .rare: 3
+        case .epic: 4
+        case .legendary: 5
+        case .mythic: 6
+        case .saros: 7
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .common: "Common"
+        case .rare: "Rare"
+        case .epic: "Epic"
+        case .legendary: "Legendary"
+        case .mythic: "Mythic"
+        case .saros: "Saros"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .common: "circle.fill"
+        case .rare: "diamond"
+        case .epic: "sparkles"
+        case .legendary: "crown"
+        case .mythic: "flame"
+        case .saros: "leaf.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .common: .gray
+        case .rare: .blue
+        case .epic: .purple
+        case .legendary: .yellow
+        case .mythic: .red
+        case .saros: .green
+        }
+    }
+
+    var notificationEligible: Bool {
+        self >= .rare
+    }
+
+    var orderLabel: String {
+        self == .saros ? "Order 7+" : "Order \(order)"
+    }
+
+    static func < (lhs: FlipRarity, rhs: FlipRarity) -> Bool {
+        lhs.order < rhs.order
+    }
+
+    static func rarity(forOrder order: Int, isEclipse: Bool = false) -> FlipRarity {
+        if isEclipse || order >= 7 {
+            return .saros
+        }
+
+        switch max(order, 1) {
+        case 1, 2: return .common
+        case 3: return .rare
+        case 4: return .epic
+        case 5: return .legendary
+        case 6: return .mythic
+        default: return .saros
+        }
+    }
+
+    static func order(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
+        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        let padded = octalAddress.leftPadded(toLength: depth, withPad: "0")
+        return min(padded.reversed().prefix { $0 == "0" }.count, depth)
+    }
+
+    static func visibleRarities(for harmonicDepth: Int, includeSaros: Bool = true) -> [FlipRarity] {
+        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        let regular = allCases.filter { rarity in
+            rarity != .saros && rarity.order <= min(depth, 6)
+        }
+        return includeSaros ? regular + [.saros] : regular
+    }
+
+    static func notificationRarities(for harmonicDepth: Int) -> [FlipRarity] {
+        visibleRarities(for: harmonicDepth)
+            .filter(\.notificationEligible)
     }
 }
 
@@ -172,41 +307,43 @@ enum FlipNotificationMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct FlipNotificationTierPreference: Codable, Hashable, Identifiable {
-    let tier: Int
+struct FlipNotificationRarityPreference: Codable, Hashable, Identifiable {
+    let rarity: FlipRarity
     var mode: FlipNotificationMode
     var advanceMinutes: Int
 
-    var id: Int { tier }
+    var id: String { rarity.id }
 }
 
 enum FlipNotificationPreferences {
-    static func defaults(for harmonicDepth: Int) -> [FlipNotificationTierPreference] {
+    static func defaults(for harmonicDepth: Int) -> [FlipNotificationRarityPreference] {
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        return tiers(for: depth).map { tier in
-            let mode: FlipNotificationMode = switch tier {
-            case 1: .alarm
-            case 2: .live
-            case 3: .event
+        return FlipRarity.notificationRarities(for: depth).map { rarity in
+            let mode: FlipNotificationMode = switch rarity {
+            case .rare: .event
+            case .epic: .live
+            case .legendary, .mythic, .saros: .alarm
             default: .silent
             }
-            let advanceMinutes = switch tier {
-            case 1: 60
-            case 2: 30
+            let advanceMinutes = switch rarity {
+            case .epic: 30
+            case .legendary: 60
+            case .mythic: 120
+            case .saros: 240
             default: 10
             }
-            return FlipNotificationTierPreference(
-                tier: tier,
+            return FlipNotificationRarityPreference(
+                rarity: rarity,
                 mode: mode,
                 advanceMinutes: advanceMinutes
             )
         }
     }
 
-    static func load(for harmonicDepth: Int) -> [FlipNotificationTierPreference] {
+    static func load(for harmonicDepth: Int) -> [FlipNotificationRarityPreference] {
         guard
-            let data = UserDefaults.standard.string(forKey: JournalSettings.notificationTierPreferencesKey)?.data(using: .utf8),
-            let decoded = try? JSONDecoder().decode([FlipNotificationTierPreference].self, from: data)
+            let data = UserDefaults.standard.string(forKey: JournalSettings.notificationRarityPreferencesKey)?.data(using: .utf8),
+            let decoded = try? JSONDecoder().decode([FlipNotificationRarityPreference].self, from: data)
         else {
             return defaults(for: harmonicDepth)
         }
@@ -214,34 +351,33 @@ enum FlipNotificationPreferences {
         return merged(decoded, harmonicDepth: harmonicDepth)
     }
 
-    static func save(_ preferences: [FlipNotificationTierPreference]) {
+    static func save(_ preferences: [FlipNotificationRarityPreference]) {
         guard let data = try? JSONEncoder().encode(preferences),
               let json = String(data: data, encoding: .utf8)
         else {
             return
         }
-        UserDefaults.standard.set(json, forKey: JournalSettings.notificationTierPreferencesKey)
+        UserDefaults.standard.set(json, forKey: JournalSettings.notificationRarityPreferencesKey)
     }
 
-    static func tiers(for harmonicDepth: Int) -> [Int] {
-        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        return Array(1..<depth)
+    static func order(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
+        FlipRarity.order(forOctalAddress: octalAddress, harmonicDepth: harmonicDepth)
     }
 
-    static func tier(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
-        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        let padded = octalAddress.leftPadded(toLength: depth, withPad: "0")
-        let trailingZeroCount = padded.reversed().prefix { $0 == "0" }.count
-        return max(1, depth - trailingZeroCount - 1)
+    static func rarity(forOctalAddress octalAddress: String, harmonicDepth: Int, isEclipse: Bool = false) -> FlipRarity {
+        FlipRarity.rarity(
+            forOrder: order(forOctalAddress: octalAddress, harmonicDepth: harmonicDepth),
+            isEclipse: isEclipse
+        )
     }
 
     private static func merged(
-        _ decoded: [FlipNotificationTierPreference],
+        _ decoded: [FlipNotificationRarityPreference],
         harmonicDepth: Int
-    ) -> [FlipNotificationTierPreference] {
-        let decodedByTier = Dictionary(uniqueKeysWithValues: decoded.map { ($0.tier, $0) })
+    ) -> [FlipNotificationRarityPreference] {
+        let decodedByRarity = Dictionary(uniqueKeysWithValues: decoded.map { ($0.rarity, $0) })
         return defaults(for: harmonicDepth).map { fallback in
-            guard var preference = decodedByTier[fallback.tier] else {
+            guard var preference = decodedByRarity[fallback.rarity] else {
                 return fallback
             }
             preference.advanceMinutes = min(max(preference.advanceMinutes, 0), 24 * 60)
@@ -298,6 +434,31 @@ struct OctalGlyph: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Octal glyph")
         .accessibilityValue(geometry.normalizedOctal(value))
+    }
+}
+
+struct FlipRarityBadge: View {
+    let rarity: FlipRarity
+    var compact = false
+
+    var body: some View {
+        Group {
+            if compact {
+                Image(systemName: rarity.symbolName)
+            } else {
+                Label(rarity.title, systemImage: rarity.symbolName)
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(rarity.color)
+        .padding(.horizontal, compact ? 5 : 7)
+        .padding(.vertical, 3)
+        .background(rarity.color.opacity(0.14), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(rarity.color.opacity(0.28), lineWidth: 1)
+        }
+        .accessibilityLabel(rarity.title)
     }
 }
 

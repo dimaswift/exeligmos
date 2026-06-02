@@ -195,7 +195,7 @@ final class SarosClockTests: XCTestCase {
         XCTAssertEqual(reading.nextFlipDate.timeIntervalSinceReferenceDate, expected.timeIntervalSinceReferenceDate, accuracy: 0.01)
     }
 
-    func testCountdownMinimumTierTargetsNextQualifiedCarry() throws {
+    func testOrderCountdownTargetsNextExactCarry() throws {
         let binCount = 512.0
         let now = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 9.2 / binCount)
         let reading = try SarosClockCalculator.reading(
@@ -206,12 +206,13 @@ final class SarosClockTests: XCTestCase {
             harmonicDepth: 3
         )
 
-        let countdown = reading.countdown(minimumTier: 1, now: now)
+        let countdown = try XCTUnwrap(reading.countdown(order: 1, now: now))
 
         XCTAssertEqual(reading.binIndex, 9)
         XCTAssertEqual(countdown.targetBinIndex, 16)
         XCTAssertEqual(countdown.targetOctalAddress, "020")
-        XCTAssertEqual(countdown.flipTier, 1)
+        XCTAssertEqual(countdown.order, 1)
+        XCTAssertEqual(countdown.rarity, .common)
     }
 
     func testOctalAddressDateMapping() throws {
@@ -235,7 +236,7 @@ final class SarosClockTests: XCTestCase {
         XCTAssertEqual(reading.octalAddress(forBinIndex: index), "10")
     }
 
-    func testQualifiedFlipStrideUsesCountdownTierLogic() throws {
+    func testQualifiedFlipStrideUsesOrderLogic() throws {
         let now = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 0.2)
         let reading = try SarosClockCalculator.reading(
             saros: 141,
@@ -245,9 +246,9 @@ final class SarosClockTests: XCTestCase {
             harmonicDepth: 7
         )
 
-        XCTAssertEqual(reading.qualifiedFlipStride(forTier: 3), 512)
-        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, tier: 3), 512)
-        XCTAssertEqual(reading.previousQualifiedFlipBin(atOrBefore: 1_100, tier: 3), 1_024)
+        XCTAssertEqual(reading.qualifiedFlipStride(forOrder: 3), 512)
+        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, order: 3, exact: true), 512)
+        XCTAssertEqual(reading.previousQualifiedFlipBin(atOrBefore: 1_100, order: 3, exact: true), 1_024)
     }
 
     func testInvalidDepthThrows() {
@@ -299,19 +300,23 @@ final class ResonanceDetectorTests: XCTestCase {
     }
 }
 
-final class FlipNotificationTierTests: XCTestCase {
-    func testTierMatchesCarryDepthExamples() {
+final class FlipNotificationOrderTests: XCTestCase {
+    func testOrderMatchesTrailingZeroExamples() {
         XCTAssertEqual(
-            FlipNotificationPreferences.tier(forOctalAddress: "7210222", harmonicDepth: 7),
+            FlipNotificationPreferences.order(forOctalAddress: "7210222", harmonicDepth: 7),
+            0
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.order(forOctalAddress: "7210230", harmonicDepth: 7),
+            1
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.order(forOctalAddress: "7000000", harmonicDepth: 7),
             6
         )
         XCTAssertEqual(
-            FlipNotificationPreferences.tier(forOctalAddress: "7210230", harmonicDepth: 7),
-            5
-        )
-        XCTAssertEqual(
-            FlipNotificationPreferences.tier(forOctalAddress: "7000000", harmonicDepth: 7),
-            1
+            FlipNotificationPreferences.rarity(forOctalAddress: "0000000", harmonicDepth: 7, isEclipse: true),
+            .saros
         )
     }
 }

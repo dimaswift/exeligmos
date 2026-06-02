@@ -6,9 +6,9 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
+    @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-    @AppStorage(JournalSettings.countdownMinimumTierKey) private var countdownMinimumTierSetting = JournalSettings.defaultCountdownMinimumTier
     @AppStorage(JournalSettings.catalogStartCenturyKey) private var catalogStartCentury = JournalSettings.defaultCatalogStartCentury
     @AppStorage(JournalSettings.catalogEndCenturyKey) private var catalogEndCentury = JournalSettings.defaultCatalogEndCentury
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
@@ -33,18 +33,12 @@ struct SettingsView: View {
                     in: JournalSettings.supportedHarmonicDepth
                 )
 
-                Stepper(
-                    "Countdown min tier \(countdownMinimumTier)",
-                    value: countdownMinimumTierBinding,
-                    in: JournalSettings.supportedCountdownTiers(for: harmonicDepth)
-                )
-
-                Text("Depth controls glyph shape and flip timing. Minimum tier controls the main screen countdown.")
+                Text("Depth controls glyph shape, flip timing, and which rarity orders exist.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
                 NavigationLink {
-                    TierPeriodsSettingsView()
+                    RarityPeriodsSettingsView()
                 } label: {
                     Label("Periods", systemImage: "clock.arrow.circlepath")
                 }
@@ -72,7 +66,7 @@ struct SettingsView: View {
                 NavigationLink {
                     FlipNotificationSettingsView()
                 } label: {
-                    Label("Flip tiers", systemImage: "slider.horizontal.3")
+                    Label("Flip rarities", systemImage: "slider.horizontal.3")
                 }
 
                 Button {
@@ -80,7 +74,8 @@ struct SettingsView: View {
                         await services.notificationScheduler.refreshSchedules(
                             for: entities,
                             clockService: services.clockService,
-                            harmonicDepth: harmonicDepth
+                            harmonicDepth: harmonicDepth,
+                            customFlips: customFlips
                         )
                         diagnosticMessage = "Notification schedule refreshed."
                     }
@@ -180,24 +175,15 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onChange(of: harmonicDepth) { _, newDepth in
-            countdownMinimumTierSetting = JournalSettings.clampedCountdownMinimumTier(
-                countdownMinimumTierSetting,
-                harmonicDepth: newDepth
-            )
             Task {
                 await services.notificationScheduler.refreshSchedules(
                     for: entities,
                     clockService: services.clockService,
-                    harmonicDepth: newDepth
+                    harmonicDepth: newDepth,
+                    customFlips: customFlips
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
             }
-        }
-        .onChange(of: countdownMinimumTierSetting) { _, newTier in
-            countdownMinimumTierSetting = JournalSettings.clampedCountdownMinimumTier(
-                newTier,
-                harmonicDepth: harmonicDepth
-            )
         }
         .onChange(of: catalogStartCentury) { _, newCentury in
             catalogStartCentury = JournalSettings.clampedCatalogCentury(newCentury)
@@ -215,24 +201,6 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
-        }
-    }
-
-    private var countdownMinimumTier: Int {
-        JournalSettings.clampedCountdownMinimumTier(
-            countdownMinimumTierSetting,
-            harmonicDepth: harmonicDepth
-        )
-    }
-
-    private var countdownMinimumTierBinding: Binding<Int> {
-        Binding {
-            countdownMinimumTier
-        } set: { newValue in
-            countdownMinimumTierSetting = JournalSettings.clampedCountdownMinimumTier(
-                newValue,
-                harmonicDepth: harmonicDepth
-            )
         }
     }
 
@@ -343,48 +311,22 @@ struct SettingsView: View {
     }
 }
 
-private struct TierPeriodsSettingsView: View {
-    @EnvironmentObject private var services: AppServices
-    @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+private struct RarityPeriodsSettingsView: View {
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-
-    private var references: [PeriodSarosReference] {
-        var seenSaroses: Set<Int> = []
-        return entities.compactMap { entity in
-            guard seenSaroses.insert(entity.saros).inserted else { return nil }
-            return PeriodSarosReference(
-                saros: entity.saros,
-                title: entity.displayTitle
-            )
-        }
-    }
 
     var body: some View {
         List {
             Section {
                 MetadataRow(title: "Glyph depth", value: "\(JournalSettings.clampedHarmonicDepth(harmonicDepth))")
-                Text("Half-periods are used to mark harmonic flip overlaps.")
+                MetadataRow(title: "Average Saros", value: Self.durationFormatter.string(from: JournalSettings.averageSarosPeriod) ?? JournalSettings.averageSarosPeriod.compactDuration)
+                Text("Periods use the average Saros interval and the configured glyph depth.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            if references.isEmpty {
-                Section {
-                    ContentUnavailableView("No threads yet", systemImage: "clock.badge.questionmark")
-                }
-            } else {
-                ForEach(references) { reference in
-                    Section {
-                        if let reading = reading(for: reference.saros) {
-                            ForEach(FlipNotificationPreferences.tiers(for: harmonicDepth), id: \.self) { tier in
-                                TierPeriodRow(tier: tier, reading: reading)
-                            }
-                        } else {
-                            ContentUnavailableView("Periods unavailable", systemImage: "exclamationmark.triangle")
-                        }
-                    } header: {
-                        Text("\(reference.title) · Saros \(reference.saros)")
-                    }
+            Section("Average periods") {
+                ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
+                    RarityPeriodRow(rarity: rarity, harmonicDepth: harmonicDepth)
                 }
             }
         }
@@ -392,48 +334,48 @@ private struct TierPeriodsSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func reading(for saros: Int) -> SarosClockReading? {
-        try? services.clockService.reading(
-            saros: saros,
-            date: Date(),
-            harmonicDepth: harmonicDepth
-        )
+    private static let durationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.year, .month, .day, .hour, .minute]
+        formatter.unitsStyle = .full
+        formatter.maximumUnitCount = 3
+        return formatter
+    }()
+}
+
+private struct RarityPeriodRow: View {
+    let rarity: FlipRarity
+    let harmonicDepth: Int
+
+    private var depth: Int {
+        JournalSettings.clampedHarmonicDepth(harmonicDepth)
     }
-}
 
-private struct PeriodSarosReference: Identifiable, Hashable {
-    let saros: Int
-    let title: String
-
-    var id: Int { saros }
-}
-
-private struct TierPeriodRow: View {
-    let tier: Int
-    let reading: SarosClockReading
+    private var binCount: Int {
+        (0..<depth).reduce(1) { value, _ in value * 8 }
+    }
 
     private var stride: Int {
-        reading.qualifiedFlipStride(forTier: tier)
+        rarity == .saros ? binCount : (0..<rarity.order).reduce(1) { value, _ in value * 8 }
     }
 
     private var periodDuration: TimeInterval {
-        Double(stride) * reading.binDuration
-    }
-
-    private var trailingZeroCount: Int {
-        max(reading.harmonicDepth - tier - 1, 0)
+        rarity == .saros ? JournalSettings.averageSarosPeriod : JournalSettings.averageSarosPeriod / Double(binCount) * Double(stride)
     }
 
     private var stepOctalLabel: String {
-        String(stride, radix: 8).leftPadded(toLength: trailingZeroCount + 1, withPad: "0")
+        rarity == .saros
+            ? String(repeating: "0", count: depth)
+            : String(stride, radix: 8).leftPadded(toLength: rarity.order + 1, withPad: "0")
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Tier \(tier)")
+                Label(rarity.title, systemImage: rarity.symbolName)
                     .font(.subheadline.weight(.semibold))
-                Text("\(trailingZeroCount) trailing zeros · step \(stepOctalLabel)")
+                    .foregroundStyle(rarity.color)
+                Text("\(rarity.orderLabel) · step \(stepOctalLabel)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -443,9 +385,6 @@ private struct TierPeriodRow: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Text(Self.durationFormatter.string(from: periodDuration) ?? periodDuration.compactDuration)
                     .font(.subheadline.weight(.semibold))
-                Text("half \(Self.durationFormatter.string(from: periodDuration / 2) ?? (periodDuration / 2).compactDuration)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
@@ -463,9 +402,10 @@ private struct TierPeriodRow: View {
 private struct FlipNotificationSettingsView: View {
     @EnvironmentObject private var services: AppServices
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-    @State private var preferences: [FlipNotificationTierPreference] = []
+    @State private var preferences: [FlipNotificationRarityPreference] = []
     @State private var didLoad = false
     @State private var statusMessage = ""
 
@@ -473,17 +413,17 @@ private struct FlipNotificationSettingsView: View {
         Form {
             Section {
                 ForEach($preferences) { $preference in
-                    TierPreferenceRow(preference: $preference)
+                    RarityPreferenceRow(preference: $preference)
                 }
             } footer: {
-                Text("Tier 1 is the largest carry. At depth 7, 7000000 is tier 1, 7210230 is tier 5, and a one-step flip is tier 6.")
+                Text("Notifications are scheduled for Rare and above. Order N is the number of trailing zeroes in the flip address; Saros covers seven zeroes or the eclipse rollover.")
             }
 
             Section {
                 Button {
                     resetDefaults()
                 } label: {
-                    Label("Reset tier defaults", systemImage: "arrow.counterclockwise")
+                    Label("Reset rarity defaults", systemImage: "arrow.counterclockwise")
                 }
 
                 if !statusMessage.isEmpty {
@@ -493,7 +433,7 @@ private struct FlipNotificationSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Flip Tiers")
+        .navigationTitle("Flip Rarities")
         .onAppear {
             load()
         }
@@ -507,7 +447,8 @@ private struct FlipNotificationSettingsView: View {
                 await services.notificationScheduler.refreshSchedules(
                     for: entities,
                     clockService: services.clockService,
-                    harmonicDepth: harmonicDepth
+                    harmonicDepth: harmonicDepth,
+                    customFlips: customFlips
                 )
                 statusMessage = "Notification schedule refreshed."
             }
@@ -525,14 +466,15 @@ private struct FlipNotificationSettingsView: View {
     }
 }
 
-private struct TierPreferenceRow: View {
-    @Binding var preference: FlipNotificationTierPreference
+private struct RarityPreferenceRow: View {
+    @Binding var preference: FlipNotificationRarityPreference
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Tier \(preference.tier)", systemImage: tierSymbol)
+                Label(preference.rarity.title, systemImage: preference.rarity.symbolName)
                     .font(.headline)
+                    .foregroundStyle(preference.rarity.color)
                 Spacer()
                 Picker("Mode", selection: $preference.mode) {
                     ForEach(FlipNotificationMode.allCases) { mode in
@@ -555,22 +497,18 @@ private struct TierPreferenceRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Text(preference.rarity.orderLabel)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
-    }
-
-    private var tierSymbol: String {
-        switch preference.tier {
-        case 1: "sparkles"
-        case 2: "burst"
-        default: "circle.grid.cross"
-        }
     }
 
     private var modeDescription: String {
         switch preference.mode {
         case .silent:
-            "No notification for this flip tier."
+            "No notification for this rarity."
         case .event:
             "Regular notification at the flip moment."
         case .live:

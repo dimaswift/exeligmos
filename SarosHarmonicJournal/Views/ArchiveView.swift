@@ -7,10 +7,20 @@ import UIKit
 struct JournalRecordRow: View {
     let record: JournalRecord
     let entityTitle: String
+    var rarity: FlipRarity?
+
+    private var resolvedRarity: FlipRarity {
+        rarity ?? FlipRarity.rarity(
+            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            isEclipse: record.triggerType == .eclipse
+        )
+    }
 
     var body: some View {
+        let rowRarity = resolvedRarity
+
         HStack(alignment: .top, spacing: 12) {
-            OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth)
+            OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, color: rowRarity.color)
                 .frame(width: 36, height: 36)
                 .padding(.top, 2)
 
@@ -18,6 +28,7 @@ struct JournalRecordRow: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(entityTitle)
                         .font(.headline)
+                    FlipRarityBadge(rarity: rowRarity, compact: true)
                     Spacer(minLength: 12)
                     Text(JournalRecordMarkers.marker(from: record.emoji))
                         .font(.system(size: 34))
@@ -71,6 +82,13 @@ struct JournalRecordDetailView: View {
         record.mediaItems.filter { $0.type == .video }
     }
 
+    private var rarity: FlipRarity {
+        FlipRarity.rarity(
+            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            isEclipse: record.triggerType == .eclipse
+        )
+    }
+
     private var capturedMediaURL: URL? {
         guard let item = record.mediaItems.first(where: { $0.type == .symbolicPhoto })
             ?? record.mediaItems.first(where: { $0.type == .video })
@@ -92,17 +110,18 @@ struct JournalRecordDetailView: View {
         List {
             Section {
                 HStack(alignment: .center, spacing: 16) {
-                    OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth)
+                    OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, color: rarity.color)
                         .frame(width: 88, height: 88)
                         .padding(10)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text(entityTitle)
                             .font(.headline)
                         Text(record.octalAddress)
                             .font(.system(.title2, design: .monospaced))
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(rarity.color)
+                        FlipRarityBadge(rarity: rarity)
                         Text(JournalFormatters.dateTime.string(from: record.eventDate))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)

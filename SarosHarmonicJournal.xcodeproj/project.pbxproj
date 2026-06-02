@@ -11,6 +11,7 @@
 		0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */; };
 		0C3B8821A71E4A6CB0F60123 /* MirrorReflectionProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */; };
 		0C3B8821A71E4A6CB0F60125 /* SymbolicCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */; };
+		0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */; };
 		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
 		22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A7C096DCD9F7577546E63A /* SettingsView.swift */; };
 		2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */; };
@@ -53,11 +54,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
-		0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
-		0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MirrorReflectionProcessor.swift; path = SarosHarmonicJournal/Services/MirrorReflectionProcessor.swift; sourceTree = "<group>"; };
-		0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
-		1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
+			0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
+			0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
+			0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MirrorReflectionProcessor.swift; path = SarosHarmonicJournal/Services/MirrorReflectionProcessor.swift; sourceTree = "<group>"; };
+			0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
+			0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomFlipEvent.swift; path = SarosHarmonicJournal/Data/CustomFlipEvent.swift; sourceTree = "<group>"; };
+			1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
 		1BCEE1F54899D79E29687187 /* CaptureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptureView.swift; path = SarosHarmonicJournal/Views/CaptureView.swift; sourceTree = "<group>"; };
 		246FCF65FF5518283A599C02 /* EntityEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityEditorView.swift; path = SarosHarmonicJournal/Views/EntityEditorView.swift; sourceTree = "<group>"; };
 		3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CPlusPlusEclipseService.swift; path = SarosHarmonicJournal/Services/CPlusPlusEclipseService.swift; sourceTree = "<group>"; };
@@ -144,8 +146,9 @@
 				8BFEA87F6EA243E541D15FE7 /* AppServices.swift */,
 				5ED4F9AF52D61D654A5C63C7 /* RootView.swift */,
 				ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */,
-				710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
-				5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
+					710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
+					0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */,
+					5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
 				59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */,
 				9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */,
 				C16E33843D12AFBD6A69B9FA /* Resonance.swift */,
@@ -312,8 +315,9 @@
 				482C82DF26BFCB98C4D65115 /* AppServices.swift in Sources */,
 				350F03141DC5AF24A8E8C539 /* RootView.swift in Sources */,
 				2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */,
-				CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
-				97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
+					CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
+					0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */,
+					97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
 				31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */,
 				AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */,
 				EF3054358820F684AD5D315E /* Resonance.swift in Sources */,

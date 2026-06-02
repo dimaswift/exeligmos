@@ -15,8 +15,8 @@ struct SarosClockReading: Codable, Hashable {
 }
 
 struct SarosFlipCountdown: Codable, Hashable {
-    let minimumTier: Int
-    let flipTier: Int
+    let order: Int
+    let rarity: FlipRarity
     let binStride: Int
     let targetBinIndex: Int
     let targetOctalAddress: String
@@ -130,59 +130,91 @@ extension SarosClockReading {
         return min(max(value, 0), binCount - 1)
     }
 
-    func qualifiedFlipStride(forTier rawTier: Int) -> Int {
-        let tier = JournalSettings.clampedCountdownMinimumTier(rawTier, harmonicDepth: harmonicDepth)
-        let requiredTrailingZeros = max(harmonicDepth - tier - 1, 0)
-        return Self.octalPower(requiredTrailingZeros)
+    func qualifiedFlipStride(forOrder rawOrder: Int) -> Int {
+        let order = clampedFlipOrder(rawOrder)
+        return Self.octalPower(order)
     }
 
-    func nextQualifiedFlipBin(after index: Int, tier: Int) -> Int? {
-        let stride = qualifiedFlipStride(forTier: tier)
+    func nextQualifiedFlipBin(after index: Int, order: Int, exact: Bool = false) -> Int? {
+        let order = clampedFlipOrder(order)
+        let stride = qualifiedFlipStride(forOrder: order)
         let bin = Self.roundUp(index + 1, toMultipleOf: stride)
-        return bin <= binCount ? bin : nil
+        guard exact else {
+            return bin <= binCount ? bin : nil
+        }
+
+        return firstExactFlipBin(startingAt: bin, order: order, stride: stride, direction: .forward)
     }
 
-    func previousQualifiedFlipBin(atOrBefore index: Int, tier: Int) -> Int? {
-        let stride = qualifiedFlipStride(forTier: tier)
+    func previousQualifiedFlipBin(atOrBefore index: Int, order: Int, exact: Bool = false) -> Int? {
+        let order = clampedFlipOrder(order)
+        let stride = qualifiedFlipStride(forOrder: order)
         let clampedIndex = min(max(index, 0), binCount)
         let bin = (clampedIndex / stride) * stride
-        return bin >= 0 ? bin : nil
+        guard exact else {
+            return bin >= 0 ? bin : nil
+        }
+
+        return firstExactFlipBin(startingAt: bin, order: order, stride: stride, direction: .backward)
     }
 
-    func countdown(minimumTier rawMinimumTier: Int) -> SarosFlipCountdown {
+    func countdown(order rawOrder: Int) -> SarosFlipCountdown? {
         countdown(
-            minimumTier: rawMinimumTier,
+            order: rawOrder,
             now: nextFlipDate.addingTimeInterval(-timeUntilNextFlip)
         )
     }
 
-    func countdown(minimumTier rawMinimumTier: Int, now: Date) -> SarosFlipCountdown {
-        let minimumTier = JournalSettings.clampedCountdownMinimumTier(
-            rawMinimumTier,
-            harmonicDepth: harmonicDepth
+    func countdown(order rawOrder: Int, now: Date) -> SarosFlipCountdown? {
+        let order = clampedFlipOrder(rawOrder)
+        guard let targetBinIndex = nextQualifiedFlipBin(after: binIndex, order: order, exact: true) else {
+            return nil
+        }
+        return countdown(targetBinIndex: targetBinIndex, order: order, now: now)
+    }
+
+    func countdown(rarity: FlipRarity, now: Date) -> SarosFlipCountdown? {
+        if rarity == .saros {
+            return countdown(targetBinIndex: binCount, order: harmonicDepth, now: now)
+        }
+
+        guard rarity.order <= min(harmonicDepth, 6) else { return nil }
+        return countdown(order: rarity.order, now: now)
+    }
+
+    func rarityCountdowns(now: Date) -> [SarosFlipCountdown] {
+        FlipRarity.visibleRarities(for: harmonicDepth)
+            .compactMap { countdown(rarity: $0, now: now) }
+    }
+
+    func flipOrder(forBinIndex index: Int) -> Int {
+        FlipRarity.order(forOctalAddress: octalAddress(forBinIndex: index), harmonicDepth: harmonicDepth)
+    }
+
+    func flipRarity(forBinIndex index: Int) -> FlipRarity {
+        FlipRarity.rarity(
+            forOrder: flipOrder(forBinIndex: index),
+            isEclipse: index >= binCount
         )
-        let binStride = qualifiedFlipStride(forTier: minimumTier)
-        let nextTargetBin = Self.roundUp(binIndex + 1, toMultipleOf: binStride)
-        let targetBinIndex = min(nextTargetBin, binCount)
-        let previousTargetBin = max(targetBinIndex - binStride, 0)
-        let totalDuration = nextEclipse.date.timeIntervalSince(previousEclipse.date)
-        let periodStartDate = previousEclipse.date.addingTimeInterval(
-            Double(previousTargetBin) / Double(binCount) * totalDuration
-        )
-        let flipDate = previousEclipse.date.addingTimeInterval(
-            Double(targetBinIndex) / Double(binCount) * totalDuration
-        )
-        let targetOctalAddress = targetBinIndex >= binCount
-            ? String(repeating: "0", count: harmonicDepth)
-            : String(targetBinIndex, radix: 8).leftPadded(toLength: harmonicDepth, withPad: "0")
-        let flipTier = FlipNotificationPreferences.tier(
-            forOctalAddress: targetOctalAddress,
-            harmonicDepth: harmonicDepth
+    }
+
+    private func countdown(targetBinIndex: Int, order rawOrder: Int, now: Date) -> SarosFlipCountdown {
+        let order = clampedFlipOrder(rawOrder)
+        let binStride = targetBinIndex >= binCount ? binCount : qualifiedFlipStride(forOrder: order)
+        let previousTargetBin = targetBinIndex >= binCount
+            ? 0
+            : max(targetBinIndex - binStride, 0)
+        let periodStartDate = date(forBinIndex: previousTargetBin)
+        let flipDate = date(forBinIndex: targetBinIndex)
+        let targetOctalAddress = octalAddress(forBinIndex: targetBinIndex)
+        let rarity = FlipRarity.rarity(
+            forOrder: FlipRarity.order(forOctalAddress: targetOctalAddress, harmonicDepth: harmonicDepth),
+            isEclipse: targetBinIndex >= binCount
         )
 
         return SarosFlipCountdown(
-            minimumTier: minimumTier,
-            flipTier: flipTier,
+            order: rarity == .saros ? max(order, 7) : order,
+            rarity: rarity,
             binStride: binStride,
             targetBinIndex: targetBinIndex,
             targetOctalAddress: targetOctalAddress,
@@ -190,6 +222,40 @@ extension SarosClockReading {
             flipDate: flipDate,
             timeUntilFlip: flipDate.timeIntervalSince(now)
         )
+    }
+
+    private enum FlipSearchDirection {
+        case forward
+        case backward
+    }
+
+    private func firstExactFlipBin(
+        startingAt startBin: Int,
+        order: Int,
+        stride: Int,
+        direction: FlipSearchDirection
+    ) -> Int? {
+        guard stride > 0 else { return nil }
+        var bin = startBin
+
+        while bin >= 0 && bin <= binCount {
+            if bin < binCount, flipOrder(forBinIndex: bin) == order {
+                return bin
+            }
+
+            switch direction {
+            case .forward:
+                bin += stride
+            case .backward:
+                bin -= stride
+            }
+        }
+
+        return nil
+    }
+
+    private func clampedFlipOrder(_ order: Int) -> Int {
+        min(max(order, 1), harmonicDepth)
     }
 
     private static func roundUp(_ value: Int, toMultipleOf stride: Int) -> Int {

@@ -47,6 +47,54 @@ struct SyncServerManifest: Codable, Hashable {
     let entityIDs: [UUID]
     let recordIDs: [UUID]
     let mediaIDs: [UUID]
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case hasBackup
+        case exportTimestamp
+        case entityIDs
+        case recordIDs
+        case mediaIDs
+    }
+
+    init(
+        ok: Bool,
+        hasBackup: Bool,
+        exportTimestamp: Date?,
+        entityIDs: [UUID],
+        recordIDs: [UUID],
+        mediaIDs: [UUID]
+    ) {
+        self.ok = ok
+        self.hasBackup = hasBackup
+        self.exportTimestamp = exportTimestamp
+        self.entityIDs = entityIDs
+        self.recordIDs = recordIDs
+        self.mediaIDs = mediaIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.ok = (try? container.decode(Bool.self, forKey: .ok)) ?? true
+        self.hasBackup = (try? container.decode(Bool.self, forKey: .hasBackup)) ?? false
+        self.exportTimestamp = try? container.decodeIfPresent(Date.self, forKey: .exportTimestamp)
+        self.entityIDs = Self.decodeUUIDs(from: container, forKey: .entityIDs)
+        self.recordIDs = Self.decodeUUIDs(from: container, forKey: .recordIDs)
+        self.mediaIDs = Self.decodeUUIDs(from: container, forKey: .mediaIDs)
+    }
+
+    private static func decodeUUIDs(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> [UUID] {
+        if let uuids = try? container.decode([UUID].self, forKey: key) {
+            return uuids
+        }
+        if let strings = try? container.decode([String].self, forKey: key) {
+            return strings.compactMap(UUID.init(uuidString:))
+        }
+        return []
+    }
 }
 
 final class SyncService {
@@ -135,21 +183,35 @@ final class SyncService {
         let url = try endpoint(serverURLString, path: "/api/backups/latest")
         let (data, response) = try await URLSession.shared.data(from: url)
         try validate(response: response, data: data)
-        return try decoder.decode(SyncBackupPayload.self, from: data)
+        return try decode(SyncBackupPayload.self, from: data, context: "latest backup")
     }
 
     func checkStatus(from serverURLString: String) async throws -> SyncServerStatus {
         let url = try endpoint(serverURLString, path: "/api/status")
         let (data, response) = try await URLSession.shared.data(from: url)
         try validate(response: response, data: data)
-        return try decoder.decode(SyncServerStatus.self, from: data)
+        return try decode(SyncServerStatus.self, from: data, context: "server status")
     }
 
     func fetchManifest(from serverURLString: String) async throws -> SyncServerManifest {
         let url = try endpoint(serverURLString, path: "/api/manifest")
         let (data, response) = try await URLSession.shared.data(from: url)
         try validate(response: response, data: data)
-        return try decoder.decode(SyncServerManifest.self, from: data)
+        return try decode(SyncServerManifest.self, from: data, context: "server manifest")
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data, context: String) throws -> T {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            let body = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfBlank ?? "\(data.count) bytes"
+            throw SyncError.invalidResponse(
+                statusCode: nil,
+                body: "Could not decode \(context): \(error.localizedDescription). Body: \(body.prefix(500))"
+            )
+        }
     }
 
     private func makePayload(entities: [TrackedEntity], records: [JournalRecord]) throws -> SyncBackupPayload {
@@ -349,9 +411,37 @@ final class SyncService {
 
     private var decoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let string = try? container.decode(String.self) {
+                if let date = Self.iso8601WithFractionalSeconds.date(from: string)
+                    ?? Self.iso8601.date(from: string) {
+                    return date
+                }
+            }
+            if let value = try? container.decode(Double.self) {
+                let seconds = value > 10_000_000_000 ? value / 1_000 : value
+                return Date(timeIntervalSince1970: seconds)
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an ISO-8601 date string or numeric timestamp."
+            )
+        }
         return decoder
     }
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 private extension TrackedEntity {

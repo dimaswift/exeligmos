@@ -3,12 +3,15 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-final class NotificationScheduler {
+final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationScheduler()
 
     private let identifierPrefix = "saros-journal."
 
-    private init() {}
+    private override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
 
     func requestAuthorization() async -> Bool {
         do {
@@ -18,10 +21,19 @@ final class NotificationScheduler {
         }
     }
 
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound, .badge])
+    }
+
     func refreshSchedules(
         for entities: [TrackedEntity],
         clockService: any SarosClockService,
         harmonicDepth: Int,
+        customFlips: [CustomFlipEvent] = [],
         resonanceWindow: TimeInterval = 60 * 60
     ) async {
         guard await requestAuthorization() else { return }
@@ -33,10 +45,11 @@ final class NotificationScheduler {
         )
 
         let now = Date()
-        var flips: [EntityFlip] = []
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
         let preferences = FlipNotificationPreferences.load(for: depth)
-        let preferencesByTier = Dictionary(uniqueKeysWithValues: preferences.map { ($0.tier, $0) })
+        let defaultPreferences = FlipNotificationPreferences.defaults(for: depth)
+        let preferencesByRarity = Dictionary(uniqueKeysWithValues: preferences.map { ($0.rarity, $0) })
+        let entitiesByID = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
 
         for entity in entities where entity.notificationsEnabled {
             guard let reading = try? clockService.reading(
@@ -47,54 +60,66 @@ final class NotificationScheduler {
                 continue
             }
 
-            let nextIndex = min(reading.binIndex + 1, reading.binCount - 1)
-            let nextAddress = String(nextIndex, radix: 8)
-                .leftPadded(toLength: depth, withPad: "0")
-            let tier = FlipNotificationPreferences.tier(
-                forOctalAddress: nextAddress,
-                harmonicDepth: depth
-            )
+            for countdown in reading.rarityCountdowns(now: now) where countdown.rarity.notificationEligible {
+                let fallback = FlipNotificationPreferences.defaults(for: depth)
+                    .first { $0.rarity == countdown.rarity }
+                guard let preference = preferencesByRarity[countdown.rarity] ?? fallback,
+                      preference.mode != .silent,
+                      countdown.flipDate > now else {
+                    continue
+                }
 
-            flips.append(
-                EntityFlip(
-                    entityID: entity.id,
-                    entityTitle: entity.displayTitle,
-                    date: reading.nextFlipDate,
-                    saros: entity.saros,
-                    octalAddress: nextAddress
+                let notifyDate = notifyDate(
+                    for: preference,
+                    flipDate: countdown.flipDate,
+                    now: now
                 )
-            )
+                guard notifyDate > now else { continue }
 
-            let preference = preferencesByTier[tier] ?? FlipNotificationPreferences.defaults(for: depth)[max(tier - 1, 0)]
-            guard preference.mode != .silent else { continue }
-
-            let notifyDate = notifyDate(
-                for: preference,
-                flipDate: reading.nextFlipDate,
-                now: now
-            )
-            guard notifyDate > now else { continue }
-
-            await scheduleBinFlipNotification(
-                entity: entity,
-                octalAddress: nextAddress,
-                tier: tier,
-                mode: preference.mode,
-                notifyDate: notifyDate,
-                flipDate: reading.nextFlipDate,
-                timeUntilFlip: reading.nextFlipDate.timeIntervalSince(notifyDate),
-                harmonicDepth: depth
-            )
+                await scheduleBinFlipNotification(
+                    entity: entity,
+                    countdown: countdown,
+                    mode: preference.mode,
+                    notifyDate: notifyDate,
+                    timeUntilFlip: countdown.flipDate.timeIntervalSince(notifyDate),
+                    harmonicDepth: depth
+                )
+            }
         }
 
-        let resonances = ResonanceDetector.detectResonances(flips: flips, window: resonanceWindow)
-        for event in resonances.prefix(12) where event.startDate > now {
-            await scheduleResonanceNotification(event: event)
+        let customPreference = preferencesByRarity[.saros]
+            ?? defaultPreferences.first { $0.rarity == .saros }
+        if let customPreference, customPreference.mode != .silent {
+            for customFlip in customFlips {
+                guard
+                    let entity = entitiesByID[customFlip.entityID],
+                    entity.notificationsEnabled,
+                    customFlip.date > now
+                else {
+                    continue
+                }
+
+                let notifyDate = notifyDate(
+                    for: customPreference,
+                    flipDate: customFlip.date,
+                    now: now
+                )
+                guard notifyDate > now else { continue }
+
+                await scheduleCustomFlipNotification(
+                    entity: entity,
+                    customFlip: customFlip,
+                    mode: customPreference.mode,
+                    notifyDate: notifyDate,
+                    timeUntilFlip: customFlip.date.timeIntervalSince(notifyDate),
+                    harmonicDepth: depth
+                )
+            }
         }
     }
 
     private func notifyDate(
-        for preference: FlipNotificationTierPreference,
+        for preference: FlipNotificationRarityPreference,
         flipDate: Date,
         now: Date
     ) -> Date {
@@ -122,34 +147,40 @@ final class NotificationScheduler {
 
     private func scheduleBinFlipNotification(
         entity: TrackedEntity,
-        octalAddress: String,
-        tier: Int,
+        countdown: SarosFlipCountdown,
         mode: FlipNotificationMode,
         notifyDate: Date,
-        flipDate: Date,
         timeUntilFlip: TimeInterval,
         harmonicDepth: Int
     ) async {
         let content = UNMutableNotificationContent()
         content.title = notificationTitle(
             entity: entity,
+            rarity: countdown.rarity,
             mode: mode,
             timeUntilFlip: timeUntilFlip
         )
-        content.subtitle = "Saros \(entity.saros) · \(octalAddress)"
-        content.body = "Tier \(tier) flip to \(octalAddress) at \(JournalFormatters.dateTime.string(from: flipDate))."
+        content.subtitle = "Saros \(entity.saros) · \(countdown.targetOctalAddress)"
+        content.body = "\(countdown.rarity.title) \(countdown.rarity.orderLabel) flip to \(countdown.targetOctalAddress) at \(JournalFormatters.dateTime.string(from: countdown.flipDate))."
         content.sound = notificationSound(for: mode)
         content.interruptionLevel = interruptionLevel(for: mode)
+        content.threadIdentifier = "saros-\(entity.saros)-\(countdown.rarity.id)"
+        content.relevanceScore = min(Double(countdown.rarity.order) / 7.0, 1.0)
         content.userInfo = [
             "entityID": entity.id.uuidString,
             "trigger": JournalTriggerType.binFlip.rawValue,
-            "flipDate": flipDate.timeIntervalSince1970,
+            "flipDate": countdown.flipDate.timeIntervalSince1970,
             "saros": entity.saros,
-            "octalAddress": octalAddress,
-            "tier": tier,
+            "octalAddress": countdown.targetOctalAddress,
+            "order": countdown.order,
+            "rarity": countdown.rarity.rawValue,
             "mode": mode.rawValue
         ]
-        if let attachment = await glyphAttachment(octalAddress: octalAddress, harmonicDepth: harmonicDepth) {
+        if let attachment = await glyphAttachment(
+            octalAddress: countdown.targetOctalAddress,
+            harmonicDepth: harmonicDepth,
+            color: countdown.rarity.color
+        ) {
             content.attachments = [attachment]
         }
 
@@ -157,13 +188,64 @@ final class NotificationScheduler {
             dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
             repeats: false
         )
-        let identifier = "\(identifierPrefix)bin.\(entity.id.uuidString).\(Int(flipDate.timeIntervalSince1970))"
+        let identifier = "\(identifierPrefix)bin.\(entity.id.uuidString).\(countdown.rarity.id).\(Int(countdown.flipDate.timeIntervalSince1970))"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    private func scheduleCustomFlipNotification(
+        entity: TrackedEntity,
+        customFlip: CustomFlipEvent,
+        mode: FlipNotificationMode,
+        notifyDate: Date,
+        timeUntilFlip: TimeInterval,
+        harmonicDepth: Int
+    ) async {
+        let customColor = Color(hex: customFlip.colorHex, fallback: .green)
+        let content = UNMutableNotificationContent()
+        content.title = customNotificationTitle(
+            entity: entity,
+            customFlip: customFlip,
+            mode: mode,
+            timeUntilFlip: timeUntilFlip
+        )
+        content.subtitle = "Saros \(entity.saros) · \(customFlip.octalAddress)"
+        content.body = "\(customFlip.displayName) at \(JournalFormatters.dateTime.string(from: customFlip.date))."
+        content.sound = notificationSound(for: mode)
+        content.interruptionLevel = interruptionLevel(for: mode)
+        content.threadIdentifier = "saros-\(entity.saros)-custom"
+        content.relevanceScore = 1.0
+        content.userInfo = [
+            "entityID": entity.id.uuidString,
+            "customFlipID": customFlip.id.uuidString,
+            "trigger": JournalTriggerType.binFlip.rawValue,
+            "flipDate": customFlip.date.timeIntervalSince1970,
+            "saros": entity.saros,
+            "octalAddress": customFlip.octalAddress,
+            "order": 8,
+            "rarity": "custom",
+            "mode": mode.rawValue
+        ]
+        if let attachment = await glyphAttachment(
+            octalAddress: customFlip.octalAddress,
+            harmonicDepth: harmonicDepth,
+            color: customColor
+        ) {
+            content.attachments = [attachment]
+        }
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)custom.\(entity.id.uuidString).\(customFlip.id.uuidString).\(Int(customFlip.date.timeIntervalSince1970))"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         try? await UNUserNotificationCenter.current().add(request)
     }
 
     private func notificationTitle(
         entity: TrackedEntity,
+        rarity: FlipRarity,
         mode: FlipNotificationMode,
         timeUntilFlip: TimeInterval
     ) -> String {
@@ -171,19 +253,37 @@ final class NotificationScheduler {
         case .silent:
             entity.displayTitle
         case .event:
-            "\(entity.displayTitle) flipped"
+            "\(rarity.title): \(entity.displayTitle) flipped"
         case .live:
-            "\(entity.displayTitle) flips in \(timeUntilFlip.compactDuration)"
+            "\(rarity.title): \(entity.displayTitle) flips in \(timeUntilFlip.compactDuration)"
         case .alarm:
-            "Flip alarm: \(entity.displayTitle)"
+            "\(rarity.title) alarm: \(entity.displayTitle)"
+        }
+    }
+
+    private func customNotificationTitle(
+        entity: TrackedEntity,
+        customFlip: CustomFlipEvent,
+        mode: FlipNotificationMode,
+        timeUntilFlip: TimeInterval
+    ) -> String {
+        switch mode {
+        case .silent:
+            customFlip.displayName
+        case .event:
+            "\(customFlip.displayName): \(entity.displayTitle)"
+        case .live:
+            "\(customFlip.displayName) in \(timeUntilFlip.compactDuration)"
+        case .alarm:
+            "\(customFlip.displayName) alarm: \(entity.displayTitle)"
         }
     }
 
     private func notificationSound(for mode: FlipNotificationMode) -> UNNotificationSound? {
         switch mode {
-        case .silent, .live:
+        case .silent:
             nil
-        case .event, .alarm:
+        case .event, .live, .alarm:
             .default
         }
     }
@@ -198,9 +298,9 @@ final class NotificationScheduler {
     }
 
     @MainActor
-    private func glyphAttachment(octalAddress: String, harmonicDepth: Int) -> UNNotificationAttachment? {
+    private func glyphAttachment(octalAddress: String, harmonicDepth: Int, color: Color) -> UNNotificationAttachment? {
         let renderer = ImageRenderer(
-            content: OctalGlyph(value: octalAddress, depth: harmonicDepth)
+            content: OctalGlyph(value: octalAddress, depth: harmonicDepth, color: color)
                 .frame(width: 180, height: 180)
                 .padding(18)
                 .background(Color(.systemBackground))
@@ -223,22 +323,4 @@ final class NotificationScheduler {
         }
     }
 
-    private func scheduleResonanceNotification(event: ResonanceEvent) async {
-        let content = UNMutableNotificationContent()
-        content.title = "Resonance window opening"
-        content.body = "\(event.entityIDs.count) Saros threads flip close together. Record the overlap."
-        content.sound = .default
-        content.userInfo = [
-            "trigger": JournalTriggerType.resonance.rawValue,
-            "resonanceID": event.id.uuidString
-        ]
-
-        let trigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: event.startDate),
-            repeats: false
-        )
-        let identifier = "\(identifierPrefix)resonance.\(event.id.uuidString)"
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-        try? await UNUserNotificationCenter.current().add(request)
-    }
 }
