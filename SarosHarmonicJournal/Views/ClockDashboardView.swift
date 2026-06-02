@@ -1248,6 +1248,296 @@ struct MirrorCameraCapturedMedia {
     let fileExtension: String
 }
 
+private enum MirrorCameraReviewCapture {
+    case photo(UIImage)
+    case video(URL, thumbnail: UIImage)
+
+    var sourceImage: UIImage {
+        switch self {
+        case .photo(let image):
+            image
+        case .video(_, let thumbnail):
+            thumbnail
+        }
+    }
+
+    var isVideo: Bool {
+        switch self {
+        case .photo:
+            false
+        case .video:
+            true
+        }
+    }
+}
+
+private struct MirrorOutputConfiguration: Hashable, Sendable {
+    var mode: ThreadMirrorCameraMode
+    var reflectionSelection: MirrorReflectionSelection
+    var imageTransform: MirrorImageTransform
+    var isBinaryFilterEnabled: Bool
+    var thresholdLevel: Double
+    var isDoubleOutputEnabled: Bool
+}
+
+private struct MirrorImageTransform: Hashable, Sendable {
+    var freeRotationRadians: CGFloat
+    var scale: CGFloat
+    var offset: CGSize
+}
+
+private enum MirrorOutputComposer {
+    private static let context = CIContext(options: [.cacheIntermediates: false])
+
+    static func renderPhoto(
+        source: UIImage,
+        configuration: MirrorOutputConfiguration
+    ) -> UIImage? {
+        guard let square = squareImage(source) else { return nil }
+        let transformedSource = transformedImage(square, transform: configuration.imageTransform)
+
+        if configuration.isDoubleOutputEnabled {
+            return renderDoublePhoto(source: transformedSource, configuration: configuration)
+        }
+
+        return renderedImage(from: processedImage(
+            source: transformedSource,
+            configuration: configuration,
+            reflectionSelection: configuration.reflectionSelection
+        ))
+    }
+
+    static func processedVideoImage(
+        source: CIImage,
+        configuration: MirrorOutputConfiguration
+    ) -> CIImage {
+        let square = transformedImage(
+            squareImage(source),
+            transform: configuration.imageTransform
+        )
+        guard configuration.isDoubleOutputEnabled else {
+            return processedImage(
+                source: square,
+                configuration: configuration,
+                reflectionSelection: configuration.reflectionSelection
+            )
+        }
+
+        let positive = processedImage(
+            source: square,
+            configuration: configuration,
+            reflectionSelection: .positive
+        )
+        let negative = processedImage(
+            source: square,
+            configuration: configuration,
+            reflectionSelection: .negative
+        )
+        let side = square.extent.width
+        let bottom = negative.transformed(by: CGAffineTransform(translationX: -negative.extent.minX, y: -negative.extent.minY))
+        let top = positive
+            .transformed(by: CGAffineTransform(translationX: -positive.extent.minX, y: -positive.extent.minY + side))
+            .composited(over: bottom)
+        return top.cropped(to: CGRect(x: 0, y: 0, width: side, height: side * 2))
+    }
+
+    static func renderPreview(
+        source: UIImage,
+        configuration: MirrorOutputConfiguration
+    ) -> UIImage? {
+        renderPhoto(source: source, configuration: configuration)
+    }
+
+    private static func renderDoublePhoto(
+        source: CIImage,
+        configuration: MirrorOutputConfiguration
+    ) -> UIImage? {
+        guard
+            let topImage = renderedImage(from: processedImage(
+                source: source,
+                configuration: configuration,
+                reflectionSelection: .positive
+            )),
+            let bottomImage = renderedImage(from: processedImage(
+                source: source,
+                configuration: configuration,
+                reflectionSelection: .negative
+            ))
+        else {
+            return nil
+        }
+
+        let side = max(topImage.size.width, 2)
+        let size = CGSize(width: side, height: side * 2)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            UIColor.black.setFill()
+            UIBezierPath(rect: CGRect(origin: .zero, size: size)).fill()
+            topImage.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+            bottomImage.draw(in: CGRect(x: 0, y: side, width: side, height: side))
+        }
+    }
+
+    private static func processedImage(
+        source: CIImage,
+        configuration: MirrorOutputConfiguration,
+        reflectionSelection: MirrorReflectionSelection
+    ) -> CIImage {
+        var output = MirrorReflectionProcessor.process(
+            source,
+            edges: configuration.mode.edges(
+                reflectionSelection: reflectionSelection
+            )
+        )
+        if configuration.isBinaryFilterEnabled {
+            output = thresholdImage(output, threshold: configuration.thresholdLevel)
+        }
+        return output
+    }
+
+    private static func renderedImage(from image: CIImage) -> UIImage? {
+        guard let cgImage = context.createCGImage(image, from: image.extent) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+    }
+
+    private static func squareImage(_ image: UIImage) -> CIImage? {
+        guard let input = CIImage(image: image)?.oriented(CGImagePropertyOrientation(image.imageOrientation)) else {
+            return nil
+        }
+        return squareImage(input)
+    }
+
+    private static func transformedImage(
+        _ image: CIImage,
+        transform: MirrorImageTransform
+    ) -> CIImage {
+        let extent = image.extent
+        let center = CGPoint(x: extent.midX, y: extent.midY)
+        let radians = transform.freeRotationRadians
+        let coverScale = abs(cos(radians)) + abs(sin(radians))
+        let scale = max(transform.scale, coverScale, 0.1)
+        let offset = transform.offset
+
+        let affineTransform = CGAffineTransform(translationX: center.x + offset.width * extent.width, y: center.y - offset.height * extent.height)
+            .rotated(by: radians)
+            .scaledBy(x: scale, y: scale)
+            .translatedBy(x: -center.x, y: -center.y)
+
+        return reflectedTile(from: image)
+            .transformed(by: affineTransform)
+            .cropped(to: extent)
+    }
+
+    private static func reflectedTile(from image: CIImage) -> CIImage {
+        let source = squareImage(image)
+        let side = source.extent.width
+        let bleed = max(side * 0.006, 4)
+        let paddedSource = source
+            .clampedToExtent()
+            .cropped(to: source.extent.insetBy(dx: -bleed, dy: -bleed))
+        let tileExtent = CGRect(x: 0, y: 0, width: side * 2, height: side * 2)
+
+        let right = paddedSource.transformed(by: CGAffineTransform(
+            a: -1,
+            b: 0,
+            c: 0,
+            d: 1,
+            tx: side * 2,
+            ty: 0
+        ))
+        let top = paddedSource.transformed(by: CGAffineTransform(
+            a: 1,
+            b: 0,
+            c: 0,
+            d: -1,
+            tx: 0,
+            ty: side * 2
+        ))
+        let topRight = paddedSource.transformed(by: CGAffineTransform(
+            a: -1,
+            b: 0,
+            c: 0,
+            d: -1,
+            tx: side * 2,
+            ty: side * 2
+        ))
+
+        let tile = topRight
+            .composited(over: top)
+            .composited(over: right)
+            .composited(over: paddedSource)
+            .cropped(to: tileExtent)
+
+        let filter = CIFilter(name: "CIAffineTile")
+        filter?.setValue(tile, forKey: kCIInputImageKey)
+        return filter?.outputImage ?? tile.clampedToExtent()
+    }
+
+    private static func squareImage(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let side = min(extent.width, extent.height)
+        let crop = CGRect(
+            x: extent.midX - side / 2,
+            y: extent.midY - side / 2,
+            width: side,
+            height: side
+        )
+        return image
+            .cropped(to: crop)
+            .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+    }
+
+    private static func thresholdImage(_ image: CIImage, threshold: Double) -> CIImage {
+        guard let thresholdFilter = CIFilter(name: "CIColorThreshold") else { return image }
+        let clampedThreshold = min(max(threshold, 0), 1)
+
+        thresholdFilter.setValue(image, forKey: kCIInputImageKey)
+        thresholdFilter.setValue(clampedThreshold, forKey: "inputThreshold")
+
+        guard let mask = thresholdFilter.outputImage?.cropped(to: image.extent) else {
+            return image
+        }
+
+        let white = CIImage(color: .white).cropped(to: image.extent)
+        let black = CIImage(color: .black).cropped(to: image.extent)
+        let blend = CIFilter.blendWithMask()
+        blend.inputImage = white
+        blend.backgroundImage = black
+        blend.maskImage = mask
+        return blend.outputImage?.cropped(to: image.extent) ?? image
+    }
+}
+
+private extension CGImagePropertyOrientation {
+    init(_ imageOrientation: UIImage.Orientation) {
+        switch imageOrientation {
+        case .up:
+            self = .up
+        case .down:
+            self = .down
+        case .left:
+            self = .left
+        case .right:
+            self = .right
+        case .upMirrored:
+            self = .upMirrored
+        case .downMirrored:
+            self = .downMirrored
+        case .leftMirrored:
+            self = .leftMirrored
+        case .rightMirrored:
+            self = .rightMirrored
+        @unknown default:
+            self = .up
+        }
+    }
+}
+
 struct MirrorCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var camera = ThreadMirrorCameraController()
@@ -1258,14 +1548,55 @@ struct MirrorCameraView: View {
     @State private var exposureLevel = 0.5
     @State private var thresholdLevel = 0.5
     @State private var isBinaryFilterEnabled = false
+    @State private var isDoubleOutputEnabled = false
+    @State private var reviewFreeRotationRadians: CGFloat = 0
+    @State private var reviewScale: CGFloat = 1
+    @State private var lastReviewScale: CGFloat = 1
+    @State private var reviewOffset: CGSize = .zero
+    @State private var lastReviewOffset: CGSize = .zero
+    @State private var liveFocusPoint: CGPoint?
     @State private var captureHoldWorkItem: DispatchWorkItem?
     @State private var isCapturePressActive = false
     @State private var didStartVideoDuringPress = false
+    @State private var reviewCapture: MirrorCameraReviewCapture?
+    @State private var reviewCaptureID = UUID()
+    @State private var reviewPreviewImage: UIImage?
+    @State private var isProcessingReview = false
 
     private let onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)?
 
     init(onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)? = nil) {
         self.onCapturedMedia = onCapturedMedia
+    }
+
+    private var outputConfiguration: MirrorOutputConfiguration {
+        MirrorOutputConfiguration(
+            mode: mode,
+            reflectionSelection: reflectionSelection,
+            imageTransform: MirrorImageTransform(
+                freeRotationRadians: reviewFreeRotationRadians,
+                scale: reviewScale,
+                offset: reviewOffset
+            ),
+            isBinaryFilterEnabled: isBinaryFilterEnabled,
+            thresholdLevel: thresholdLevel,
+            isDoubleOutputEnabled: isDoubleOutputEnabled
+        )
+    }
+
+    private var reviewPreviewKey: String {
+        [
+            reviewCapture == nil ? "live" : reviewCaptureID.uuidString,
+            mode.id,
+            "\(reflectionSelection)",
+            "\(reviewFreeRotationRadians)",
+            "\(reviewScale)",
+            "\(reviewOffset.width)",
+            "\(reviewOffset.height)",
+            isBinaryFilterEnabled ? "binary" : "color",
+            "\(thresholdLevel)",
+            isDoubleOutputEnabled ? "double" : "single"
+        ].joined(separator: "|")
     }
 
     var body: some View {
@@ -1277,7 +1608,13 @@ struct MirrorCameraView: View {
                     cameraPreview(side: previewSide)
                         .padding(.top, 16)
 
-                    Spacer(minLength: 14)
+                    if reviewCapture != nil {
+                        reviewRotationSlider
+                            .padding(.horizontal, 24)
+                            .padding(.top, 10)
+                    }
+
+                    Spacer(minLength: reviewCapture == nil ? 14 : 10)
 
                     controlPanel
                         .padding(.horizontal, 14)
@@ -1305,9 +1642,10 @@ struct MirrorCameraView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            camera.setMirror(mode: mode, reflectionSelection: reflectionSelection)
-            camera.setLensPosition(lensPosition)
-            camera.setExposureLevel(exposureLevel)
+            camera.setMirror(
+                mode: mode,
+                reflectionSelection: reflectionSelection
+            )
             camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: thresholdLevel)
             await camera.start()
         }
@@ -1326,12 +1664,30 @@ struct MirrorCameraView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(.white.opacity(0.06))
 
-            if let previewImage = camera.previewImage {
+            if let reviewCapture {
+                Image(uiImage: reviewPreviewImage ?? reviewCapture.sourceImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: side, height: side)
+                    .clipped()
+
+                reviewTopToggle
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(12)
+            } else if let previewImage = camera.previewImage {
                 Image(uiImage: previewImage)
                     .resizable()
                     .scaledToFill()
                     .frame(width: side, height: side)
                     .clipped()
+
+                if let liveFocusPoint {
+                    Circle()
+                        .stroke(.yellow, lineWidth: 2)
+                        .frame(width: 58, height: 58)
+                        .position(liveFocusPoint)
+                        .transition(.scale.combined(with: .opacity))
+                }
             } else {
                 ThreadCameraPlaceholderView(
                     state: camera.authorizationState,
@@ -1345,6 +1701,12 @@ struct MirrorCameraView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(.white.opacity(0.12), lineWidth: 1)
         }
+        .task(id: reviewPreviewKey) {
+            updateReviewPreview()
+        }
+        .simultaneousGesture(liveFocusGesture(side: side))
+        .simultaneousGesture(reviewPanGesture(side: side))
+        .simultaneousGesture(reviewZoomGesture())
     }
 
     private var controlPanel: some View {
@@ -1358,37 +1720,8 @@ struct MirrorCameraView: View {
                     .background(.black.opacity(0.45), in: Capsule())
             }
 
-            HStack(alignment: .center, spacing: 12) {
-                RadialTickSlider(
-                    value: $lensPosition,
-                    systemImage: "scope",
-                    tint: .cyan,
-                    orientation: .inwardFromLeft,
-                    accessibilityLabel: "Lens position"
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: 112)
-                .onChange(of: lensPosition) { _, newValue in
-                    camera.setLensPosition(newValue)
-                }
-
-                binaryFilterToggle
-
-                RadialTickSlider(
-                    value: isBinaryFilterEnabled ? $thresholdLevel : $exposureLevel,
-                    systemImage: isBinaryFilterEnabled ? "circle.lefthalf.filled" : "sun.max",
-                    tint: isBinaryFilterEnabled ? .cyan : .yellow,
-                    orientation: .inwardFromRight,
-                    accessibilityLabel: isBinaryFilterEnabled ? "Threshold" : "Exposure"
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: 112)
-                .onChange(of: thresholdLevel) { _, newValue in
-                    camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: newValue)
-                }
-                .onChange(of: exposureLevel) { _, newValue in
-                    camera.setExposureLevel(newValue)
-                }
+            if reviewCapture == nil {
+                liveAdjustmentControls
             }
 
             cameraControls
@@ -1400,6 +1733,110 @@ struct MirrorCameraView: View {
             RoundedRectangle(cornerRadius: 18)
                 .stroke(.white.opacity(0.08), lineWidth: 1)
         }
+    }
+
+    private var liveAdjustmentControls: some View {
+        HStack(alignment: .center, spacing: 12) {
+            RadialTickSlider(
+                value: $lensPosition,
+                systemImage: "scope",
+                tint: .cyan,
+                orientation: .inwardFromLeft,
+                accessibilityLabel: "Lens position"
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 112)
+            .onChange(of: lensPosition) { _, newValue in
+                camera.setLensPosition(newValue)
+            }
+
+            binaryFilterToggle
+
+            RadialTickSlider(
+                value: isBinaryFilterEnabled ? $thresholdLevel : $exposureLevel,
+                systemImage: isBinaryFilterEnabled ? "circle.lefthalf.filled" : "sun.max",
+                tint: isBinaryFilterEnabled ? .cyan : .yellow,
+                orientation: .inwardFromRight,
+                accessibilityLabel: isBinaryFilterEnabled ? "Threshold" : "Exposure"
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 112)
+            .onChange(of: thresholdLevel) { _, newValue in
+                camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: newValue)
+            }
+            .onChange(of: exposureLevel) { _, newValue in
+                camera.setExposureLevel(newValue)
+            }
+        }
+    }
+
+    private var reviewTopToggle: some View {
+        Button {
+            isDoubleOutputEnabled.toggle()
+        } label: {
+            Image(systemName: isDoubleOutputEnabled ? "rectangle.stack.fill" : "rectangle.stack")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(isDoubleOutputEnabled ? .cyan.opacity(0.72) : .black.opacity(0.42), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessingReview)
+        .accessibilityLabel("Toggle double output")
+    }
+
+    private var reviewRotationDegrees: Binding<Double> {
+        Binding {
+            Double(reviewFreeRotationRadians) * 180 / Double.pi
+        } set: { newValue in
+            setReviewRotation(CGFloat(newValue * Double.pi / 180))
+        }
+    }
+
+    private var reviewRotationSlider: some View {
+        HStack(spacing: 10) {
+            rotationStepButton(
+                systemImage: "rotate.left",
+                degrees: -45,
+                accessibilityLabel: "Rotate image counterclockwise 45 degrees"
+            )
+
+            Slider(value: reviewRotationDegrees, in: -180...180, step: 1)
+                .tint(.cyan)
+
+            rotationStepButton(
+                systemImage: "rotate.right",
+                degrees: 45,
+                accessibilityLabel: "Rotate image clockwise 45 degrees"
+            )
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.42), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(.white.opacity(0.1), lineWidth: 1)
+        }
+        .accessibilityLabel("Image rotation")
+    }
+
+    private func rotationStepButton(
+        systemImage: String,
+        degrees: Double,
+        accessibilityLabel: String
+    ) -> some View {
+        Button {
+            rotateReviewImage(byDegrees: degrees)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(.white.opacity(0.1), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private var binaryFilterToggle: some View {
@@ -1419,17 +1856,31 @@ struct MirrorCameraView: View {
 
     private var cameraControls: some View {
         HStack(spacing: 10) {
-            cameraToolButton(
-                systemImage: "camera.rotate",
-                accessibilityLabel: "Switch camera",
-                action: camera.switchCamera
-            )
+            if reviewCapture == nil {
+                cameraToolButton(
+                    systemImage: "camera.rotate",
+                    accessibilityLabel: "Switch camera",
+                    action: camera.switchCamera
+                )
 
-            cameraToolButton(
-                systemImage: camera.backLens.symbolName,
-                accessibilityLabel: "Switch back lens",
-                action: camera.cycleBackLens
-            )
+                cameraToolButton(
+                    systemImage: camera.backLens.symbolName,
+                    accessibilityLabel: "Switch back lens",
+                    action: camera.cycleBackLens
+                )
+            } else {
+                cameraToolButton(
+                    systemImage: "xmark",
+                    accessibilityLabel: "Discard capture",
+                    action: discardReviewCapture
+                )
+
+                cameraToolButton(
+                    systemImage: "arrow.counterclockwise",
+                    accessibilityLabel: "Reset edit transform",
+                    action: resetReviewTransform
+                )
+            }
 
             captureControl
 
@@ -1438,7 +1889,10 @@ struct MirrorCameraView: View {
                 accessibilityLabel: "Toggle mirror mode"
             ) {
                 mode = mode.next
-                camera.setMirror(mode: mode, reflectionSelection: reflectionSelection)
+                camera.setMirror(
+                    mode: mode,
+                    reflectionSelection: reflectionSelection
+                )
             }
 
             cameraToolButton(
@@ -1446,33 +1900,175 @@ struct MirrorCameraView: View {
                 accessibilityLabel: "Toggle reflected side"
             ) {
                 reflectionSelection = reflectionSelection.next
-                camera.setMirror(mode: mode, reflectionSelection: reflectionSelection)
+                camera.setMirror(
+                    mode: mode,
+                    reflectionSelection: reflectionSelection
+                )
             }
         }
     }
 
+    @ViewBuilder
     private var captureControl: some View {
-        ZStack {
-            Circle()
-                .stroke(camera.isRecordingVideo ? .red : .white, lineWidth: 4)
-                .frame(width: 64, height: 64)
-            Circle()
-                .fill(camera.isRecordingVideo ? .red : .white)
-                .frame(width: camera.isRecordingVideo ? 34 : 48, height: camera.isRecordingVideo ? 34 : 48)
-                .animation(.snappy(duration: 0.18), value: camera.isRecordingVideo)
+        if reviewCapture == nil {
+            ZStack {
+                Circle()
+                    .stroke(camera.isRecordingVideo ? .red : .white, lineWidth: 4)
+                    .frame(width: 64, height: 64)
+                Circle()
+                    .fill(camera.isRecordingVideo ? .red : .white)
+                    .frame(width: camera.isRecordingVideo ? 34 : 48, height: camera.isRecordingVideo ? 34 : 48)
+                    .animation(.snappy(duration: 0.18), value: camera.isRecordingVideo)
+            }
+            .contentShape(Circle())
+            .opacity((camera.previewImage == nil || saver.isSaving) && !camera.isRecordingVideo ? 0.45 : 1)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        handleCapturePressBegan()
+                    }
+                    .onEnded { _ in
+                        handleCapturePressEnded()
+                    }
+            )
+            .accessibilityLabel(camera.isRecordingVideo ? "Stop video recording" : "Capture photo or hold to record video")
+        } else {
+            Button {
+                saveReviewCapture()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.black)
+                    .frame(width: 64, height: 64)
+                    .background(.white, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isProcessingReview || saver.isSaving)
+            .opacity((isProcessingReview || saver.isSaving) ? 0.55 : 1)
+            .accessibilityLabel("Save edited capture")
         }
-        .contentShape(Circle())
-        .opacity((camera.previewImage == nil || saver.isSaving) && !camera.isRecordingVideo ? 0.45 : 1)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    handleCapturePressBegan()
+    }
+
+    private func liveFocusGesture(side: CGFloat) -> some Gesture {
+        SpatialTapGesture()
+            .onEnded { value in
+                guard reviewCapture == nil else { return }
+                let location = value.location
+                guard CGRect(x: 0, y: 0, width: side, height: side).contains(location) else { return }
+
+                withAnimation(.snappy(duration: 0.18)) {
+                    liveFocusPoint = location
                 }
-                .onEnded { _ in
-                    handleCapturePressEnded()
+                camera.focusAndExpose(at: CGPoint(
+                    x: min(max(location.x / side, 0), 1),
+                    y: min(max(location.y / side, 0), 1)
+                ))
+
+                let focusedPoint = location
+                Task {
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    await MainActor.run {
+                        guard liveFocusPoint == focusedPoint else { return }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            liveFocusPoint = nil
+                        }
+                    }
                 }
+            }
+    }
+
+    private func reviewPanGesture(side: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard reviewCapture != nil, side > 0 else { return }
+                reviewOffset = clampedReviewOffset(CGSize(
+                    width: lastReviewOffset.width + value.translation.width / side,
+                    height: lastReviewOffset.height + value.translation.height / side
+                ))
+            }
+            .onEnded { _ in
+                lastReviewOffset = reviewOffset
+            }
+    }
+
+    private func reviewZoomGesture() -> some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                guard reviewCapture != nil else { return }
+                reviewScale = min(max(lastReviewScale * value, 1), 4)
+            }
+            .onEnded { _ in
+                lastReviewScale = reviewScale
+            }
+    }
+
+    private func rotateReviewImage(byDegrees degrees: Double) {
+        setReviewRotation(reviewFreeRotationRadians + CGFloat(degrees * Double.pi / 180))
+    }
+
+    private func setReviewRotation(_ radians: CGFloat) {
+        let normalizedRadians = Self.normalizedReviewRotation(radians)
+        guard reviewCapture != nil else {
+            reviewFreeRotationRadians = normalizedRadians
+            return
+        }
+
+        let focus = reviewFocusVector(
+            rotation: reviewFreeRotationRadians,
+            scale: effectiveReviewScale(for: reviewFreeRotationRadians),
+            offset: reviewOffset
         )
-        .accessibilityLabel(camera.isRecordingVideo ? "Stop video recording" : "Capture photo or hold to record video")
+        let nextScale = effectiveReviewScale(for: normalizedRadians)
+        let rotatedFocus = Self.rotated(focus, by: normalizedRadians)
+        let translation = CGPoint(
+            x: -rotatedFocus.x * nextScale,
+            y: -rotatedFocus.y * nextScale
+        )
+
+        reviewFreeRotationRadians = normalizedRadians
+        reviewOffset = CGSize(width: translation.x, height: -translation.y)
+        lastReviewOffset = reviewOffset
+    }
+
+    private func reviewFocusVector(
+        rotation: CGFloat,
+        scale: CGFloat,
+        offset: CGSize
+    ) -> CGPoint {
+        let safeScale = max(scale, 0.1)
+        let translation = CGPoint(x: offset.width, y: -offset.height)
+        let unrotatedTranslation = CGPoint(
+            x: -translation.x / safeScale,
+            y: -translation.y / safeScale
+        )
+        return Self.rotated(unrotatedTranslation, by: -rotation)
+    }
+
+    private func effectiveReviewScale(for radians: CGFloat) -> CGFloat {
+        let coverScale = abs(cos(radians)) + abs(sin(radians))
+        return max(reviewScale, coverScale, 0.1)
+    }
+
+    private static func rotated(_ point: CGPoint, by radians: CGFloat) -> CGPoint {
+        CGPoint(
+            x: point.x * cos(radians) - point.y * sin(radians),
+            y: point.x * sin(radians) + point.y * cos(radians)
+        )
+    }
+
+    private static func normalizedReviewRotation(_ radians: CGFloat) -> CGFloat {
+        let fullTurn = CGFloat.pi * 2
+        var value = radians.truncatingRemainder(dividingBy: fullTurn)
+        if value > CGFloat.pi {
+            value -= fullTurn
+        } else if value < -CGFloat.pi {
+            value += fullTurn
+        }
+        return value
+    }
+
+    private func clampedReviewOffset(_ offset: CGSize) -> CGSize {
+        offset
     }
 
     private func handleCapturePressBegan() {
@@ -1515,40 +2111,131 @@ struct MirrorCameraView: View {
 
     private func capturePhoto() {
         guard let image = camera.captureImage(), !saver.isSaving else { return }
-
-        if let onCapturedMedia {
-            guard let data = image.jpegData(compressionQuality: 0.94) else { return }
-            onCapturedMedia(MirrorCameraCapturedMedia(
-                type: .symbolicPhoto,
-                data: data,
-                sourceURL: nil,
-                fileExtension: "jpg"
-            ))
-            dismiss()
-        } else {
-            saver.save(image)
-        }
+        beginReview(.photo(image))
     }
 
     private func stopVideoCapture() {
         camera.stopVideoRecording { result in
             switch result {
             case .success(let url):
-                if let onCapturedMedia {
-                    onCapturedMedia(MirrorCameraCapturedMedia(
-                        type: .video,
-                        data: nil,
-                        sourceURL: url,
-                        fileExtension: url.pathExtension.isEmpty ? "mov" : url.pathExtension
-                    ))
-                    dismiss()
-                } else {
-                    saver.saveVideo(at: url)
-                }
+                let thumbnail = MirrorVideoPostProcessor.thumbnail(from: url)
+                    ?? camera.captureImage()
+                    ?? UIImage()
+                beginReview(.video(url, thumbnail: thumbnail))
             case .failure(let error):
                 saver.showFailure(error.localizedDescription)
             }
         }
+    }
+
+    private func beginReview(_ capture: MirrorCameraReviewCapture) {
+        reviewCapture = capture
+        reviewCaptureID = UUID()
+        reviewPreviewImage = nil
+        isDoubleOutputEnabled = false
+        resetReviewTransform()
+        updateReviewPreview()
+    }
+
+    private func discardReviewCapture() {
+        if case .video(let url, _) = reviewCapture {
+            try? FileManager.default.removeItem(at: url)
+        }
+        reviewCapture = nil
+        reviewCaptureID = UUID()
+        reviewPreviewImage = nil
+        isDoubleOutputEnabled = false
+        resetReviewTransform()
+        isProcessingReview = false
+        camera.setMirror(
+            mode: mode,
+            reflectionSelection: reflectionSelection
+        )
+    }
+
+    private func resetReviewTransform() {
+        reviewFreeRotationRadians = 0
+        reviewScale = 1
+        lastReviewScale = 1
+        reviewOffset = .zero
+        lastReviewOffset = .zero
+    }
+
+    private func saveReviewCapture() {
+        guard let reviewCapture, !isProcessingReview else { return }
+        isProcessingReview = true
+
+        switch reviewCapture {
+        case .photo(let image):
+            guard let renderedImage = MirrorOutputComposer.renderPhoto(
+                source: image,
+                configuration: outputConfiguration
+            ) else {
+                saver.showFailure("The edited photo could not be rendered.")
+                isProcessingReview = false
+                return
+            }
+
+            if let onCapturedMedia {
+                guard let data = renderedImage.jpegData(compressionQuality: 0.94) else {
+                    saver.showFailure("The edited photo could not be encoded.")
+                    isProcessingReview = false
+                    return
+                }
+                onCapturedMedia(MirrorCameraCapturedMedia(
+                    type: .symbolicPhoto,
+                    data: data,
+                    sourceURL: nil,
+                    fileExtension: "jpg"
+                ))
+                saver.showStatus("Saved version")
+                isProcessingReview = false
+            } else {
+                saver.save(renderedImage)
+                isProcessingReview = false
+            }
+
+        case .video(let url, _):
+            let configuration = outputConfiguration
+            saver.showStatus("Processing video")
+            Task {
+                do {
+                    let processedURL = try await MirrorVideoPostProcessor.process(
+                        inputURL: url,
+                        configuration: configuration
+                    )
+
+                    if let onCapturedMedia {
+                        onCapturedMedia(MirrorCameraCapturedMedia(
+                            type: .video,
+                            data: nil,
+                            sourceURL: processedURL,
+                            fileExtension: processedURL.pathExtension.isEmpty ? "mov" : processedURL.pathExtension
+                        ))
+                        saver.showStatus("Saved version")
+                        isProcessingReview = false
+                    } else {
+                        saver.saveVideo(at: processedURL)
+                        isProcessingReview = false
+                    }
+                } catch {
+                    saver.showFailure(error.localizedDescription)
+                    isProcessingReview = false
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func updateReviewPreview() {
+        guard let reviewCapture else {
+            reviewPreviewImage = nil
+            return
+        }
+        reviewPreviewImage = MirrorOutputComposer.renderPreview(
+            source: reviewCapture.sourceImage,
+            configuration: outputConfiguration
+        )
     }
 
     private func cameraToolButton(
@@ -1713,7 +2400,7 @@ private enum RadialTickSliderOrientation {
     }
 }
 
-private enum ThreadMirrorCameraMode: CaseIterable, Identifiable {
+private enum ThreadMirrorCameraMode: CaseIterable, Hashable, Identifiable, Sendable {
     case horizontal
     case vertical
     case cross
@@ -1775,7 +2462,7 @@ private enum ThreadMirrorCameraMode: CaseIterable, Identifiable {
     }
 }
 
-private enum MirrorReflectionSelection: CaseIterable {
+private enum MirrorReflectionSelection: CaseIterable, Hashable, Sendable {
     case positive
     case negative
     case off
@@ -1877,7 +2564,7 @@ private struct ThreadCameraPlaceholderView: View {
     }
 }
 
-private final class ThreadMirrorCameraController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+private final class ThreadMirrorCameraController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate, @unchecked Sendable {
     @Published private(set) var previewImage: UIImage?
     @Published private(set) var authorizationState: CameraAuthorizationState = .notDetermined
     @Published private(set) var errorMessage: String?
@@ -1891,18 +2578,23 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
 
     private var output: AVCaptureVideoDataOutput?
     private var audioOutput: AVCaptureAudioDataOutput?
+    private var movieOutput: AVCaptureMovieFileOutput?
     private var latestFrame: CIImage?
+    private var latestOriginalImage: UIImage?
     private var currentDevice: AVCaptureDevice?
     private var selectedBackLens: MirrorCameraBackLens = .wide
     private var currentMode: ThreadMirrorCameraMode = .vertical
     private var currentReflectionSelection: MirrorReflectionSelection = .positive
     private var lensPosition: Double = 0.5
     private var exposureLevel: Double = 0.5
+    private var isFocusManual = false
+    private var isExposureManual = false
     private var isBinaryFilterEnabled = false
     private var thresholdLevel: Double = 0.5
     private var lastFrameTime: CFTimeInterval = 0
     private var videoRecorder: MirrorVideoRecorder?
     private var videoRecordingURL: URL?
+    private var videoRecordingCompletion: ((Result<URL, Error>) -> Void)?
     private var isAudioCaptureAuthorized = false
 
     func start() async {
@@ -1976,7 +2668,10 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         }
     }
 
-    func setMirror(mode: ThreadMirrorCameraMode, reflectionSelection: MirrorReflectionSelection) {
+    func setMirror(
+        mode: ThreadMirrorCameraMode,
+        reflectionSelection: MirrorReflectionSelection
+    ) {
         videoQueue.async { [weak self] in
             guard let self else { return }
             self.currentMode = mode
@@ -1990,6 +2685,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         sessionQueue.async { [weak self] in
             guard let self else { return }
             self.lensPosition = clampedValue
+            self.isFocusManual = true
             if let currentDevice = self.currentDevice {
                 self.applyLensPosition(to: currentDevice)
             }
@@ -2001,8 +2697,50 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         sessionQueue.async { [weak self] in
             guard let self else { return }
             self.exposureLevel = clampedValue
+            self.isExposureManual = true
             if let currentDevice = self.currentDevice {
                 self.applyExposure(to: currentDevice)
+            }
+        }
+    }
+
+    func focusAndExpose(at normalizedPoint: CGPoint) {
+        let point = CGPoint(
+            x: min(max(normalizedPoint.x, 0), 1),
+            y: min(max(normalizedPoint.y, 0), 1)
+        )
+
+        sessionQueue.async { [weak self] in
+            guard let self, let currentDevice = self.currentDevice else { return }
+
+            do {
+                try currentDevice.lockForConfiguration()
+
+                if currentDevice.isFocusPointOfInterestSupported {
+                    currentDevice.focusPointOfInterest = point
+                }
+                if currentDevice.isFocusModeSupported(.autoFocus) {
+                    currentDevice.focusMode = .autoFocus
+                } else if currentDevice.isFocusModeSupported(.continuousAutoFocus) {
+                    currentDevice.focusMode = .continuousAutoFocus
+                }
+
+                if currentDevice.isExposurePointOfInterestSupported {
+                    currentDevice.exposurePointOfInterest = point
+                }
+                if currentDevice.isExposureModeSupported(.continuousAutoExposure) {
+                    currentDevice.exposureMode = .continuousAutoExposure
+                } else if currentDevice.isExposureModeSupported(.autoExpose) {
+                    currentDevice.exposureMode = .autoExpose
+                }
+
+                self.isFocusManual = false
+                self.isExposureManual = false
+                currentDevice.unlockForConfiguration()
+            } catch {
+                Task { @MainActor in
+                    self.errorMessage = error.localizedDescription
+                }
             }
         }
     }
@@ -2018,7 +2756,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
 
     @MainActor
     func captureImage() -> UIImage? {
-        previewImage
+        latestOriginalImage
     }
 
     @MainActor
@@ -2032,10 +2770,17 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         try? AVAudioSession.sharedInstance().setActive(true)
         isRecordingVideo = true
 
-        videoQueue.async { [weak self] in
+        sessionQueue.async { [weak self] in
             guard let self else { return }
             self.videoRecordingURL = url
-            self.videoRecorder = MirrorVideoRecorder(outputURL: url)
+            guard let movieOutput = self.movieOutput else {
+                Task { @MainActor in
+                    self.isRecordingVideo = false
+                    self.errorMessage = ThreadMirrorCameraError.cameraUnavailable.localizedDescription
+                }
+                return
+            }
+            movieOutput.startRecording(to: url, recordingDelegate: self)
         }
     }
 
@@ -2047,28 +2792,17 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         }
 
         isRecordingVideo = false
-        videoQueue.async { [weak self] in
+        sessionQueue.async { [weak self] in
             guard let self else { return }
-            guard let recorder = self.videoRecorder, let url = self.videoRecordingURL else {
+            guard let movieOutput = self.movieOutput, movieOutput.isRecording else {
                 Task { @MainActor in
                     completion(.failure(MirrorVideoRecorder.RecorderError.notRecording))
                 }
                 return
             }
 
-            self.videoRecorder = nil
-            self.videoRecordingURL = nil
-            recorder.finish { result in
-                Task { @MainActor in
-                    switch result {
-                    case .success:
-                        completion(.success(url))
-                    case .failure(let error):
-                        completion(.failure(error))
-                    }
-                    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                }
-            }
+            self.videoRecordingCompletion = completion
+            movieOutput.stopRecording()
         }
     }
 
@@ -2119,7 +2853,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
 
     private func configureCamera(position: AVCaptureDevice.Position) throws {
         session.beginConfiguration()
-        session.sessionPreset = .photo
+        session.sessionPreset = .high
         defer {
             session.commitConfiguration()
         }
@@ -2131,6 +2865,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
             session.removeOutput(output)
         }
         audioOutput = nil
+        movieOutput = nil
 
         let device = captureDevice(for: position)
         guard let device else {
@@ -2163,11 +2898,20 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
             configureAudioCapture()
         }
 
+        let movieOutput = AVCaptureMovieFileOutput()
+        if session.canAddOutput(movieOutput) {
+            session.addOutput(movieOutput)
+            if let connection = movieOutput.connection(with: .video) {
+                configure(connection: connection)
+            }
+            self.movieOutput = movieOutput
+        }
+
         self.output = output
         currentDevice = device
         latestFrame = nil
-        applyLensPosition(to: device)
-        applyExposure(to: device)
+        configurePreferredFrameRate(on: device)
+        applyFocusAndExposureDefaults(to: device)
     }
 
     private func configureAudioCapture() {
@@ -2177,12 +2921,6 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
             return
         }
         session.addInput(audioInput)
-
-        let audioOutput = AVCaptureAudioDataOutput()
-        audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
-        guard session.canAddOutput(audioOutput) else { return }
-        session.addOutput(audioOutput)
-        self.audioOutput = audioOutput
     }
 
     private func captureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
@@ -2209,36 +2947,51 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        if output === audioOutput {
-            videoRecorder?.appendAudio(sampleBuffer)
-            return
-        }
-
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
 
-        latestFrame = CIImage(cvPixelBuffer: pixelBuffer)
-        renderLatestFrame(sourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        let squareFrame = Self.squareImage(CIImage(cvPixelBuffer: pixelBuffer))
+        latestFrame = squareFrame
+        renderLatestFrame()
     }
 
-    private func renderLatestFrame(force: Bool = false, sourceTime: CMTime? = nil) {
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didFinishRecordingTo outputFileURL: URL,
+        from connections: [AVCaptureConnection],
+        error: Error?
+    ) {
+        let completion = videoRecordingCompletion
+        videoRecordingCompletion = nil
+        videoRecordingURL = nil
+
+        Task { @MainActor in
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            if let error {
+                completion?(.failure(error))
+            } else {
+                completion?(.success(outputFileURL))
+            }
+        }
+    }
+
+    private func renderLatestFrame(force: Bool = false) {
         let now = CACurrentMediaTime()
         guard force || now - lastFrameTime >= 1.0 / 15.0 else { return }
         lastFrameTime = now
 
-        guard let latestFrame else { return }
-        let square = Self.squareImage(latestFrame)
+        guard let square = latestFrame else { return }
         var output = MirrorReflectionProcessor.process(
             square,
-            edges: currentMode.edges(reflectionSelection: currentReflectionSelection)
+            edges: currentMode.edges(
+                reflectionSelection: currentReflectionSelection
+            )
         )
         if isBinaryFilterEnabled {
             output = Self.thresholdImage(output, threshold: thresholdLevel)
         }
-        if let sourceTime {
-            videoRecorder?.append(image: output, sourceTime: sourceTime)
-        }
+        let originalImage = MirrorReflectionProcessor.renderedImage(from: square, edges: [])
         guard let image = MirrorReflectionProcessor.renderedImage(
             from: output,
             edges: []
@@ -2248,6 +3001,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
 
         Task { @MainActor in
             self.previewImage = image
+            self.latestOriginalImage = originalImage
         }
     }
 
@@ -2263,6 +3017,77 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         return image
             .cropped(to: crop)
             .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+    }
+
+    private func configurePreferredFrameRate(on device: AVCaptureDevice) {
+        guard device.activeFormat.videoSupportedFrameRateRanges.contains(where: { $0.maxFrameRate >= 60 }) else {
+            return
+        }
+
+        do {
+            try device.lockForConfiguration()
+            device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 60)
+            device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 60)
+            device.unlockForConfiguration()
+        } catch {
+            Task { @MainActor in
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyFocusAndExposureDefaults(to device: AVCaptureDevice) {
+        if isFocusManual {
+            applyLensPosition(to: device)
+        } else {
+            applyAutofocus(to: device)
+        }
+
+        if isExposureManual {
+            applyExposure(to: device)
+        } else {
+            applyAutoExposure(to: device)
+        }
+    }
+
+    private func applyAutofocus(to device: AVCaptureDevice) {
+        guard device.isFocusModeSupported(.continuousAutoFocus) || device.isFocusModeSupported(.autoFocus) else { return }
+
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            } else if device.isFocusModeSupported(.autoFocus) {
+                device.focusMode = .autoFocus
+            }
+            if device.isSmoothAutoFocusSupported {
+                device.isSmoothAutoFocusEnabled = true
+            }
+            device.unlockForConfiguration()
+        } catch {
+            Task { @MainActor in
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyAutoExposure(to device: AVCaptureDevice) {
+        guard device.isExposureModeSupported(.continuousAutoExposure) || device.isExposureModeSupported(.autoExpose) else { return }
+
+        do {
+            try device.lockForConfiguration()
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            } else if device.isExposureModeSupported(.autoExpose) {
+                device.exposureMode = .autoExpose
+            }
+            device.setExposureTargetBias(0)
+            device.unlockForConfiguration()
+        } catch {
+            Task { @MainActor in
+                self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func applyLensPosition(to device: AVCaptureDevice) {
@@ -2550,6 +3375,104 @@ private final class MirrorVideoRecorder {
     }
 }
 
+private enum MirrorVideoPostProcessor {
+    enum ProcessorError: LocalizedError {
+        case exportUnavailable
+        case exportFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .exportUnavailable:
+                "The video exporter could not be created."
+            case .exportFailed:
+                "The edited video could not be exported."
+            }
+        }
+    }
+
+    static func thumbnail(from url: URL) -> UIImage? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 900, height: 900)
+
+        guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
+    }
+
+    static func process(
+        inputURL: URL,
+        configuration: MirrorOutputConfiguration
+    ) async throws -> URL {
+        let asset = AVURLAsset(url: inputURL)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        try? FileManager.default.removeItem(at: outputURL)
+
+        let renderSize = await renderSize(for: asset, configuration: configuration)
+        let videoComposition = AVMutableVideoComposition(asset: asset) { request in
+            let output = MirrorOutputComposer.processedVideoImage(
+                source: request.sourceImage,
+                configuration: configuration
+            )
+            request.finish(with: output, context: nil)
+        }
+        videoComposition.renderSize = renderSize
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 60)
+
+        guard let exporter = AVAssetExportSession(
+            asset: asset,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw ProcessorError.exportUnavailable
+        }
+        exporter.outputURL = outputURL
+        exporter.outputFileType = .mov
+        exporter.videoComposition = videoComposition
+        exporter.shouldOptimizeForNetworkUse = true
+
+        nonisolated(unsafe) let unsafeExporter = exporter
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            unsafeExporter.exportAsynchronously {
+                switch unsafeExporter.status {
+                case .completed:
+                    continuation.resume()
+                case .failed, .cancelled:
+                    continuation.resume(throwing: unsafeExporter.error ?? ProcessorError.exportFailed)
+                default:
+                    continuation.resume(throwing: ProcessorError.exportFailed)
+                }
+            }
+        }
+
+        return outputURL
+    }
+
+    private static func renderSize(
+        for asset: AVAsset,
+        configuration: MirrorOutputConfiguration
+    ) async -> CGSize {
+        let trackSize: CGSize
+        do {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+                throw ProcessorError.exportUnavailable
+            }
+            let naturalSize = try await track.load(.naturalSize)
+            let preferredTransform = try await track.load(.preferredTransform)
+            trackSize = naturalSize.applying(preferredTransform)
+        } catch {
+            trackSize = CGSize(width: 720, height: 720)
+        }
+        let side = max(min(abs(trackSize.width), abs(trackSize.height)), 2)
+        return configuration.isDoubleOutputEnabled
+            ? CGSize(width: side, height: side * 2)
+            : CGSize(width: side, height: side)
+    }
+}
+
 private enum ThreadMirrorCameraError: LocalizedError {
     case cameraUnavailable
 
@@ -2611,6 +3534,11 @@ private final class CameraRollMediaSaver: ObservableObject {
         statusMessage = message
         didFail = true
         isSaving = false
+    }
+
+    func showStatus(_ message: String) {
+        statusMessage = message
+        didFail = false
     }
 
     private func requestAddPermissionIfNeeded() async throws {
