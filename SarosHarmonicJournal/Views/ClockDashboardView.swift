@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import Photos
+import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
@@ -426,6 +427,7 @@ private struct EntityDetailView: View {
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @State private var selectedTab: ThreadDetailTab = .records
     @State private var selectedRecordRarity: FlipRarity?
+    @State private var selectedRecord: JournalRecord?
     @State private var isCapturing = false
     @State private var isStartingLiveTracking = false
     @State private var liveTrackingError: String?
@@ -489,12 +491,16 @@ private struct EntityDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    Button {
-                        startLiveTracking()
-                    } label: {
-                        Label("Track", systemImage: "dot.radiowaves.left.and.right")
+                    Section("Track rarity") {
+                        ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
+                            Button {
+                                startLiveTracking(rarity: rarity)
+                            } label: {
+                                Label("Track \(rarity.title)", systemImage: rarity.symbolName)
+                            }
+                            .disabled(currentReading == nil || isStartingLiveTracking)
+                        }
                     }
-                    .disabled(currentReading == nil || isStartingLiveTracking)
                 } label: {
                     Image(systemName: isStartingLiveTracking ? "dot.radiowaves.left.and.right" : "ellipsis.circle")
                 }
@@ -539,6 +545,9 @@ private struct EntityDetailView: View {
         } message: {
             Text(liveTrackingError ?? "")
         }
+        .navigationDestination(item: $selectedRecord) { record in
+            JournalRecordDetailView(record: record, entityTitle: entity.displayTitle)
+        }
     }
 
     private var currentReading: SarosClockReading? {
@@ -574,13 +583,17 @@ private struct EntityDetailView: View {
             .first
     }
 
-    private func startLiveTracking() {
+    private func startLiveTracking(rarity: FlipRarity) {
         guard let reading = currentReading else {
             liveTrackingError = "The current thread timing is unavailable."
             return
         }
 
-        let snapshot = ThreadLiveActivityService.snapshot(entity: entity, reading: reading)
+        let snapshot = ThreadLiveActivityService.snapshot(
+            entity: entity,
+            reading: reading,
+            trackingRarity: rarity
+        )
         isStartingLiveTracking = true
 
         Task { @MainActor in
@@ -615,8 +628,8 @@ private struct EntityDetailView: View {
                 }
 
                 ForEach(filteredEntityRecords) { record in
-                    NavigationLink {
-                        JournalRecordDetailView(record: record, entityTitle: entity.displayTitle)
+                    Button {
+                        selectedRecord = record
                     } label: {
                         JournalRecordRow(
                             record: record,
@@ -624,6 +637,9 @@ private struct EntityDetailView: View {
                             rarity: recordRarity(for: record)
                         )
                     }
+                    .buttonStyle(.plain)
+                    .listRowSeparator(.visible)
+                    .listRowSeparatorTint(.white.opacity(0.28))
                 }
             }
         }
@@ -2009,10 +2025,11 @@ struct MirrorCameraView: View {
     @State private var reviewCapture: MirrorCameraReviewCapture?
     @State private var reviewCaptureID = UUID()
     @State private var reviewPreviewImage: UIImage?
-    @State private var reviewAnimacyResult: AnimacyResult?
     @State private var isProcessingReview = false
-    @State private var lastAnimacyHapticLevel = 0
     @State private var isTrackingAnimacyDataset = false
+    @State private var sonificationSession: ImageSonificationSession?
+    @State private var importPhotoItem: PhotosPickerItem?
+    @State private var isImportingPhoto = false
 
     private let onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)?
 
@@ -2054,39 +2071,24 @@ struct MirrorCameraView: View {
         GeometryReader { proxy in
             let previewSide = Self.previewSide(for: proxy.size)
 
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 0) {
-                    cameraPreview(side: previewSide)
-                        .padding(.top, 16)
+            VStack(spacing: 0) {
+                cameraPreview(side: previewSide)
+                    .padding(.top, 16)
 
-                    if reviewCapture != nil {
-                        reviewRotationSlider
-                            .padding(.horizontal, 24)
-                            .padding(.top, 10)
-                    }
-
-                    Spacer(minLength: reviewCapture == nil ? 14 : 10)
-
-                    controlPanel
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 12)
+                if reviewCapture != nil {
+                    reviewRotationSlider
+                        .padding(.horizontal, 24)
+                        .padding(.top, 10)
+                } else {
+                    importPhotoButton
+                        .padding(.top, 10)
                 }
 
-                if onCapturedMedia != nil {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.black.opacity(0.42), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 12)
-                    .padding(.leading, 14)
-                    .accessibilityLabel("Close camera")
-                }
+                Spacer(minLength: reviewCapture == nil ? 14 : 10)
+
+                controlPanel
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -2107,9 +2109,6 @@ struct MirrorCameraView: View {
             }
             camera.stop()
         }
-        .onChange(of: camera.animacyResult) { _, result in
-            handleAnimacyHaptic(score: result?.score)
-        }
         .sheet(isPresented: $isTrackingAnimacyDataset) {
             if let reviewCapture, !reviewCapture.isVideo {
                 NavigationStack {
@@ -2118,6 +2117,17 @@ struct MirrorCameraView: View {
                         initialConfiguration: outputConfiguration
                     )
                 }
+            }
+        }
+        .sheet(item: $sonificationSession) { session in
+            NavigationStack {
+                ImageSonificationPanelView(image: session.image)
+            }
+        }
+        .onChange(of: importPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task {
+                await importPhoto(from: newItem)
             }
         }
     }
@@ -2135,7 +2145,7 @@ struct MirrorCameraView: View {
                     .frame(width: side, height: side)
                     .clipped()
 
-                reviewTopToggle
+                reviewOverlayButtons
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(12)
             } else if let previewImage = camera.previewImage {
@@ -2144,10 +2154,6 @@ struct MirrorCameraView: View {
                     .scaledToFill()
                     .frame(width: side, height: side)
                     .clipped()
-
-                AnimacyScoreView(result: camera.animacyResult)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(12)
 
                 if let liveFocusPoint {
                     Circle()
@@ -2162,6 +2168,12 @@ struct MirrorCameraView: View {
                     errorMessage: camera.errorMessage
                 )
             }
+
+            if onCapturedMedia != nil {
+                cameraCloseButton
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(12)
+            }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -2175,6 +2187,20 @@ struct MirrorCameraView: View {
         .simultaneousGesture(liveFocusGesture(side: side))
         .simultaneousGesture(reviewPanGesture(side: side))
         .simultaneousGesture(reviewZoomGesture())
+    }
+
+    private var cameraCloseButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.42), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close camera")
     }
 
     private var controlPanel: some View {
@@ -2255,6 +2281,62 @@ struct MirrorCameraView: View {
         .buttonStyle(.plain)
         .disabled(isProcessingReview)
         .accessibilityLabel("Toggle double output")
+    }
+
+    @ViewBuilder
+    private var reviewOverlayButtons: some View {
+        VStack(spacing: 10) {
+            reviewTopToggle
+
+            if let reviewCapture, !reviewCapture.isVideo {
+                reviewSoundButton
+            }
+        }
+    }
+
+    private var reviewSoundButton: some View {
+        Button {
+            openSonificationPanel()
+        } label: {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.42), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessingReview)
+        .accessibilityLabel("Sonify image")
+    }
+
+    private var importPhotoButton: some View {
+        PhotosPicker(selection: $importPhotoItem, matching: .images) {
+            VStack(spacing: 5) {
+                ZStack {
+                    Circle()
+                        .fill(.black.opacity(0.42))
+                        .frame(width: 54, height: 54)
+
+                    if isImportingPhoto {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "photo.badge.plus")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+                }
+
+                Text("Import")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.isRecordingVideo || saver.isSaving || isImportingPhoto)
+        .opacity((camera.isRecordingVideo || saver.isSaving || isImportingPhoto) ? 0.5 : 1)
+        .accessibilityLabel("Import image")
     }
 
     private var trackEntityButton: some View {
@@ -2562,33 +2644,6 @@ struct MirrorCameraView: View {
         offset
     }
 
-    private func handleAnimacyHaptic(score: Float?) {
-        let score = score ?? 0
-        let nextLevel: Int
-        if score >= 0.95 {
-            nextLevel = 3
-        } else if score >= 0.8 {
-            nextLevel = 2
-        } else if score >= 0.6 {
-            nextLevel = 1
-        } else {
-            nextLevel = 0
-        }
-
-        guard nextLevel > lastAnimacyHapticLevel else {
-            lastAnimacyHapticLevel = nextLevel
-            return
-        }
-
-        let style: UIImpactFeedbackGenerator.FeedbackStyle = switch nextLevel {
-        case 1: .light
-        case 2: .medium
-        default: .heavy
-        }
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
-        lastAnimacyHapticLevel = nextLevel
-    }
-
     private func handleCapturePressBegan() {
         guard !isCapturePressActive else { return }
         isCapturePressActive = true
@@ -2632,6 +2687,56 @@ struct MirrorCameraView: View {
         beginReview(.photo(image))
     }
 
+    @MainActor
+    private func importPhoto(from item: PhotosPickerItem) async {
+        guard reviewCapture == nil else {
+            importPhotoItem = nil
+            return
+        }
+
+        isImportingPhoto = true
+        defer {
+            isImportingPhoto = false
+            importPhotoItem = nil
+        }
+
+        do {
+            guard
+                let data = try await item.loadTransferable(type: Data.self),
+                let image = UIImage(data: data)
+            else {
+                saver.showFailure("The selected image could not be loaded.")
+                return
+            }
+
+            beginReview(.photo(Self.centerSquareCropped(image)))
+        } catch {
+            saver.showFailure(error.localizedDescription)
+        }
+    }
+
+    private static func centerSquareCropped(_ image: UIImage) -> UIImage {
+        let side = min(image.size.width, image.size.height)
+        guard side > 0 else { return image }
+
+        let targetSize = CGSize(width: side, height: side)
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = image.scale
+        rendererFormat.opaque = false
+
+        return UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+            let scale = max(targetSize.width / image.size.width, targetSize.height / image.size.height)
+            let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let drawRect = CGRect(
+                x: (targetSize.width - drawSize.width) / 2,
+                y: (targetSize.height - drawSize.height) / 2,
+                width: drawSize.width,
+                height: drawSize.height
+            )
+            image.draw(in: drawRect)
+        }
+    }
+
     private func stopVideoCapture() {
         camera.stopVideoRecording { result in
             switch result {
@@ -2650,7 +2755,6 @@ struct MirrorCameraView: View {
         reviewCapture = capture
         reviewCaptureID = UUID()
         reviewPreviewImage = nil
-        reviewAnimacyResult = camera.animacyResult
         isDoubleOutputEnabled = false
         resetReviewTransform()
         updateReviewPreview()
@@ -2663,7 +2767,7 @@ struct MirrorCameraView: View {
         reviewCapture = nil
         reviewCaptureID = UUID()
         reviewPreviewImage = nil
-        reviewAnimacyResult = nil
+        sonificationSession = nil
         isDoubleOutputEnabled = false
         resetReviewTransform()
         isProcessingReview = false
@@ -2761,12 +2865,21 @@ struct MirrorCameraView: View {
         )
     }
 
+    private func openSonificationPanel() {
+        guard let reviewCapture, !reviewCapture.isVideo else { return }
+
+        let renderedImage = MirrorOutputComposer.renderPhoto(
+            source: reviewCapture.sourceImage,
+            configuration: outputConfiguration
+        ) ?? reviewPreviewImage ?? reviewCapture.sourceImage
+        sonificationSession = ImageSonificationSession(image: renderedImage)
+    }
+
     private func logAnimacyCapture(imageId: String, userAccepted: Bool) {
-        let result = reviewAnimacyResult ?? camera.animacyResult
         let log = AnimacyCaptureLog(
             imageId: imageId,
             timestamp: Date(),
-            animacyScore: result?.score ?? 0,
+            animacyScore: 0,
             userAccepted: userAccepted,
             mirrorAngle: mode.primaryMirrorAngle,
             mirrorOffset: reflectionSelection.reflectedSide == nil ? nil : 0
@@ -3679,7 +3792,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     private let animacyScorer: any AnimacyScoring
 
     private var output: AVCaptureVideoDataOutput?
-    private var audioOutput: AVCaptureAudioDataOutput?
+    private var audioInput: AVCaptureDeviceInput?
     private var movieOutput: AVCaptureMovieFileOutput?
     private var latestFrame: CIImage?
     private var latestOriginalImage: UIImage?
@@ -3696,6 +3809,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     private var lastFrameTime: CFTimeInterval = 0
     private var lastAnimacyFrameTime: CFTimeInterval = 0
     private var isAnimacyScoreInFlight = false
+    private let isAnimacyScoringEnabled = false
     private var videoRecorder: MirrorVideoRecorder?
     private var videoRecordingURL: URL?
     private var videoRecordingCompletion: ((Result<URL, Error>) -> Void)?
@@ -3891,6 +4005,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
                 }
                 return
             }
+            self.configureAudioCaptureForRecordingIfNeeded()
             movieOutput.startRecording(to: url, recordingDelegate: self)
         }
     }
@@ -3975,7 +4090,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         for output in session.outputs {
             session.removeOutput(output)
         }
-        audioOutput = nil
+        audioInput = nil
         movieOutput = nil
 
         let device = captureDevice(for: position)
@@ -4005,10 +4120,6 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
             configure(connection: connection)
         }
 
-        if isAudioCaptureAuthorized {
-            configureAudioCapture()
-        }
-
         let movieOutput = AVCaptureMovieFileOutput()
         if session.canAddOutput(movieOutput) {
             session.addOutput(movieOutput)
@@ -4025,13 +4136,17 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         applyFocusAndExposureDefaults(to: device)
     }
 
-    private func configureAudioCapture() {
+    private func configureAudioCaptureForRecordingIfNeeded() {
+        guard isAudioCaptureAuthorized, audioInput == nil else { return }
         guard let audioDevice = AVCaptureDevice.default(for: .audio),
               let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
               session.canAddInput(audioInput) else {
             return
         }
+        session.beginConfiguration()
         session.addInput(audioInput)
+        session.commitConfiguration()
+        self.audioInput = audioInput
     }
 
     private func captureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
@@ -4109,7 +4224,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         ) else {
             return
         }
-        if let cgImage = image.cgImage {
+        if isAnimacyScoringEnabled, let cgImage = image.cgImage {
             submitAnimacyFrame(cgImage, now: now)
         }
 
@@ -4120,6 +4235,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     }
 
     private func submitAnimacyFrame(_ cgImage: CGImage, now: CFTimeInterval) {
+        guard isAnimacyScoringEnabled else { return }
         guard now - lastAnimacyFrameTime >= 1.0 / 10.0, !isAnimacyScoreInFlight else { return }
         lastAnimacyFrameTime = now
         isAnimacyScoreInFlight = true

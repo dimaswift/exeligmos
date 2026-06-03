@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import MapKit
+import SwiftData
 import SwiftUI
 import UIKit
 
@@ -21,8 +22,7 @@ struct JournalRecordRow: View {
 
         HStack(alignment: .top, spacing: 12) {
             OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, color: rowRarity.color)
-                .frame(width: 36, height: 36)
-                .padding(.top, 2)
+                .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
@@ -45,11 +45,6 @@ struct JournalRecordRow: View {
 
                 HStack {
                     Text(JournalFormatters.dateTime.string(from: record.eventDate))
-                    Spacer()
-                    Text(record.triggerType.displayName)
-                    if !record.mediaItems.isEmpty {
-                        Label("\(record.mediaItems.count)", systemImage: "paperclip")
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -61,6 +56,8 @@ struct JournalRecordRow: View {
 
 struct JournalRecordDetailView: View {
     @EnvironmentObject private var services: AppServices
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     let record: JournalRecord
     let entityTitle: String
@@ -68,6 +65,8 @@ struct JournalRecordDetailView: View {
     @StateObject private var audioPlayer = RecordAudioPlayer()
     @State private var exportShareItem: RecordShareItem?
     @State private var exportErrorMessage: String?
+    @State private var deleteErrorMessage: String?
+    @State private var isDeleteConfirmationPresented = false
     @State private var locationMapItem: RecordLocationMapItem?
 
     private var photos: [JournalMediaItem] {
@@ -89,16 +88,6 @@ struct JournalRecordDetailView: View {
         )
     }
 
-    private var capturedMediaURL: URL? {
-        guard let item = record.mediaItems.first(where: { $0.type == .symbolicPhoto })
-            ?? record.mediaItems.first(where: { $0.type == .video })
-            ?? photos.first else {
-            return nil
-        }
-        let url = MediaStorage.url(for: item)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
     private var recordCoordinate: CLLocationCoordinate2D? {
         guard let latitude = record.latitude, let longitude = record.longitude else {
             return nil
@@ -118,9 +107,6 @@ struct JournalRecordDetailView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(entityTitle)
                             .font(.headline)
-                        Text(record.octalAddress)
-                            .font(.system(.title2, design: .monospaced))
-                            .foregroundStyle(rarity.color)
                         FlipRarityBadge(rarity: rarity)
                         Text(JournalFormatters.dateTime.string(from: record.eventDate))
                             .font(.subheadline)
@@ -167,11 +153,8 @@ struct JournalRecordDetailView: View {
                 }
             }
 
-            Section("Audio") {
-                if audioItems.isEmpty {
-                    Text("No audio attached")
-                        .foregroundStyle(.secondary)
-                } else {
+            if !audioItems.isEmpty {
+                Section("Audio") {
                     ForEach(Array(audioItems.enumerated()), id: \.element.id) { index, item in
                         Button {
                             audioPlayer.toggle(url: MediaStorage.url(for: item))
@@ -186,9 +169,8 @@ struct JournalRecordDetailView: View {
             }
 
             Section("Metadata") {
+                MetadataRow(title: "Octal", value: record.octalAddress)
                 MetadataRow(title: "Saros", value: "\(record.saros)")
-                MetadataRow(title: "Bin", value: "\(record.binIndex)")
-                MetadataRow(title: "Trigger", value: record.triggerType.displayName)
                 if let recordCoordinate {
                     Button {
                         locationMapItem = RecordLocationMapItem(
@@ -206,18 +188,12 @@ struct JournalRecordDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if let capturedMediaURL {
-                    ShareLink(item: capturedMediaURL) {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .accessibilityLabel("Share captured media")
-                } else {
-                    Button {} label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .disabled(true)
-                    .accessibilityLabel("Share captured media")
+                Button(role: .destructive) {
+                    isDeleteConfirmationPresented = true
+                } label: {
+                    Image(systemName: "trash")
                 }
+                .accessibilityLabel("Delete record")
 
                 Button {
                     exportRecord()
@@ -237,6 +213,18 @@ struct JournalRecordDetailView: View {
             NavigationStack {
                 RecordLocationMapView(item: item)
             }
+        }
+        .confirmationDialog(
+            "Delete this record?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Record", role: .destructive) {
+                deleteRecord()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the record and its local media files.")
         }
         .alert("Audio failed", isPresented: Binding(get: {
             audioPlayer.errorMessage != nil
@@ -260,6 +248,17 @@ struct JournalRecordDetailView: View {
         } message: {
             Text(exportErrorMessage ?? "")
         }
+        .alert("Delete failed", isPresented: Binding(get: {
+            deleteErrorMessage != nil
+        }, set: { _ in
+            deleteErrorMessage = nil
+        })) {
+            Button("OK", role: .cancel) {
+                deleteErrorMessage = nil
+            }
+        } message: {
+            Text(deleteErrorMessage ?? "")
+        }
     }
 
     private func audioButtonTitle(for item: JournalMediaItem, index: Int) -> String {
@@ -275,6 +274,22 @@ struct JournalRecordDetailView: View {
             exportShareItem = RecordShareItem(url: url)
         } catch {
             exportErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteRecord() {
+        audioPlayer.stop()
+        let mediaItems = record.mediaItems
+
+        modelContext.delete(record)
+        do {
+            try modelContext.save()
+            for item in mediaItems {
+                try? FileManager.default.removeItem(at: MediaStorage.url(for: item))
+            }
+            dismiss()
+        } catch {
+            deleteErrorMessage = error.localizedDescription
         }
     }
 }
@@ -366,15 +381,27 @@ private struct MediaThumbnailStrip: View {
 
 private struct AttachedImageCarousel: View {
     let items: [JournalMediaItem]
+    @State private var selectedItemID: UUID?
+
+    private var selectedItem: JournalMediaItem? {
+        items.first { $0.id == selectedItemID } ?? items.first
+    }
+
+    private var selectedShareURL: URL? {
+        guard let selectedItem else { return nil }
+        let url = MediaStorage.url(for: selectedItem)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedItemID) {
             ForEach(items) { item in
+                let url = MediaStorage.url(for: item)
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(.secondary.opacity(0.12))
 
-                    if let image = UIImage(contentsOfFile: MediaStorage.url(for: item).path) {
+                    if let image = UIImage(contentsOfFile: url.path) {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
@@ -385,10 +412,28 @@ private struct AttachedImageCarousel: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal)
+                .tag(Optional(item.id))
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .automatic))
         .indexViewStyle(.page(backgroundDisplayMode: .always))
+        .contentShape(Rectangle())
+        .contextMenu {
+            if let selectedShareURL {
+                ShareLink(item: selectedShareURL) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+        }
+        .onAppear {
+            selectedItemID = selectedItemID ?? items.first?.id
+        }
+        .onChange(of: items.map(\.id)) { _, itemIDs in
+            guard let selectedItemID, itemIDs.contains(selectedItemID) else {
+                self.selectedItemID = itemIDs.first
+                return
+            }
+        }
     }
 }
 
@@ -414,6 +459,13 @@ private struct RecordVideoPlayerView: View {
             VideoPlayer(player: player)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal)
+                .contextMenu {
+                    if FileManager.default.fileExists(atPath: url.path) {
+                        ShareLink(item: url) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
         }
         .onDisappear {
             player.pause()

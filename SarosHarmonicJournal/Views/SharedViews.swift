@@ -451,6 +451,8 @@ struct FlipRarityBadge: View {
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(rarity.color)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, compact ? 5 : 7)
         .padding(.vertical, 3)
         .background(rarity.color.opacity(0.14), in: Capsule())

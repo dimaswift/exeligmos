@@ -22,13 +22,20 @@ enum ThreadLiveActivityError: LocalizedError {
 
 enum ThreadLiveActivityService {
     private static let alarmIdentifierPrefix = "saros-journal.live-tracking."
-    private static let minimumTrackingOrder = 2
 
-    static func snapshot(entity: TrackedEntity, reading: SarosClockReading) -> ThreadTrackingSnapshot {
-        let currentTargetBinIndex = nextTrackedFlipBin(after: reading.binIndex, reading: reading) ?? reading.binCount
-        let currentPayload = flipPayload(for: currentTargetBinIndex, reading: reading)
-        let nextPayload = nextTrackedFlipBin(after: currentTargetBinIndex, reading: reading)
-            .map { flipPayload(for: $0, reading: reading) }
+    static func snapshot(
+        entity: TrackedEntity,
+        reading: SarosClockReading,
+        trackingRarity: FlipRarity = .common
+    ) -> ThreadTrackingSnapshot {
+        let currentPayload = trackingPayload(for: trackingRarity, reading: reading)
+            ?? trackingPayload(for: .common, reading: reading)
+            ?? flipPayload(for: reading.binCount, reading: reading)
+        let nextPayload = nextTrackingPayload(
+            after: currentPayload.targetBinIndex,
+            trackingRarity: currentPayload.rarity,
+            reading: reading
+        )
 
         return ThreadTrackingSnapshot(
             threadID: entity.id.uuidString,
@@ -113,18 +120,40 @@ enum ThreadLiveActivityService {
     private static func flipPayload(
         for targetBinIndex: Int,
         reading: SarosClockReading
-    ) -> (glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date) {
+    ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date) {
         let glyph = reading.octalAddress(forBinIndex: targetBinIndex)
         let rarity = reading.flipRarity(forBinIndex: targetBinIndex)
         let order = targetBinIndex >= reading.binCount
             ? max(7, reading.harmonicDepth)
             : max(1, FlipRarity.order(forOctalAddress: glyph, harmonicDepth: reading.harmonicDepth))
         return (
+            targetBinIndex: targetBinIndex,
             glyph: glyph,
             rarity: rarity,
             orderLabel: rarity == .saros ? "Order 7+" : "Order \(order)",
             flipDate: reading.date(forBinIndex: targetBinIndex)
         )
+    }
+
+    private static func trackingPayload(
+        for rarity: FlipRarity,
+        reading: SarosClockReading
+    ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date)? {
+        guard let countdown = reading.countdown(rarity: rarity, now: Date()) else { return nil }
+        return flipPayload(for: countdown.targetBinIndex, reading: reading)
+    }
+
+    private static func nextTrackingPayload(
+        after targetBinIndex: Int,
+        trackingRarity rarity: FlipRarity,
+        reading: SarosClockReading
+    ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date)? {
+        guard rarity != .saros,
+              let nextBinIndex = reading.nextQualifiedFlipBin(after: targetBinIndex, order: rarity.order, exact: true)
+        else {
+            return nil
+        }
+        return flipPayload(for: nextBinIndex, reading: reading)
     }
 
     private static func trackingColorHex(for rarity: FlipRarity) -> String {
@@ -178,14 +207,6 @@ enum ThreadLiveActivityService {
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let identifier = "\(threadPrefix)\(Int(snapshot.flipDate.timeIntervalSince1970))"
         try? await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
-    }
-
-    private static func nextTrackedFlipBin(after binIndex: Int, reading: SarosClockReading) -> Int? {
-        reading.nextQualifiedFlipBin(
-            after: binIndex,
-            order: minimumTrackingOrder,
-            exact: false
-        )
     }
 
     private static func pendingNotificationRequests() async -> [UNNotificationRequest] {

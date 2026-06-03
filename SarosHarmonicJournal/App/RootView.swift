@@ -265,7 +265,12 @@ private struct LiveTrackingRolloverObserver: View {
                 date: date,
                 harmonicDepth: snapshot.harmonicDepth
             )
-            let nextSnapshot = ThreadLiveActivityService.snapshot(entity: entity, reading: reading)
+            let trackingRarity = FlipRarity(rawValue: snapshot.rarityRawValue) ?? .common
+            let nextSnapshot = ThreadLiveActivityService.snapshot(
+                entity: entity,
+                reading: reading,
+                trackingRarity: trackingRarity
+            )
             guard nextSnapshot.flipDate > snapshot.flipDate.addingTimeInterval(0.5) else { return }
             try await ThreadLiveActivityService.start(snapshot: nextSnapshot)
         } catch {
