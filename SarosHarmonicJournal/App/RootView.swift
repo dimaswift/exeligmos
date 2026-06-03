@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 enum AppTab: String, CaseIterable, Identifiable {
+    case feed
     case clock
     case catalog
     case camera
@@ -11,6 +12,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .feed: "Feed"
         case .clock: "Threads"
         case .catalog: "Catalog"
         case .camera: "Camera"
@@ -20,6 +22,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .feed: "rectangle.stack"
         case .clock: "moonphase.new.moon"
         case .catalog: "globe.americas"
         case .camera: "camera.viewfinder"
@@ -32,7 +35,7 @@ struct RootView: View {
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
-    @State private var selectedTab: AppTab = .clock
+    @State private var selectedTab: AppTab = .feed
     @State private var captureEntity: TrackedEntity?
 
     var body: some View {
@@ -74,6 +77,8 @@ struct RootView: View {
     @ViewBuilder
     private func screen(for tab: AppTab) -> some View {
         switch tab {
+        case .feed:
+            FeedView()
         case .clock:
             ClockDashboardView()
         case .catalog:
@@ -118,6 +123,161 @@ struct RootView: View {
         guard let entityID = AppDeepLinkStore.consumePendingRecordCapture() else { return }
         openRecordCapture(for: entityID)
     }
+}
+
+private struct FeedView: View {
+    @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @Query(sort: \JournalRecord.eventDate, order: .reverse) private var records: [JournalRecord]
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+
+    @State private var selectedRarity: FlipRarity?
+    @State private var dateFilterMode: FeedDateFilterMode = .all
+    @State private var selectedDate = Date()
+    @State private var selectedRecord: JournalRecord?
+
+    private var entityTitlesByID: [UUID: String] {
+        Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0.displayTitle) })
+    }
+
+    private var filteredRecords: [JournalRecord] {
+        records.filter { record in
+            let matchesRarity = selectedRarity.map { recordRarity(for: record) == $0 } ?? true
+            let matchesDate = switch dateFilterMode {
+            case .all:
+                true
+            case .day:
+                Calendar.current.isDate(record.eventDate, inSameDayAs: selectedDate)
+            }
+            return matchesRarity && matchesDate
+        }
+    }
+
+    private var recordGroups: [FeedRecordDayGroup] {
+        let calendar = Calendar.current
+        return Dictionary(grouping: filteredRecords) { record in
+            calendar.startOfDay(for: record.eventDate)
+        }
+        .map { day, records in
+            FeedRecordDayGroup(
+                day: day,
+                records: records.sorted { $0.eventDate > $1.eventDate }
+            )
+        }
+        .sorted { $0.day > $1.day }
+    }
+
+    var body: some View {
+        List {
+            filterSection
+
+            if records.isEmpty {
+                Section {
+                    ContentUnavailableView("No records yet", systemImage: "rectangle.stack")
+                }
+            } else if filteredRecords.isEmpty {
+                Section {
+                    ContentUnavailableView("No matching records", systemImage: "line.3.horizontal.decrease.circle")
+                }
+            } else {
+                ForEach(recordGroups) { group in
+                    Section {
+                        ForEach(group.records) { record in
+                            Button {
+                                selectedRecord = record
+                            } label: {
+                                JournalRecordRow(
+                                    record: record,
+                                    entityTitle: entityTitle(for: record),
+                                    rarity: recordRarity(for: record)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .listRowSeparator(.visible)
+                            .listRowSeparatorTint(.white.opacity(0.28))
+                        }
+                    } header: {
+                        Text(dayTitle(for: group.day))
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .textCase(nil)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Feed")
+        .navigationDestination(item: $selectedRecord) { record in
+            JournalRecordDetailView(
+                record: record,
+                entityTitle: entityTitle(for: record)
+            )
+        }
+    }
+
+    private var filterSection: some View {
+        Section("Filters") {
+            Picker("Rarity", selection: $selectedRarity) {
+                Text("All rarities").tag(nil as FlipRarity?)
+                ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
+                    Label(rarity.title, systemImage: rarity.symbolName)
+                        .tag(Optional(rarity))
+                }
+            }
+            .pickerStyle(.menu)
+
+            Picker("Date", selection: $dateFilterMode) {
+                ForEach(FeedDateFilterMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if dateFilterMode == .day {
+                DatePicker("Day", selection: $selectedDate, displayedComponents: .date)
+            }
+        }
+    }
+
+    private func entityTitle(for record: JournalRecord) -> String {
+        entityTitlesByID[record.entityID] ?? "Saros \(record.saros)"
+    }
+
+    private func recordRarity(for record: JournalRecord) -> FlipRarity {
+        FlipRarity.rarity(
+            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            isEclipse: record.triggerType == .eclipse
+        )
+    }
+
+    private func dayTitle(for day: Date) -> String {
+        if Calendar.current.isDateInToday(day) {
+            return "Today"
+        }
+        if Calendar.current.isDateInYesterday(day) {
+            return "Yesterday"
+        }
+        return JournalFormatters.date.string(from: day)
+    }
+}
+
+private enum FeedDateFilterMode: String, CaseIterable, Identifiable {
+    case all
+    case day
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All Dates"
+        case .day: "Day"
+        }
+    }
+}
+
+private struct FeedRecordDayGroup: Identifiable {
+    let day: Date
+    let records: [JournalRecord]
+
+    var id: Date { day }
 }
 
 extension Notification.Name {
