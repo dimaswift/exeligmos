@@ -29,6 +29,26 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         completionHandler([.banner, .list, .sound, .badge])
     }
 
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+
+        let userInfo = response.notification.request.content.userInfo
+        guard userInfo["trigger"] as? String == "liveTrackingFlip",
+              let entityIDString = userInfo["entityID"] as? String,
+              let entityID = UUID(uuidString: entityIDString) else {
+            return
+        }
+
+        AppDeepLinkStore.storePendingRecordCapture(entityID: entityID)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .recordCaptureRequested, object: entityID)
+        }
+    }
+
     func refreshSchedules(
         for entities: [TrackedEntity],
         clockService: any SarosClockService,

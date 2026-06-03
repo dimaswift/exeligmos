@@ -7,6 +7,7 @@ final class AppServices: ObservableObject {
     let notificationScheduler: NotificationScheduler
     let exportService: ExportService
     let syncService: SyncService
+    let animacyDatasetQueue: AnimacyDatasetQueueStore
 
     init(eclipseService: any EclipseService = CPlusPlusEclipseService()) {
         self.eclipseService = eclipseService
@@ -14,5 +15,6 @@ final class AppServices: ObservableObject {
         self.notificationScheduler = .shared
         self.exportService = ExportService()
         self.syncService = SyncService()
+        self.animacyDatasetQueue = AnimacyDatasetQueueStore()
     }
 }

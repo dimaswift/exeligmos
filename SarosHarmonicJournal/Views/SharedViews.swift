@@ -691,11 +691,15 @@ private struct OctalGlyphGeometry {
         var path = Path()
 
         for socketIndex in 0..<digitCount {
-            let digit = digits[digitCount - 1 - socketIndex]
+            let digit = digits[digitIndex(forSocketIndex: socketIndex)]
             path.addPath(armTemplatePaths[socketIndex][digit])
         }
 
         return path.applying(transform(in: rect))
+    }
+
+    private func digitIndex(forSocketIndex socketIndex: Int) -> Int {
+        socketIndex == 0 ? 0 : digitCount - socketIndex
     }
 
     private func normalizedDigits(_ value: String) -> [Int] {

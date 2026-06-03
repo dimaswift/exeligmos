@@ -19,6 +19,9 @@ struct SettingsView: View {
     @State private var syncMessage = ""
     @State private var errorMessage: String?
     @State private var isSyncing = false
+    @State private var datasetSummary = AnimacyDatasetQueueSummary.empty
+    @State private var datasetMessage = ""
+    @State private var isUploadingDataset = false
 
     private var catalogBounds: CatalogCenturyBounds {
         CatalogCenturyBounds(startCentury: catalogStartCentury, endCentury: catalogEndCentury)
@@ -159,6 +162,38 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Animacy Dataset") {
+                MetadataRow(title: "Pending captures", value: "\(datasetSummary.pendingCaptureCount)")
+                MetadataRow(title: "Failed captures", value: "\(datasetSummary.failedCaptureCount)")
+                MetadataRow(title: "Completed captures", value: "\(datasetSummary.completedCaptureCount)")
+                MetadataRow(title: "Queued samples", value: "\(datasetSummary.pendingTransformationCount)")
+                MetadataRow(title: "Uploaded samples", value: "\(datasetSummary.completedTransformationCount)")
+
+                Button {
+                    Task { await uploadPendingDatasetCaptures() }
+                } label: {
+                    if isUploadingDataset {
+                        ProgressView()
+                    } else {
+                        Label("Upload pending captures", systemImage: "arrow.up.circle")
+                    }
+                }
+                .disabled(isUploadingDataset || !datasetSummary.hasPendingUploads)
+
+                Button(role: .destructive) {
+                    clearCompletedDatasetCaptures()
+                } label: {
+                    Label("Clear completed uploads", systemImage: "trash")
+                }
+                .disabled(datasetSummary.completedCaptureCount == 0)
+
+                if !datasetMessage.isEmpty {
+                    Text(datasetMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Diagnostics") {
                 Button {
                     runDiagnostics()
@@ -174,6 +209,9 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .task {
+            refreshDatasetSummary()
+        }
         .onChange(of: harmonicDepth) { _, newDepth in
             Task {
                 await services.notificationScheduler.refreshSchedules(
@@ -307,6 +345,45 @@ struct SettingsView: View {
             diagnosticMessage = "\(allSeries.count) Saros series loaded. Nearest eclipse: Saros \(nearest?.saros ?? 0)."
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshDatasetSummary() {
+        do {
+            datasetSummary = try services.animacyDatasetQueue.summary()
+        } catch {
+            datasetMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func uploadPendingDatasetCaptures() async {
+        isUploadingDataset = true
+        defer {
+            isUploadingDataset = false
+            refreshDatasetSummary()
+        }
+
+        do {
+            let summary = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)
+            if summary.attemptedCount == 0 {
+                datasetMessage = "No pending animacy captures."
+            } else if summary.failedCount > 0 {
+                datasetMessage = "Uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(summary.lastError ?? "")"
+            } else {
+                datasetMessage = "Uploaded \(summary.uploadedCount) animacy captures."
+            }
+        } catch {
+            datasetMessage = error.localizedDescription
+        }
+    }
+
+    private func clearCompletedDatasetCaptures() {
+        do {
+            datasetSummary = try services.animacyDatasetQueue.clearCompleted()
+            datasetMessage = "Cleared completed animacy uploads."
+        } catch {
+            datasetMessage = error.localizedDescription
         }
     }
 }
