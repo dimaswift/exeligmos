@@ -15,6 +15,7 @@ final class TrackedEntity {
     var emoji: String?
     var photoLocalPath: String?
     var notes: String?
+    var groupID: UUID?
 
     var nearestEclipseID: String?
     var birthOrAnchorEclipseDate: Date?
@@ -33,6 +34,7 @@ final class TrackedEntity {
         emoji: String? = nil,
         photoLocalPath: String? = nil,
         notes: String? = nil,
+        groupID: UUID? = nil,
         nearestEclipseID: String? = nil,
         birthOrAnchorEclipseDate: Date? = nil,
         notificationsEnabled: Bool = true,
@@ -48,6 +50,7 @@ final class TrackedEntity {
         self.emoji = emoji
         self.photoLocalPath = photoLocalPath
         self.notes = notes
+        self.groupID = groupID
         self.nearestEclipseID = nearestEclipseID
         self.birthOrAnchorEclipseDate = birthOrAnchorEclipseDate
         self.notificationsEnabled = notificationsEnabled

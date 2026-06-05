@@ -3,8 +3,40 @@ import Foundation
 struct JournalExportArchive: Codable {
     let appVersion: String
     let exportTimestamp: Date
+    let threadGroups: [ThreadGroupSnapshot]
     let entities: [TrackedEntitySnapshot]
     let records: [JournalRecordSnapshot]
+
+    init(
+        appVersion: String,
+        exportTimestamp: Date,
+        threadGroups: [ThreadGroupSnapshot] = [],
+        entities: [TrackedEntitySnapshot],
+        records: [JournalRecordSnapshot]
+    ) {
+        self.appVersion = appVersion
+        self.exportTimestamp = exportTimestamp
+        self.threadGroups = threadGroups
+        self.entities = entities
+        self.records = records
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case appVersion
+        case exportTimestamp
+        case threadGroups
+        case entities
+        case records
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.appVersion = try container.decode(String.self, forKey: .appVersion)
+        self.exportTimestamp = try container.decode(Date.self, forKey: .exportTimestamp)
+        self.threadGroups = try container.decodeIfPresent([ThreadGroupSnapshot].self, forKey: .threadGroups) ?? []
+        self.entities = try container.decode([TrackedEntitySnapshot].self, forKey: .entities)
+        self.records = try container.decode([JournalRecordSnapshot].self, forKey: .records)
+    }
 }
 
 struct RecordExportArchive: Codable {
@@ -35,10 +67,20 @@ struct TrackedEntitySnapshot: Codable, Identifiable {
     let emoji: String?
     let photoLocalPath: String?
     let notes: String?
+    let groupID: UUID?
     let nearestEclipseID: String?
     let birthOrAnchorEclipseDate: Date?
     let notificationsEnabled: Bool
     let notifyBeforeFlipMinutes: Int
+}
+
+struct ThreadGroupSnapshot: Codable, Identifiable {
+    let id: UUID
+    let createdAt: Date
+    let updatedAt: Date
+    let name: String
+    let emoji: String
+    let rarityRawValue: String
 }
 
 struct JournalRecordSnapshot: Codable, Identifiable {
@@ -61,17 +103,18 @@ struct JournalRecordSnapshot: Codable, Identifiable {
 }
 
 final class ExportService {
-    func makeArchive(entities: [TrackedEntity], records: [JournalRecord]) -> JournalExportArchive {
+    func makeArchive(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) -> JournalExportArchive {
         JournalExportArchive(
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
             exportTimestamp: Date(),
+            threadGroups: groups.map(ThreadGroupSnapshot.init(group:)),
             entities: entities.map(TrackedEntitySnapshot.init(entity:)),
             records: records.map(JournalRecordSnapshot.init(record:))
         )
     }
 
-    func exportJSON(entities: [TrackedEntity], records: [JournalRecord]) throws -> URL {
-        let archive = makeArchive(entities: entities, records: records)
+    func exportJSON(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) throws -> URL {
+        let archive = makeArchive(entities: entities, records: records, groups: groups)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -81,6 +124,7 @@ final class ExportService {
         try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
 
         try encoder.encode(archive).write(to: root.appendingPathComponent("archive.json"), options: [.atomic])
+        try encoder.encode(archive.threadGroups).write(to: root.appendingPathComponent("thread_groups.json"), options: [.atomic])
         try encoder.encode(archive.entities).write(to: root.appendingPathComponent("entities.json"), options: [.atomic])
         try encoder.encode(archive.records).write(to: root.appendingPathComponent("records.json"), options: [.atomic])
 
@@ -351,10 +395,24 @@ private extension TrackedEntitySnapshot {
             emoji: entity.emoji,
             photoLocalPath: entity.photoLocalPath,
             notes: entity.notes,
+            groupID: entity.groupID,
             nearestEclipseID: entity.nearestEclipseID,
             birthOrAnchorEclipseDate: entity.birthOrAnchorEclipseDate,
             notificationsEnabled: entity.notificationsEnabled,
             notifyBeforeFlipMinutes: entity.notifyBeforeFlipMinutes
+        )
+    }
+}
+
+private extension ThreadGroupSnapshot {
+    init(group: ThreadGroup) {
+        self.init(
+            id: group.id,
+            createdAt: group.createdAt,
+            updatedAt: group.updatedAt,
+            name: group.name,
+            emoji: group.emoji,
+            rarityRawValue: group.rarityRawValue
         )
     }
 }

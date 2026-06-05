@@ -315,6 +315,7 @@ private struct AutoSyncObserver: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
     @AppStorage(JournalSettings.autoSyncEnabledKey) private var autoSyncEnabled = false
@@ -373,7 +374,8 @@ private struct AutoSyncObserver: View {
                 _ = try await services.syncService.pushMissingRecords(
                     to: syncServerURL,
                     entities: entities,
-                    records: records
+                    records: records,
+                    groups: threadGroups
                 )
             }
             _ = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)

@@ -10,6 +10,7 @@ struct ClockDashboardView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
@@ -17,6 +18,7 @@ struct ClockDashboardView: View {
     @State private var isAddingEntity = false
     @State private var captureEntity: TrackedEntity?
     @State private var captureStartedAt = Date()
+    @State private var selectedGroupFilter: ThreadGroupFilter = .all
     @State private var now = Date()
 
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -46,8 +48,10 @@ struct ClockDashboardView: View {
                     } description: {
                         Text("Add an anchor date to start a private Saros clock.")
                     }
+                } else if filteredEntities.isEmpty {
+                    ContentUnavailableView("No threads in \(selectedGroupFilter.title(groups: threadGroups))", systemImage: "line.3.horizontal.decrease.circle")
                 } else {
-                    ForEach(entities) { entity in
+                    ForEach(filteredEntities) { entity in
                         let reading = reading(for: entity)
                         let countdown = reading.flatMap { currentRarityCountdown(for: $0) ?? nearestRarityCountdown(for: $0) }
                         NavigationLink {
@@ -57,7 +61,8 @@ struct ClockDashboardView: View {
                                 entity: entity,
                                 reading: reading,
                                 countdown: countdown,
-                                latestRecord: latestRecord(for: entity)
+                                latestRecord: latestRecord(for: entity),
+                                group: group(for: entity)
                             )
                         }
                     }
@@ -67,7 +72,9 @@ struct ClockDashboardView: View {
         }
         .navigationTitle("Threads")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                groupFilterMenu
+
                 Button {
                     isAddingEntity = true
                 } label: {
@@ -126,9 +133,50 @@ struct ClockDashboardView: View {
     }
 
     private var entityReadings: [(entity: TrackedEntity, reading: SarosClockReading)] {
-        entities.compactMap { entity in
+        filteredEntities.compactMap { entity in
             guard let reading = reading(for: entity) else { return nil }
             return (entity, reading)
+        }
+    }
+
+    private var filteredEntities: [TrackedEntity] {
+        entities.filter { selectedGroupFilter.matches($0) }
+    }
+
+    @ViewBuilder
+    private var groupFilterMenu: some View {
+        Menu {
+            Button {
+                selectedGroupFilter = .all
+            } label: {
+                Label("All groups", systemImage: selectedGroupFilter == .all ? "checkmark" : "circle.grid.2x2")
+            }
+
+            Button {
+                selectedGroupFilter = .common
+            } label: {
+                Label(ThreadGroup.commonName, systemImage: selectedGroupFilter == .common ? "checkmark" : ThreadGroup.commonRarity.symbolName)
+            }
+
+            if !threadGroups.isEmpty {
+                Divider()
+                ForEach(threadGroups) { group in
+                    Button {
+                        selectedGroupFilter = .group(group.id)
+                    } label: {
+                        Label("\(group.displayEmoji) \(group.displayName)", systemImage: selectedGroupFilter == .group(group.id) ? "checkmark" : group.rarity.symbolName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: selectedGroupFilter.symbolName(groups: threadGroups))
+        }
+        .accessibilityLabel("Filter threads by group")
+        .onChange(of: threadGroups.map(\.id)) { _, groupIDs in
+            if case .group(let groupID) = selectedGroupFilter,
+               !groupIDs.contains(groupID) {
+                selectedGroupFilter = .all
+            }
         }
     }
 
@@ -176,6 +224,11 @@ struct ClockDashboardView: View {
         records.first { $0.entityID == entity.id }
     }
 
+    private func group(for entity: TrackedEntity) -> ThreadGroup? {
+        guard let groupID = entity.groupID else { return nil }
+        return threadGroups.first { $0.id == groupID }
+    }
+
     private func nextCustomFlip(for entity: TrackedEntity, after date: Date) -> CustomFlipEvent? {
         customFlips
             .filter { $0.entityID == entity.id && $0.date >= date }
@@ -199,10 +252,50 @@ struct ClockDashboardView: View {
     }
 
     private func deleteEntities(at offsets: IndexSet) {
+        let visibleEntities = filteredEntities
         for offset in offsets {
-            modelContext.delete(entities[offset])
+            modelContext.delete(visibleEntities[offset])
         }
         try? modelContext.save()
+    }
+}
+
+private enum ThreadGroupFilter: Equatable {
+    case all
+    case common
+    case group(UUID)
+
+    func matches(_ entity: TrackedEntity) -> Bool {
+        switch self {
+        case .all:
+            true
+        case .common:
+            entity.groupID == nil
+        case .group(let groupID):
+            entity.groupID == groupID
+        }
+    }
+
+    func title(groups: [ThreadGroup]) -> String {
+        switch self {
+        case .all:
+            "All groups"
+        case .common:
+            ThreadGroup.commonName
+        case .group(let groupID):
+            groups.first { $0.id == groupID }?.displayName ?? "Group"
+        }
+    }
+
+    func symbolName(groups: [ThreadGroup]) -> String {
+        switch self {
+        case .all:
+            "line.3.horizontal.decrease.circle"
+        case .common:
+            ThreadGroup.commonRarity.symbolName
+        case .group(let groupID):
+            groups.first { $0.id == groupID }?.rarity.symbolName ?? "line.3.horizontal.decrease.circle"
+        }
     }
 }
 
@@ -322,6 +415,7 @@ private struct EntityCardView: View {
     let reading: SarosClockReading?
     let countdown: SarosFlipCountdown?
     let latestRecord: JournalRecord?
+    let group: ThreadGroup?
 
     var body: some View {
         let rarityColor = countdown?.rarity.color ?? .secondary
@@ -330,8 +424,14 @@ private struct EntityCardView: View {
             avatar(color: rarityColor)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(entity.displayTitle)
-                    .font(.headline)
+                HStack(spacing: 7) {
+                    Text(entity.displayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if let group {
+                        ThreadGroupInlineBadge(group: group)
+                    }
+                }
                 Text("Saros \(entity.saros) · \(reading?.octalAddress ?? "----")")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -422,6 +522,7 @@ private struct EntityDetailView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var allEntities: [TrackedEntity]
+    @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.eventDate, order: .reverse) private var records: [JournalRecord]
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
@@ -435,6 +536,7 @@ private struct EntityDetailView: View {
     @State private var isStartingLiveTracking = false
     @State private var liveTrackingError: String?
     @State private var customFlipDraft: CustomFlipDraft?
+    @State private var threadGroupDraft: ThreadGroupDraft?
     @State private var now = Date()
 
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -531,6 +633,13 @@ private struct EntityDetailView: View {
                 }
             }
         }
+        .sheet(item: $threadGroupDraft) { draft in
+            NavigationStack {
+                ThreadGroupEditorView(draft: draft) { savedDraft in
+                    addThreadGroup(savedDraft)
+                }
+            }
+        }
         .onReceive(countdownTimer) { date in
             now = date
         }
@@ -573,6 +682,11 @@ private struct EntityDetailView: View {
 
     private var entityCustomFlips: [CustomFlipEvent] {
         customFlips.filter { $0.entityID == entity.id }
+    }
+
+    private var selectedThreadGroup: ThreadGroup? {
+        guard let groupID = entity.groupID else { return nil }
+        return threadGroups.first { $0.id == groupID }
     }
 
     private func currentRarityCountdown(for reading: SarosClockReading) -> SarosFlipCountdown? {
@@ -665,6 +779,48 @@ private struct EntityDetailView: View {
             Section("Info") {
                 ContentUnavailableView("Info unavailable", systemImage: "clock.badge.questionmark")
             }
+        }
+
+        threadGroupSection
+    }
+
+    private var threadGroupSection: some View {
+        Section("Group") {
+            HStack(spacing: 12) {
+                ThreadGroupSummaryView(group: selectedThreadGroup)
+
+                Spacer(minLength: 12)
+
+                Menu {
+                    Button {
+                        assignThreadGroup(nil)
+                    } label: {
+                        Label(ThreadGroup.commonName, systemImage: ThreadGroup.commonRarity.symbolName)
+                    }
+
+                    if !threadGroups.isEmpty {
+                        Divider()
+                        ForEach(threadGroups) { group in
+                            Button {
+                                assignThreadGroup(group)
+                            } label: {
+                                Label("\(group.displayEmoji) \(group.displayName)", systemImage: group.rarity.symbolName)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button {
+                        threadGroupDraft = ThreadGroupDraft()
+                    } label: {
+                        Label("New group", systemImage: "plus.circle")
+                    }
+                } label: {
+                    Text("Change")
+                }
+            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -792,6 +948,22 @@ private struct EntityDetailView: View {
         try? modelContext.save()
     }
 
+    private func addThreadGroup(_ draft: ThreadGroupDraft) {
+        let group = ThreadGroup(
+            name: draft.name,
+            emoji: draft.emoji,
+            rarity: draft.rarity
+        )
+        modelContext.insert(group)
+        assignThreadGroup(group)
+    }
+
+    private func assignThreadGroup(_ group: ThreadGroup?) {
+        entity.groupID = group?.id
+        entity.touch()
+        try? modelContext.save()
+    }
+
     private func deleteCustomFlips(at offsets: IndexSet) {
         let visible = entityCustomFlips
         for offset in offsets {
@@ -815,6 +987,144 @@ private enum ThreadDetailTab: String, CaseIterable, Identifiable {
         case .info: "Info"
         case .flips: "Flips"
         case .custom: "Custom"
+        }
+    }
+}
+
+private struct ThreadGroupInlineBadge: View {
+    let group: ThreadGroup
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(group.displayEmoji)
+                .font(.caption.weight(.semibold))
+                .frame(width: 18, height: 18)
+                .background(group.rarity.color.opacity(0.16), in: Circle())
+            FlipRarityBadge(rarity: group.rarity, compact: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.displayName), \(group.rarity.title)")
+    }
+}
+
+private struct ThreadGroupSummaryView: View {
+    let group: ThreadGroup?
+
+    private var name: String {
+        group?.displayName ?? ThreadGroup.commonName
+    }
+
+    private var emoji: String {
+        group?.displayEmoji ?? ThreadGroup.commonEmoji
+    }
+
+    private var rarity: FlipRarity {
+        group?.rarity ?? ThreadGroup.commonRarity
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(emoji)
+                .font(.title2)
+                .frame(width: 42, height: 42)
+                .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(rarity.color.opacity(0.25), lineWidth: 1)
+                }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                FlipRarityBadge(rarity: rarity)
+            }
+        }
+    }
+}
+
+struct ThreadGroupDraft: Identifiable {
+    let id = UUID()
+    var groupID: UUID?
+    var name: String
+    var emoji: String
+    var rarity: FlipRarity
+
+    init(
+        groupID: UUID? = nil,
+        name: String = "",
+        emoji: String = "✨",
+        rarity: FlipRarity = .common
+    ) {
+        self.groupID = groupID
+        self.name = name
+        self.emoji = emoji
+        self.rarity = rarity
+    }
+
+    init(group: ThreadGroup) {
+        self.init(
+            groupID: group.id,
+            name: group.displayName,
+            emoji: group.displayEmoji,
+            rarity: group.rarity
+        )
+    }
+}
+
+struct ThreadGroupEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let save: (ThreadGroupDraft) -> Void
+    private let groupID: UUID?
+    @State private var name: String
+    @State private var emoji: String
+    @State private var rarity: FlipRarity
+
+    init(draft: ThreadGroupDraft, save: @escaping (ThreadGroupDraft) -> Void) {
+        self.save = save
+        self.groupID = draft.groupID
+        _name = State(initialValue: draft.name)
+        _emoji = State(initialValue: draft.emoji)
+        _rarity = State(initialValue: draft.rarity)
+    }
+
+    var body: some View {
+        Form {
+            Section("Group") {
+                TextField("Name", text: $name)
+                TextField("Emoji", text: $emoji)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Picker("Rarity", selection: $rarity) {
+                    ForEach(FlipRarity.allCases) { rarity in
+                        Label(rarity.title, systemImage: rarity.symbolName)
+                            .tag(rarity)
+                    }
+                }
+            }
+        }
+        .navigationTitle(groupID == nil ? "New Group" : "Edit Group")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button(groupID == nil ? "Create" : "Save") {
+                    save(ThreadGroupDraft(
+                        groupID: groupID,
+                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                        emoji: emoji.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? ThreadGroup.commonEmoji,
+                        rarity: rarity
+                    ))
+                    dismiss()
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 }

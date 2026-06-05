@@ -5,6 +5,7 @@ struct EntityEditorView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     let entity: TrackedEntity?
@@ -14,6 +15,7 @@ struct EntityEditorView: View {
     @State private var saros = 141
     @State private var emoji = ""
     @State private var notes = ""
+    @State private var selectedGroupID: UUID?
     @State private var notificationsEnabled = true
     @State private var suggestionText = ""
     @State private var errorMessage: String?
@@ -41,6 +43,17 @@ struct EntityEditorView: View {
 
             Section("Saros clock") {
                 Stepper("Saros \(saros)", value: $saros, in: 1...180)
+            }
+
+            Section("Group") {
+                Picker("Group", selection: $selectedGroupID) {
+                    Text(ThreadGroup.commonName)
+                        .tag(nil as UUID?)
+                    ForEach(threadGroups) { group in
+                        Text("\(group.displayEmoji) \(group.displayName)")
+                            .tag(Optional(group.id))
+                    }
+                }
             }
 
             Section("Notifications") {
@@ -77,6 +90,7 @@ struct EntityEditorView: View {
             saros = entity.saros
             emoji = entity.emoji ?? ""
             notes = entity.notes ?? ""
+            selectedGroupID = entity.groupID
             notificationsEnabled = entity.notificationsEnabled
         } else {
             suggestNearestSaros()
@@ -101,6 +115,7 @@ struct EntityEditorView: View {
                 entity.harmonicDepth = harmonicDepth
                 entity.emoji = Optional(emoji).nilIfBlank
                 entity.notes = Optional(notes).nilIfBlank
+                entity.groupID = selectedGroupID
                 entity.notificationsEnabled = notificationsEnabled
                 entity.touch()
             } else {
@@ -113,6 +128,7 @@ struct EntityEditorView: View {
                     notes: Optional(notes).nilIfBlank,
                     eclipseService: services.eclipseService
                 )
+                newEntity.groupID = selectedGroupID
                 newEntity.notificationsEnabled = notificationsEnabled
                 modelContext.insert(newEntity)
             }

@@ -116,8 +116,13 @@ final class SyncService {
         }
     }
 
-    func push(to serverURLString: String, entities: [TrackedEntity], records: [JournalRecord]) async throws -> SyncPushSummary {
-        let payload = try makePayload(entities: entities, records: records)
+    func push(
+        to serverURLString: String,
+        entities: [TrackedEntity],
+        records: [JournalRecord],
+        groups: [ThreadGroup] = []
+    ) async throws -> SyncPushSummary {
+        let payload = try makePayload(entities: entities, records: records, groups: groups)
         let url = try endpoint(serverURLString, path: "/api/backups")
 
         var request = URLRequest(url: url)
@@ -138,7 +143,8 @@ final class SyncService {
     func pushMissingRecords(
         to serverURLString: String,
         entities: [TrackedEntity],
-        records: [JournalRecord]
+        records: [JournalRecord],
+        groups: [ThreadGroup] = []
     ) async throws -> SyncPushSummary {
         let manifest = try await fetchManifest(from: serverURLString)
         let uploadedRecordIDs = Set(manifest.recordIDs)
@@ -150,7 +156,9 @@ final class SyncService {
 
         let neededEntityIDs = Set(missingRecords.map(\.entityID))
         let entitiesForRecords = entities.filter { neededEntityIDs.contains($0.id) }
-        let payload = try makePayload(entities: entitiesForRecords, records: missingRecords)
+        let neededGroupIDs = Set(entitiesForRecords.compactMap(\.groupID))
+        let groupsForRecords = groups.filter { neededGroupIDs.contains($0.id) }
+        let payload = try makePayload(entities: entitiesForRecords, records: missingRecords, groups: groupsForRecords)
         let url = try endpoint(serverURLString, path: "/api/backups/delta")
 
         var request = URLRequest(url: url)
@@ -173,10 +181,11 @@ final class SyncService {
         from serverURLString: String,
         modelContext: ModelContext,
         entities: [TrackedEntity],
-        records: [JournalRecord]
+        records: [JournalRecord],
+        groups: [ThreadGroup] = []
     ) async throws -> SyncRestoreSummary {
         let payload = try await fetchLatest(from: serverURLString)
-        return try restore(payload: payload, modelContext: modelContext, entities: entities, records: records)
+        return try restore(payload: payload, modelContext: modelContext, entities: entities, records: records, groups: groups)
     }
 
     func fetchLatest(from serverURLString: String) async throws -> SyncBackupPayload {
@@ -214,8 +223,8 @@ final class SyncService {
         }
     }
 
-    private func makePayload(entities: [TrackedEntity], records: [JournalRecord]) throws -> SyncBackupPayload {
-        let archive = ExportService().makeArchive(entities: entities, records: records)
+    private func makePayload(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) throws -> SyncBackupPayload {
+        let archive = ExportService().makeArchive(entities: entities, records: records, groups: groups)
         var seenMediaIDs = Set<UUID>()
         let media = try records.flatMap(\.mediaItems).compactMap { item -> SyncMediaBlob? in
             guard seenMediaIDs.insert(item.id).inserted else { return nil }
@@ -249,11 +258,21 @@ final class SyncService {
         payload: SyncBackupPayload,
         modelContext: ModelContext,
         entities: [TrackedEntity],
-        records: [JournalRecord]
+        records: [JournalRecord],
+        groups: [ThreadGroup]
     ) throws -> SyncRestoreSummary {
+        let existingGroups = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
         let existingEntities = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
         let existingRecords = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
         let restoredMedia = try restoreMedia(payload.media)
+
+        for snapshot in payload.archive.threadGroups {
+            if let group = existingGroups[snapshot.id] {
+                apply(snapshot, to: group)
+            } else {
+                modelContext.insert(ThreadGroup(snapshot: snapshot))
+            }
+        }
 
         for snapshot in payload.archive.entities {
             if let entity = existingEntities[snapshot.id] {
@@ -317,10 +336,19 @@ final class SyncService {
         entity.emoji = snapshot.emoji
         entity.photoLocalPath = snapshot.photoLocalPath
         entity.notes = snapshot.notes
+        entity.groupID = snapshot.groupID
         entity.nearestEclipseID = snapshot.nearestEclipseID
         entity.birthOrAnchorEclipseDate = snapshot.birthOrAnchorEclipseDate
         entity.notificationsEnabled = snapshot.notificationsEnabled
         entity.notifyBeforeFlipMinutes = snapshot.notifyBeforeFlipMinutes
+    }
+
+    private func apply(_ snapshot: ThreadGroupSnapshot, to group: ThreadGroup) {
+        group.createdAt = snapshot.createdAt
+        group.updatedAt = snapshot.updatedAt
+        group.name = snapshot.name
+        group.emoji = snapshot.emoji
+        group.rarityRawValue = snapshot.rarityRawValue
     }
 
     private func apply(_ snapshot: JournalRecordSnapshot, mediaItems: [JournalMediaItem], to record: JournalRecord) {
@@ -457,11 +485,26 @@ private extension TrackedEntity {
             emoji: snapshot.emoji,
             photoLocalPath: snapshot.photoLocalPath,
             notes: snapshot.notes,
+            groupID: snapshot.groupID,
             nearestEclipseID: snapshot.nearestEclipseID,
             birthOrAnchorEclipseDate: snapshot.birthOrAnchorEclipseDate,
             notificationsEnabled: snapshot.notificationsEnabled,
             notifyBeforeFlipMinutes: snapshot.notifyBeforeFlipMinutes
         )
+    }
+}
+
+private extension ThreadGroup {
+    convenience init(snapshot: ThreadGroupSnapshot) {
+        self.init(
+            id: snapshot.id,
+            createdAt: snapshot.createdAt,
+            updatedAt: snapshot.updatedAt,
+            name: snapshot.name,
+            emoji: snapshot.emoji,
+            rarity: FlipRarity(rawValue: snapshot.rarityRawValue) ?? .common
+        )
+        rarityRawValue = snapshot.rarityRawValue
     }
 }
 

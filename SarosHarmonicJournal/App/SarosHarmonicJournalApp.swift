@@ -9,7 +9,12 @@ struct SarosHarmonicJournalApp: App {
 
     init() {
         do {
-            modelContainer = try ModelContainer(for: TrackedEntity.self, JournalRecord.self, CustomFlipEvent.self)
+            modelContainer = try ModelContainer(
+                for: TrackedEntity.self,
+                ThreadGroup.self,
+                JournalRecord.self,
+                CustomFlipEvent.self
+            )
         } catch {
             fatalError("Could not create SwiftData model container: \(error)")
         }
