@@ -13,6 +13,7 @@ struct CaptureView: View {
 
     let entity: TrackedEntity
     let harmonicDepth: Int
+    let recordStartedAt: Date
     var onSaved: () -> Void
 
     @StateObject private var audioRecorder = AudioRecorder()
@@ -30,10 +31,12 @@ struct CaptureView: View {
     init(
         entity: TrackedEntity,
         harmonicDepth: Int,
+        recordStartedAt: Date = Date(),
         onSaved: @escaping () -> Void = {}
     ) {
         self.entity = entity
         self.harmonicDepth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        self.recordStartedAt = recordStartedAt
         self.onSaved = onSaved
     }
 
@@ -42,7 +45,7 @@ struct CaptureView: View {
             Section("Thread") {
                 if let reading = try? services.clockService.reading(
                     saros: entity.saros,
-                    date: Date(),
+                    date: recordStartedAt,
                     harmonicDepth: harmonicDepth
                 ) {
                     HStack {
@@ -220,13 +223,14 @@ struct CaptureView: View {
 
             let reading = try services.clockService.reading(
                 saros: entity.saros,
-                date: Date(),
+                date: recordStartedAt,
                 harmonicDepth: harmonicDepth
             )
             let coordinate = locationProvider.coordinate
 
             let record = JournalRecord(
                 entityID: entity.id,
+                eventDate: recordStartedAt,
                 text: text.nilIfBlank,
                 emoji: emoji.nilIfBlank ?? JournalRecordMarkers.random(),
                 mediaItems: mediaItems,

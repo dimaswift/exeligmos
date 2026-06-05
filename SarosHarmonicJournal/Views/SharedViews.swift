@@ -92,6 +92,16 @@ enum JournalSettings {
     static let catalogEndCenturyKey = "catalogEndCentury"
     static let syncServerURLKey = "syncServerURL"
     static let autoSyncEnabledKey = "autoSyncEnabled"
+    static let cameraPositionKey = "camera.position"
+    static let cameraBackLensKey = "camera.backLens"
+    static let cameraMirrorModeKey = "camera.mirrorMode"
+    static let cameraReflectionSelectionKey = "camera.reflectionSelection"
+    static let cameraLensPositionKey = "camera.lensPosition"
+    static let cameraExposureLevelKey = "camera.exposureLevel"
+    static let cameraThresholdLevelKey = "camera.thresholdLevel"
+    static let cameraBinaryFilterEnabledKey = "camera.binaryFilterEnabled"
+    static let cameraFocusManualKey = "camera.focusManual"
+    static let cameraExposureManualKey = "camera.exposureManual"
     static let defaultHarmonicDepth = 7
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21
@@ -124,7 +134,7 @@ enum JournalSettings {
     }
 }
 
-enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable {
+enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashable {
     case common
     case rare
     case epic

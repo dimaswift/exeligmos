@@ -16,6 +16,7 @@ struct ClockDashboardView: View {
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @State private var isAddingEntity = false
     @State private var captureEntity: TrackedEntity?
+    @State private var captureStartedAt = Date()
     @State private var now = Date()
 
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -28,6 +29,7 @@ struct ClockDashboardView: View {
                         flip: closestFlip,
                         countdownText: countdownText(for: closestFlip.timeUntilFlip)
                     ) {
+                        captureStartedAt = Date()
                         captureEntity = closestFlip.entity
                     }
                 }
@@ -81,7 +83,7 @@ struct ClockDashboardView: View {
         }
         .sheet(item: $captureEntity) { entity in
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth) {
+                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {
                     now = Date()
                 }
             }
@@ -429,6 +431,7 @@ private struct EntityDetailView: View {
     @State private var selectedRecordRarity: FlipRarity?
     @State private var selectedRecord: JournalRecord?
     @State private var isCapturing = false
+    @State private var captureStartedAt = Date()
     @State private var isStartingLiveTracking = false
     @State private var liveTrackingError: String?
     @State private var customFlipDraft: CustomFlipDraft?
@@ -507,6 +510,7 @@ private struct EntityDetailView: View {
                 .accessibilityLabel("Thread actions")
 
                 Button {
+                    captureStartedAt = Date()
                     isCapturing = true
                 } label: {
                     Label("Rec", systemImage: "record.circle")
@@ -515,7 +519,7 @@ private struct EntityDetailView: View {
         }
         .sheet(isPresented: $isCapturing) {
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth) {
+                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {
                     now = Date()
                 }
             }
@@ -738,7 +742,10 @@ private struct EntityDetailView: View {
     private var searchTab: some View {
         if let reading = currentReading {
             Section {
-                ThreadGlyphSearchView(reading: reading) { address, binIndex, date in
+                ThreadGlyphSearchView(
+                    reading: reading,
+                    clockService: services.clockService
+                ) { address, binIndex, date in
                     customFlipDraft = CustomFlipDraft(
                         entityID: entity.id,
                         name: "Custom flip",
@@ -1576,20 +1583,28 @@ private struct CustomFlipRow: View {
 
 private struct ThreadGlyphSearchView: View {
     let reading: SarosClockReading
+    let clockService: any SarosClockService
     let addFlip: (String, Int, Date) -> Void
 
     @State private var digits: [Int] = []
+    @State private var selectedDate = Date()
+    @State private var dateReading: SarosClockReading?
+    @State private var dateResolutionError: String?
 
     private var selectedAddress: String {
         normalizedDigits.map(String.init).joined()
     }
 
+    private var activeReading: SarosClockReading {
+        dateReading ?? reading
+    }
+
     private var selectedBinIndex: Int {
-        reading.binIndex(forOctalAddress: selectedAddress)
+        activeReading.binIndex(forOctalAddress: selectedAddress)
     }
 
     private var selectedStartDate: Date {
-        reading.date(forBinIndex: selectedBinIndex)
+        activeReading.date(forBinIndex: selectedBinIndex)
     }
 
     private var normalizedDigits: [Int] {
@@ -1601,11 +1616,23 @@ private struct ThreadGlyphSearchView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
+            GlyphRarityProximityBar(reading: activeReading, date: selectedDate)
+
             OctalGlyph(value: selectedAddress, depth: reading.harmonicDepth)
                 .frame(width: 128, height: 128)
                 .padding(8)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+            DatePicker(
+                "Date",
+                selection: $selectedDate,
+                displayedComponents: [.date, .hourAndMinute]
+            )
+            .datePickerStyle(.compact)
+            .onChange(of: selectedDate) { _, newDate in
+                syncDigits(from: newDate)
+            }
 
             HStack(spacing: 4) {
                 ForEach(0..<reading.harmonicDepth, id: \.self) { index in
@@ -1617,16 +1644,22 @@ private struct ThreadGlyphSearchView: View {
             VStack(spacing: 4) {
                 Text(JournalFormatters.dateTime.string(from: selectedStartDate))
                     .font(.subheadline.weight(.semibold))
+                if let dateResolutionError {
+                    Text(dateResolutionError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
 
             Button {
-                addFlip(selectedAddress, selectedBinIndex, selectedStartDate)
+                addFlip(selectedAddress, selectedBinIndex, selectedDate)
             } label: {
                 Label("Add flip", systemImage: "plus.circle")
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(dateResolutionError != nil)
         }
         .frame(maxWidth: .infinity)
         .onAppear {
@@ -1644,12 +1677,91 @@ private struct ThreadGlyphSearchView: View {
         } set: { newValue in
             guard index < digits.count else { return }
             digits[index] = min(max(newValue, 0), 7)
+            syncDateFromDigits()
         }
     }
 
     private func syncDigitsIfNeeded() {
         guard digits.count != reading.harmonicDepth else { return }
         digits = reading.octalAddress.map { Int(String($0)) ?? 0 }
+        dateReading = reading
+        selectedDate = reading.date(forBinIndex: reading.binIndex)
+        dateResolutionError = nil
+    }
+
+    private func syncDigits(from date: Date) {
+        do {
+            let resolved = try clockService.reading(
+                saros: reading.saros,
+                date: date,
+                harmonicDepth: reading.harmonicDepth
+            )
+            dateReading = resolved
+            digits = resolved.octalAddress.map { Int(String($0)) ?? 0 }
+            dateResolutionError = nil
+        } catch {
+            dateResolutionError = error.localizedDescription
+        }
+    }
+
+    private func syncDateFromDigits() {
+        let date = selectedStartDate
+        selectedDate = date
+        dateReading = activeReading
+        dateResolutionError = nil
+    }
+}
+
+private struct GlyphRarityProximityBar: View {
+    let reading: SarosClockReading
+    let date: Date
+
+    private let rarities: [FlipRarity] = [.rare, .epic, .legendary, .mythic]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(rarities) { rarity in
+                GlyphRarityProximityCell(
+                    rarity: rarity,
+                    octalScore: octalScore(for: rarity)
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func octalScore(for rarity: FlipRarity) -> String {
+        let stride = Double(reading.qualifiedFlipStride(forOrder: rarity.order))
+        guard stride > 0 else { return "000" }
+
+        let rawPhase = date.timeIntervalSince(reading.previousEclipse.date) / max(reading.intervalDuration, 1)
+        let continuousBin = min(max(rawPhase * Double(reading.binCount), 0), Double(reading.binCount))
+        let nearestFlipBin = (continuousBin / stride).rounded() * stride
+        let distance = abs(continuousBin - nearestFlipBin)
+        let halfPeriod = stride / 2
+        let proximity = 1 - min(max(distance / halfPeriod, 0), 1)
+        let scaled = min(max(Int((proximity * 511).rounded()), 0), 511)
+        return String(scaled, radix: 8).leftPadded(toLength: 3, withPad: "0")
+    }
+}
+
+private struct GlyphRarityProximityCell: View {
+    let rarity: FlipRarity
+    let octalScore: String
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Image(systemName: rarity.symbolName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(rarity.color)
+            OctalGlyph(value: octalScore, depth: 3, color: rarity.color)
+                .frame(width: 34, height: 34)
+                .padding(4)
+                .background(rarity.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("\(rarity.title) proximity \(octalScore)")
     }
 }
 
@@ -2006,12 +2118,16 @@ struct MirrorCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var camera = ThreadMirrorCameraController()
     @StateObject private var saver = CameraRollMediaSaver()
-    @State private var mode: ThreadMirrorCameraMode = .vertical
-    @State private var reflectionSelection: MirrorReflectionSelection = .positive
-    @State private var lensPosition = 0.5
-    @State private var exposureLevel = 0.5
-    @State private var thresholdLevel = 0.5
-    @State private var isBinaryFilterEnabled = false
+    @AppStorage(JournalSettings.cameraPositionKey) private var cameraPositionRaw = "back"
+    @AppStorage(JournalSettings.cameraBackLensKey) private var cameraBackLensRaw = MirrorCameraBackLens.wide.rawValue
+    @AppStorage(JournalSettings.cameraMirrorModeKey) private var mirrorModeRaw = ThreadMirrorCameraMode.vertical.rawValue
+    @AppStorage(JournalSettings.cameraReflectionSelectionKey) private var reflectionSelectionRaw = MirrorReflectionSelection.positive.rawValue
+    @AppStorage(JournalSettings.cameraLensPositionKey) private var lensPosition = 0.5
+    @AppStorage(JournalSettings.cameraExposureLevelKey) private var exposureLevel = 0.5
+    @AppStorage(JournalSettings.cameraThresholdLevelKey) private var thresholdLevel = 0.5
+    @AppStorage(JournalSettings.cameraBinaryFilterEnabledKey) private var isBinaryFilterEnabled = false
+    @AppStorage(JournalSettings.cameraFocusManualKey) private var isFocusManual = false
+    @AppStorage(JournalSettings.cameraExposureManualKey) private var isExposureManual = false
     @State private var isDoubleOutputEnabled = false
     @State private var reviewFreeRotationRadians: CGFloat = 0
     @State private var reviewScale: CGFloat = 1
@@ -2035,6 +2151,30 @@ struct MirrorCameraView: View {
 
     init(onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)? = nil) {
         self.onCapturedMedia = onCapturedMedia
+    }
+
+    private var preferredCameraPosition: AVCaptureDevice.Position {
+        cameraPositionRaw == "front" ? .front : .back
+    }
+
+    private var preferredBackLens: MirrorCameraBackLens {
+        MirrorCameraBackLens(rawValue: cameraBackLensRaw) ?? .wide
+    }
+
+    private var mode: ThreadMirrorCameraMode {
+        ThreadMirrorCameraMode(rawValue: mirrorModeRaw) ?? .vertical
+    }
+
+    private var reflectionSelection: MirrorReflectionSelection {
+        MirrorReflectionSelection(rawValue: reflectionSelectionRaw) ?? .positive
+    }
+
+    private func setMode(_ newMode: ThreadMirrorCameraMode) {
+        mirrorModeRaw = newMode.rawValue
+    }
+
+    private func setReflectionSelection(_ newSelection: MirrorReflectionSelection) {
+        reflectionSelectionRaw = newSelection.rawValue
     }
 
     private var outputConfiguration: MirrorOutputConfiguration {
@@ -2095,12 +2235,28 @@ struct MirrorCameraView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
+            camera.configurePreferredCamera(
+                position: preferredCameraPosition,
+                backLens: preferredBackLens
+            )
             camera.setMirror(
                 mode: mode,
                 reflectionSelection: reflectionSelection
             )
             camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: thresholdLevel)
+            if isFocusManual {
+                camera.setLensPosition(lensPosition)
+            }
+            if isExposureManual {
+                camera.setExposureLevel(exposureLevel)
+            }
             await camera.start()
+        }
+        .onChange(of: camera.cameraPosition) { _, newValue in
+            cameraPositionRaw = newValue == .front ? "front" : "back"
+        }
+        .onChange(of: camera.backLens) { _, newValue in
+            cameraBackLensRaw = newValue.rawValue
         }
         .onDisappear {
             captureHoldWorkItem?.cancel()
@@ -2245,6 +2401,7 @@ struct MirrorCameraView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 112)
             .onChange(of: lensPosition) { _, newValue in
+                isFocusManual = true
                 camera.setLensPosition(newValue)
             }
 
@@ -2263,6 +2420,7 @@ struct MirrorCameraView: View {
                 camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: newValue)
             }
             .onChange(of: exposureLevel) { _, newValue in
+                isExposureManual = true
                 camera.setExposureLevel(newValue)
             }
         }
@@ -2461,7 +2619,7 @@ struct MirrorCameraView: View {
                 systemImage: mode.symbolName,
                 accessibilityLabel: "Toggle mirror mode"
             ) {
-                mode = mode.next
+                setMode(mode.next)
                 camera.setMirror(
                     mode: mode,
                     reflectionSelection: reflectionSelection
@@ -2472,7 +2630,7 @@ struct MirrorCameraView: View {
                 systemImage: reflectionSelection.symbolName,
                 accessibilityLabel: "Toggle reflected side"
             ) {
-                reflectionSelection = reflectionSelection.next
+                setReflectionSelection(reflectionSelection.next)
                 camera.setMirror(
                     mode: mode,
                     reflectionSelection: reflectionSelection
@@ -2536,6 +2694,8 @@ struct MirrorCameraView: View {
                     x: min(max(location.x / side, 0), 1),
                     y: min(max(location.y / side, 0), 1)
                 ))
+                isFocusManual = false
+                isExposureManual = false
 
                 let focusedPoint = location
                 Task {
@@ -3602,12 +3762,12 @@ private enum RadialTickSliderOrientation {
     }
 }
 
-private enum ThreadMirrorCameraMode: CaseIterable, Hashable, Identifiable, Sendable {
+private enum ThreadMirrorCameraMode: String, CaseIterable, Hashable, Identifiable, Sendable {
     case horizontal
     case vertical
     case cross
 
-    var id: String { symbolName }
+    var id: String { rawValue }
 
     var next: ThreadMirrorCameraMode {
         switch self {
@@ -3675,7 +3835,7 @@ private enum ThreadMirrorCameraMode: CaseIterable, Hashable, Identifiable, Senda
     }
 }
 
-private enum MirrorReflectionSelection: CaseIterable, Hashable, Sendable {
+private enum MirrorReflectionSelection: String, CaseIterable, Hashable, Sendable {
     case positive
     case negative
     case off
@@ -3714,7 +3874,7 @@ private enum MirrorReflectionSelection: CaseIterable, Hashable, Sendable {
     }
 }
 
-private enum MirrorCameraBackLens: CaseIterable {
+private enum MirrorCameraBackLens: String, CaseIterable {
     case ultraWide
     case wide
     case telephoto
@@ -3782,7 +3942,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     @Published private(set) var animacyResult: AnimacyResult?
     @Published private(set) var authorizationState: CameraAuthorizationState = .notDetermined
     @Published private(set) var errorMessage: String?
-    @Published private(set) var cameraPosition: AVCaptureDevice.Position = .front
+    @Published private(set) var cameraPosition: AVCaptureDevice.Position = .back
     @Published private(set) var backLens: MirrorCameraBackLens = .wide
     @Published private(set) var isRecordingVideo = false
 
@@ -3818,6 +3978,15 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     init(animacyScorer: any AnimacyScoring = AnimacyScorer()) {
         self.animacyScorer = animacyScorer
         super.init()
+    }
+
+    @MainActor
+    func configurePreferredCamera(position: AVCaptureDevice.Position, backLens: MirrorCameraBackLens) {
+        let availableLenses = MirrorCameraBackLens.available
+        let resolvedBackLens = availableLenses.contains(backLens) ? backLens : (availableLenses.first ?? .wide)
+        cameraPosition = position
+        self.backLens = resolvedBackLens
+        selectedBackLens = resolvedBackLens
     }
 
     func start() async {

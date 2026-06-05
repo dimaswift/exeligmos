@@ -9,8 +9,6 @@ struct SettingsView: View {
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-    @AppStorage(JournalSettings.catalogStartCenturyKey) private var catalogStartCentury = JournalSettings.defaultCatalogStartCentury
-    @AppStorage(JournalSettings.catalogEndCenturyKey) private var catalogEndCentury = JournalSettings.defaultCatalogEndCentury
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
     @AppStorage(JournalSettings.autoSyncEnabledKey) private var autoSyncEnabled = false
     @StateObject private var server = LocalExportServer()
@@ -22,10 +20,6 @@ struct SettingsView: View {
     @State private var datasetSummary = AnimacyDatasetQueueSummary.empty
     @State private var datasetMessage = ""
     @State private var isUploadingDataset = false
-
-    private var catalogBounds: CatalogCenturyBounds {
-        CatalogCenturyBounds(startCentury: catalogStartCentury, endCentury: catalogEndCentury)
-    }
 
     var body: some View {
         Form {
@@ -45,24 +39,6 @@ struct SettingsView: View {
                 } label: {
                     Label("Periods", systemImage: "clock.arrow.circlepath")
                 }
-            }
-
-            Section("Catalog") {
-                Stepper(
-                    "From \(JournalSettings.centuryLabel(catalogStartCentury)) century",
-                    value: $catalogStartCentury,
-                    in: JournalSettings.supportedCatalogCenturies
-                )
-
-                Stepper(
-                    "Through \(JournalSettings.centuryLabel(catalogEndCentury)) century",
-                    value: $catalogEndCentury,
-                    in: JournalSettings.supportedCatalogCenturies
-                )
-
-                Text("Current catalog bounds: \(catalogBounds.displayTitle).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Notifications") {
@@ -221,18 +197,6 @@ struct SettingsView: View {
                     customFlips: customFlips
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
-            }
-        }
-        .onChange(of: catalogStartCentury) { _, newCentury in
-            catalogStartCentury = JournalSettings.clampedCatalogCentury(newCentury)
-            if catalogStartCentury > catalogEndCentury {
-                catalogEndCentury = catalogStartCentury
-            }
-        }
-        .onChange(of: catalogEndCentury) { _, newCentury in
-            catalogEndCentury = JournalSettings.clampedCatalogCentury(newCentury)
-            if catalogEndCentury < catalogStartCentury {
-                catalogStartCentury = catalogEndCentury
             }
         }
         .alert("Settings error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {

@@ -36,7 +36,7 @@ struct RootView: View {
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     @State private var selectedTab: AppTab = .feed
-    @State private var captureEntity: TrackedEntity?
+    @State private var captureRequest: RecordCaptureRequest?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -52,9 +52,13 @@ struct RootView: View {
         }
         .background(AutoSyncObserver())
         .background(LiveTrackingRolloverObserver())
-        .sheet(item: $captureEntity) { entity in
+        .sheet(item: $captureRequest) { request in
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth) {}
+                CaptureView(
+                    entity: request.entity,
+                    harmonicDepth: harmonicDepth,
+                    recordStartedAt: request.startedAt
+                ) {}
             }
         }
         .onOpenURL(perform: handleDeepLink)
@@ -116,13 +120,19 @@ struct RootView: View {
         }
 
         selectedTab = .clock
-        captureEntity = entity
+        captureRequest = RecordCaptureRequest(entity: entity, startedAt: Date())
     }
 
     private func consumePendingRecordCapture() {
         guard let entityID = AppDeepLinkStore.consumePendingRecordCapture() else { return }
         openRecordCapture(for: entityID)
     }
+}
+
+private struct RecordCaptureRequest: Identifiable {
+    let id = UUID()
+    let entity: TrackedEntity
+    let startedAt: Date
 }
 
 private struct FeedView: View {
