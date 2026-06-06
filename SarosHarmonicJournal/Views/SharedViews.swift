@@ -102,6 +102,9 @@ enum JournalSettings {
     static let cameraBinaryFilterEnabledKey = "camera.binaryFilterEnabled"
     static let cameraFocusManualKey = "camera.focusManual"
     static let cameraExposureManualKey = "camera.exposureManual"
+    static let cameraTimedVideoDurationKey = "camera.timedVideoDuration"
+    static let cameraTimedVideoForwardEnabledKey = "camera.timedVideoForwardEnabled"
+    static let cameraTimedVideoBackwardEnabledKey = "camera.timedVideoBackwardEnabled"
     static let defaultHarmonicDepth = 7
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21

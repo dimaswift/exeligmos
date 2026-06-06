@@ -418,6 +418,8 @@ final class SyncService {
             "image/png"
         case "m4a":
             "audio/mp4"
+        case "caf":
+            "audio/x-caf"
         case "mov":
             "video/quicktime"
         case "mp4":

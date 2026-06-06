@@ -117,13 +117,31 @@ struct CaptureView: View {
 
                 Button {
                     do {
-                        try audioRecorder.toggleRecording()
+                        try audioRecorder.toggleRecording(mode: .reflected)
                     } catch {
                         errorMessage = error.localizedDescription
                     }
                 } label: {
-                    Label(audioRecorder.isRecording ? "Stop audio" : "Record audio", systemImage: audioRecorder.isRecording ? "stop.circle" : "mic.circle")
+                    Label(
+                        audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "Stop audio" : "Record audio",
+                        systemImage: audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "stop.circle" : "mic.circle"
+                    )
                 }
+                .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .reflected)
+
+                Button {
+                    do {
+                        try audioRecorder.toggleRecording(mode: .convolution)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                } label: {
+                    Label(
+                        audioRecorder.isRecording && audioRecorder.recordingMode == .convolution ? "Stop convolution" : "Record convolution",
+                        systemImage: audioRecorder.isRecording && audioRecorder.recordingMode == .convolution ? "stop.circle" : "waveform.path.ecg"
+                    )
+                }
+                .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .convolution)
             }
 
             Section {

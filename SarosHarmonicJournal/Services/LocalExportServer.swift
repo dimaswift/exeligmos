@@ -118,6 +118,7 @@ final class LocalExportServer: ObservableObject {
         case "jpg", "jpeg": "image/jpeg"
         case "png": "image/png"
         case "m4a": "audio/mp4"
+        case "caf": "audio/x-caf"
         default: "application/octet-stream"
         }
     }

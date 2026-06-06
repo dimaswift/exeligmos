@@ -2636,6 +2636,7 @@ private struct MirrorOutputConfiguration: Hashable, Sendable {
     var isBinaryFilterEnabled: Bool
     var thresholdLevel: Double
     var isDoubleOutputEnabled: Bool
+    var temporalMode: MediaTemporalMode
 }
 
 private struct MirrorImageTransform: Hashable, Sendable {
@@ -2943,6 +2944,9 @@ struct MirrorCameraView: View {
     @AppStorage(JournalSettings.cameraBinaryFilterEnabledKey) private var isBinaryFilterEnabled = false
     @AppStorage(JournalSettings.cameraFocusManualKey) private var isFocusManual = false
     @AppStorage(JournalSettings.cameraExposureManualKey) private var isExposureManual = false
+    @AppStorage(JournalSettings.cameraTimedVideoDurationKey) private var timedVideoDuration = 3
+    @AppStorage(JournalSettings.cameraTimedVideoForwardEnabledKey) private var isTimedVideoForwardEnabled = true
+    @AppStorage(JournalSettings.cameraTimedVideoBackwardEnabledKey) private var isTimedVideoBackwardEnabled = true
     @State private var isDoubleOutputEnabled = false
     @State private var reviewFreeRotationRadians: CGFloat = 0
     @State private var reviewScale: CGFloat = 1
@@ -2953,6 +2957,9 @@ struct MirrorCameraView: View {
     @State private var captureHoldWorkItem: DispatchWorkItem?
     @State private var isCapturePressActive = false
     @State private var didStartVideoDuringPress = false
+    @State private var timedCaptureCountdownStart: Date?
+    @State private var timedCaptureCountdownTask: Task<Void, Never>?
+    @State private var timedCaptureStopTask: Task<Void, Never>?
     @State private var reviewCapture: MirrorCameraReviewCapture?
     @State private var reviewCaptureID = UUID()
     @State private var reviewPreviewImage: UIImage?
@@ -2966,6 +2973,13 @@ struct MirrorCameraView: View {
 
     init(onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)? = nil) {
         self.onCapturedMedia = onCapturedMedia
+    }
+
+    private static let timedCaptureCountdownDuration: TimeInterval = 3
+    private static let timedVideoDurationRange = 1...12
+
+    private static func clampedTimedVideoDuration(_ value: Int) -> Int {
+        min(max(value, timedVideoDurationRange.lowerBound), timedVideoDurationRange.upperBound)
     }
 
     private var preferredCameraPosition: AVCaptureDevice.Position {
@@ -3003,8 +3017,22 @@ struct MirrorCameraView: View {
             ),
             isBinaryFilterEnabled: isBinaryFilterEnabled,
             thresholdLevel: thresholdLevel,
-            isDoubleOutputEnabled: isDoubleOutputEnabled
+            isDoubleOutputEnabled: isDoubleOutputEnabled,
+            temporalMode: temporalMode
         )
+    }
+
+    private var temporalMode: MediaTemporalMode {
+        switch (isTimedVideoForwardEnabled, isTimedVideoBackwardEnabled) {
+        case (true, true):
+            .forwardBackward
+        case (true, false):
+            .forward
+        case (false, true):
+            .backward
+        case (false, false):
+            .forwardBackward
+        }
     }
 
     private var reviewPreviewKey: String {
@@ -3035,7 +3063,7 @@ struct MirrorCameraView: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 10)
                 } else {
-                    importPhotoButton
+                    liveCapturePrepControls
                         .padding(.top, 10)
                 }
 
@@ -3050,6 +3078,7 @@ struct MirrorCameraView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
+            ensureTemporalCaptureSelection()
             camera.configurePreferredCamera(
                 position: preferredCameraPosition,
                 backLens: preferredBackLens
@@ -3073,8 +3102,12 @@ struct MirrorCameraView: View {
         .onChange(of: camera.backLens) { _, newValue in
             cameraBackLensRaw = newValue.rawValue
         }
+        .onChange(of: timedVideoDuration) { _, newValue in
+            timedVideoDuration = Self.clampedTimedVideoDuration(newValue)
+        }
         .onDisappear {
             captureHoldWorkItem?.cancel()
+            cancelTimedCapture()
             if camera.isRecordingVideo {
                 camera.stopVideoRecording { _ in }
             }
@@ -3144,6 +3177,14 @@ struct MirrorCameraView: View {
                 cameraCloseButton
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(12)
+            }
+
+            if let timedCaptureCountdownStart {
+                TimedVideoCountdownView(
+                    startDate: timedCaptureCountdownStart,
+                    duration: Self.timedCaptureCountdownDuration
+                )
+                .transition(.scale.combined(with: .opacity))
             }
         }
         .frame(width: side, height: side)
@@ -3282,6 +3323,112 @@ struct MirrorCameraView: View {
         .accessibilityLabel("Sonify image")
     }
 
+    private var liveCapturePrepControls: some View {
+        HStack(spacing: 12) {
+            timedVideoDurationWheel
+            temporalDirectionButton(
+                systemImage: "arrow.left",
+                isSelected: isTimedVideoBackwardEnabled,
+                accessibilityLabel: "Capture backward video"
+            ) {
+                setBackwardTemporalCaptureEnabled(!isTimedVideoBackwardEnabled)
+            }
+            timedVideoButton
+            temporalDirectionButton(
+                systemImage: "arrow.right",
+                isSelected: isTimedVideoForwardEnabled,
+                accessibilityLabel: "Capture forward video"
+            ) {
+                setForwardTemporalCaptureEnabled(!isTimedVideoForwardEnabled)
+            }
+            importPhotoButton
+                .frame(width: 72)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var timedVideoDurationWheel: some View {
+        Picker("Timed video duration", selection: $timedVideoDuration) {
+            ForEach(Self.timedVideoDurationRange, id: \.self) { seconds in
+                Text("\(seconds)s")
+                    .tag(seconds)
+            }
+        }
+        .pickerStyle(.wheel)
+        .frame(width: 64, height: 58)
+        .clipped()
+        .background(.black.opacity(0.42), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.white.opacity(0.10), lineWidth: 1)
+        }
+        .disabled(camera.isRecordingVideo || timedCaptureCountdownStart != nil || saver.isSaving)
+        .opacity((camera.isRecordingVideo || timedCaptureCountdownStart != nil || saver.isSaving) ? 0.55 : 1)
+        .accessibilityLabel("Timed video duration")
+    }
+
+    private var timedVideoButton: some View {
+        Button {
+            if timedCaptureCountdownStart == nil {
+                startTimedVideoCountdown()
+            } else {
+                cancelTimedCapture()
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(.black.opacity(0.42))
+                    .frame(width: 54, height: 54)
+
+                if timedCaptureCountdownStart != nil {
+                    Image(systemName: "xmark")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                } else {
+                    Image(systemName: "timer")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(
+            timedCaptureCountdownStart == nil
+                && (camera.previewImage == nil || camera.isRecordingVideo || saver.isSaving || isImportingPhoto)
+        )
+        .opacity(
+            timedCaptureCountdownStart == nil
+                && (camera.previewImage == nil || camera.isRecordingVideo || saver.isSaving || isImportingPhoto)
+                ? 0.45
+                : 1
+        )
+        .accessibilityLabel(timedCaptureCountdownStart == nil ? "Start timed video" : "Cancel timed video countdown")
+    }
+
+    private func temporalDirectionButton(
+        systemImage: String,
+        isSelected: Bool,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(isSelected ? .black : .white)
+                .frame(width: 44, height: 44)
+                .background(isSelected ? .white : .black.opacity(0.42), in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(isSelected ? .white.opacity(0.85) : .white.opacity(0.12), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.isRecordingVideo || timedCaptureCountdownStart != nil || saver.isSaving)
+        .opacity((camera.isRecordingVideo || timedCaptureCountdownStart != nil || saver.isSaving) ? 0.55 : 1)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+    }
+
     private var importPhotoButton: some View {
         PhotosPicker(selection: $importPhotoItem, matching: .images) {
             VStack(spacing: 5) {
@@ -3307,8 +3454,8 @@ struct MirrorCameraView: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
-        .disabled(camera.isRecordingVideo || saver.isSaving || isImportingPhoto)
-        .opacity((camera.isRecordingVideo || saver.isSaving || isImportingPhoto) ? 0.5 : 1)
+        .disabled(camera.isRecordingVideo || saver.isSaving || isImportingPhoto || timedCaptureCountdownStart != nil)
+        .opacity((camera.isRecordingVideo || saver.isSaving || isImportingPhoto || timedCaptureCountdownStart != nil) ? 0.5 : 1)
         .accessibilityLabel("Import image")
     }
 
@@ -3621,6 +3768,7 @@ struct MirrorCameraView: View {
 
     private func handleCapturePressBegan() {
         guard !isCapturePressActive else { return }
+        guard timedCaptureCountdownStart == nil else { return }
         isCapturePressActive = true
         didStartVideoDuringPress = false
 
@@ -3658,8 +3806,91 @@ struct MirrorCameraView: View {
     }
 
     private func capturePhoto() {
+        guard timedCaptureCountdownStart == nil else { return }
         guard let image = camera.captureImage(), !saver.isSaving else { return }
         beginReview(.photo(image))
+    }
+
+    private func startTimedVideoCountdown() {
+        guard reviewCapture == nil,
+              timedCaptureCountdownStart == nil,
+              camera.previewImage != nil,
+              !camera.isRecordingVideo,
+              !saver.isSaving,
+              !isImportingPhoto else {
+            return
+        }
+
+        captureHoldWorkItem?.cancel()
+        captureHoldWorkItem = nil
+        isCapturePressActive = false
+        didStartVideoDuringPress = false
+        timedVideoDuration = Self.clampedTimedVideoDuration(timedVideoDuration)
+
+        withAnimation(.snappy(duration: 0.18)) {
+            timedCaptureCountdownStart = Date()
+        }
+
+        timedCaptureCountdownTask?.cancel()
+        timedCaptureCountdownTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.timedCaptureCountdownDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            startTimedVideoCapture()
+        }
+    }
+
+    private func setForwardTemporalCaptureEnabled(_ isEnabled: Bool) {
+        if !isEnabled && !isTimedVideoBackwardEnabled {
+            return
+        }
+        isTimedVideoForwardEnabled = isEnabled
+    }
+
+    private func setBackwardTemporalCaptureEnabled(_ isEnabled: Bool) {
+        if !isEnabled && !isTimedVideoForwardEnabled {
+            return
+        }
+        isTimedVideoBackwardEnabled = isEnabled
+    }
+
+    private func ensureTemporalCaptureSelection() {
+        if !isTimedVideoForwardEnabled && !isTimedVideoBackwardEnabled {
+            isTimedVideoForwardEnabled = true
+            isTimedVideoBackwardEnabled = true
+        }
+    }
+
+    private func startTimedVideoCapture() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            timedCaptureCountdownStart = nil
+        }
+        timedCaptureCountdownTask = nil
+
+        guard reviewCapture == nil,
+              camera.previewImage != nil,
+              !camera.isRecordingVideo,
+              !saver.isSaving else {
+            return
+        }
+
+        camera.startVideoRecording()
+        let duration = Self.clampedTimedVideoDuration(timedVideoDuration)
+        timedCaptureStopTask?.cancel()
+        timedCaptureStopTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
+            guard !Task.isCancelled, camera.isRecordingVideo else { return }
+            stopVideoCapture(cancelTimedTask: false)
+        }
+    }
+
+    private func cancelTimedCapture() {
+        timedCaptureCountdownTask?.cancel()
+        timedCaptureCountdownTask = nil
+        timedCaptureStopTask?.cancel()
+        timedCaptureStopTask = nil
+        withAnimation(.easeOut(duration: 0.16)) {
+            timedCaptureCountdownStart = nil
+        }
     }
 
     @MainActor
@@ -3712,7 +3943,11 @@ struct MirrorCameraView: View {
         }
     }
 
-    private func stopVideoCapture() {
+    private func stopVideoCapture(cancelTimedTask: Bool = true) {
+        if cancelTimedTask {
+            timedCaptureStopTask?.cancel()
+        }
+        timedCaptureStopTask = nil
         camera.stopVideoRecording { result in
             switch result {
             case .success(let url):
@@ -3727,6 +3962,7 @@ struct MirrorCameraView: View {
     }
 
     private func beginReview(_ capture: MirrorCameraReviewCapture) {
+        cancelTimedCapture()
         reviewCapture = capture
         reviewCaptureID = UUID()
         reviewPreviewImage = nil
@@ -3935,7 +4171,8 @@ private struct AnimacyDatasetTrackerView: View {
             ),
             isBinaryFilterEnabled: isBinaryFilterEnabled,
             thresholdLevel: thresholdLevel,
-            isDoubleOutputEnabled: false
+            isDoubleOutputEnabled: false,
+            temporalMode: .forwardBackward
         )
     }
 
@@ -4435,6 +4672,45 @@ private extension AnimacyDatasetRarity {
         case .mythic:
             .red
         }
+    }
+}
+
+private struct TimedVideoCountdownView: View {
+    let startDate: Date
+    let duration: TimeInterval
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let elapsed = min(max(context.date.timeIntervalSince(startDate), 0), max(duration, 0.1))
+            let progress = elapsed / max(duration, 0.1)
+            let remaining = max(1, Int(ceil(duration - elapsed)))
+
+            ZStack {
+                Circle()
+                    .fill(.black.opacity(0.52))
+                    .frame(width: 132, height: 132)
+
+                Circle()
+                    .stroke(.white.opacity(0.14), lineWidth: 8)
+                    .frame(width: 104, height: 104)
+
+                Circle()
+                    .trim(from: 0, to: max(0.001, 1 - progress))
+                    .stroke(
+                        .cyan,
+                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                    )
+                    .frame(width: 104, height: 104)
+                    .rotationEffect(.degrees(-90))
+
+                Text("\(remaining)")
+                    .font(.system(size: 52, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+            }
+            .shadow(color: .black.opacity(0.32), radius: 12, y: 6)
+        }
+        .accessibilityLabel("Timed recording countdown")
     }
 }
 
@@ -5626,6 +5902,10 @@ private enum MirrorVideoPostProcessor {
     enum ProcessorError: LocalizedError {
         case exportUnavailable
         case exportFailed
+        case noVideoTrack
+        case noVideoFrames
+        case couldNotCopyFrame
+        case writerFailed
 
         var errorDescription: String? {
             switch self {
@@ -5633,6 +5913,14 @@ private enum MirrorVideoPostProcessor {
                 "The video exporter could not be created."
             case .exportFailed:
                 "The edited video could not be exported."
+            case .noVideoTrack:
+                "The video track could not be found."
+            case .noVideoFrames:
+                "No video frames were found."
+            case .couldNotCopyFrame:
+                "A video frame could not be copied."
+            case .writerFailed:
+                "The reflected video could not be written."
             }
         }
     }
@@ -5654,10 +5942,10 @@ private enum MirrorVideoPostProcessor {
         configuration: MirrorOutputConfiguration
     ) async throws -> URL {
         let asset = AVURLAsset(url: inputURL)
-        let outputURL = FileManager.default.temporaryDirectory
+        let forwardURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mov")
-        try? FileManager.default.removeItem(at: outputURL)
+        try? FileManager.default.removeItem(at: forwardURL)
 
         let renderSize = await renderSize(for: asset, configuration: configuration)
         let videoComposition = AVMutableVideoComposition(asset: asset) { request in
@@ -5676,9 +5964,305 @@ private enum MirrorVideoPostProcessor {
         ) else {
             throw ProcessorError.exportUnavailable
         }
-        exporter.outputURL = outputURL
+        exporter.outputURL = forwardURL
         exporter.outputFileType = .mov
         exporter.videoComposition = videoComposition
+        exporter.shouldOptimizeForNetworkUse = true
+
+        nonisolated(unsafe) let unsafeExporter = exporter
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            unsafeExporter.exportAsynchronously {
+                switch unsafeExporter.status {
+                case .completed:
+                    continuation.resume()
+                case .failed, .cancelled:
+                    continuation.resume(throwing: unsafeExporter.error ?? ProcessorError.exportFailed)
+                default:
+                    continuation.resume(throwing: ProcessorError.exportFailed)
+                }
+            }
+        }
+
+        guard configuration.temporalMode != .forward else {
+            return forwardURL
+        }
+
+        let temporalURL = try await makeTemporalVideo(from: forwardURL, mode: configuration.temporalMode)
+        try? FileManager.default.removeItem(at: forwardURL)
+        return temporalURL
+    }
+
+    private static func makeTemporalVideo(from forwardURL: URL, mode: MediaTemporalMode) async throws -> URL {
+        let videoOnlyURL = try await renderTemporalVideoFrames(from: forwardURL, mode: mode)
+        let forwardAsset = AVURLAsset(url: forwardURL)
+
+        guard let audioURL = try await MediaPalindromeProcessor.makeTemporalAudio(from: forwardAsset, mode: mode) else {
+            return videoOnlyURL
+        }
+        defer {
+            try? FileManager.default.removeItem(at: videoOnlyURL)
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        let finalURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        return try await combine(videoURL: videoOnlyURL, audioURL: audioURL, outputURL: finalURL)
+    }
+
+    private static func renderTemporalVideoFrames(from forwardURL: URL, mode: MediaTemporalMode) async throws -> URL {
+        let asset = AVURLAsset(url: forwardURL)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw ProcessorError.noVideoTrack
+        }
+        let loadedFrameDuration = try await videoTrack.load(.minFrameDuration)
+        let fallbackDuration = loadedFrameDuration.isValid && loadedFrameDuration.seconds > 0
+            ? loadedFrameDuration
+            : CMTime(value: 1, timescale: 60)
+
+        nonisolated(unsafe) let unsafeVideoTrack = videoTrack
+        return try await Task.detached(priority: .userInitiated) {
+            try renderTemporalVideoFramesSynchronously(
+                asset: asset,
+                videoTrack: unsafeVideoTrack,
+                fallbackDuration: fallbackDuration,
+                mode: mode
+            )
+        }.value
+    }
+
+    private static func renderTemporalVideoFramesSynchronously(
+        asset: AVAsset,
+        videoTrack: AVAssetTrack,
+        fallbackDuration: CMTime,
+        mode: MediaTemporalMode
+    ) throws -> URL {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: videoTrack,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ]
+        )
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else {
+            throw ProcessorError.exportUnavailable
+        }
+        reader.add(output)
+        guard reader.startReading() else {
+            throw reader.error ?? ProcessorError.exportFailed
+        }
+
+        var buffers: [CVPixelBuffer] = []
+        var presentationTimes: [CMTime] = []
+        while let sampleBuffer = output.copyNextSampleBuffer() {
+            guard let sourceBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+                  let copiedBuffer = copyPixelBuffer(sourceBuffer) else {
+                throw ProcessorError.couldNotCopyFrame
+            }
+            buffers.append(copiedBuffer)
+            presentationTimes.append(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        }
+
+        if reader.status == .failed {
+            throw reader.error ?? ProcessorError.exportFailed
+        }
+        guard !buffers.isEmpty else {
+            throw ProcessorError.noVideoFrames
+        }
+
+        let durations = frameDurations(
+            presentationTimes: presentationTimes,
+            fallback: fallbackDuration
+        )
+        let width = CVPixelBufferGetWidth(buffers[0])
+        let height = CVPixelBufferGetHeight(buffers[0])
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        try? FileManager.default.removeItem(at: outputURL)
+
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: max(width * height * 4, 1_000_000)
+            ]
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else {
+            throw ProcessorError.writerFailed
+        }
+        writer.add(input)
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        guard writer.startWriting() else {
+            throw writer.error ?? ProcessorError.writerFailed
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        var cursor = CMTime.zero
+        switch mode {
+        case .forward:
+            try append(buffers: buffers, durations: durations, input: input, adaptor: adaptor, cursor: &cursor)
+        case .backward:
+            try append(buffers: buffers.reversed(), durations: durations.reversed(), input: input, adaptor: adaptor, cursor: &cursor)
+        case .forwardBackward:
+            try append(buffers: buffers, durations: durations, input: input, adaptor: adaptor, cursor: &cursor)
+            try append(buffers: buffers.reversed(), durations: durations.reversed(), input: input, adaptor: adaptor, cursor: &cursor)
+        }
+
+        input.markAsFinished()
+        let semaphore = DispatchSemaphore(value: 0)
+        var finishError: Error?
+        writer.finishWriting {
+            if writer.status != .completed {
+                finishError = writer.error ?? ProcessorError.writerFailed
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        if let finishError {
+            throw finishError
+        }
+        return outputURL
+    }
+
+    private static func append<Buffers: Collection, Durations: Collection>(
+        buffers: Buffers,
+        durations: Durations,
+        input: AVAssetWriterInput,
+        adaptor: AVAssetWriterInputPixelBufferAdaptor,
+        cursor: inout CMTime
+    ) throws where Buffers.Element == CVPixelBuffer, Durations.Element == CMTime {
+        for (buffer, duration) in zip(buffers, durations) {
+            while !input.isReadyForMoreMediaData {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+            guard adaptor.append(buffer, withPresentationTime: cursor) else {
+                throw ProcessorError.writerFailed
+            }
+            cursor = CMTimeAdd(cursor, duration)
+        }
+    }
+
+    private static func frameDurations(presentationTimes: [CMTime], fallback: CMTime) -> [CMTime] {
+        guard !presentationTimes.isEmpty else { return [] }
+        return presentationTimes.indices.map { index in
+            if index + 1 < presentationTimes.count {
+                let duration = CMTimeSubtract(presentationTimes[index + 1], presentationTimes[index])
+                if duration.isValid && duration.seconds > 0 {
+                    return duration
+                }
+            }
+            return fallback
+        }
+    }
+
+    private static func copyPixelBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(source)
+        let height = CVPixelBufferGetHeight(source)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(source)
+
+        var destination: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            pixelFormat,
+            [
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true
+            ] as CFDictionary,
+            &destination
+        )
+        guard status == kCVReturnSuccess, let destination else { return nil }
+
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(destination, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(destination, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
+
+        guard let sourceBase = CVPixelBufferGetBaseAddress(source),
+              let destinationBase = CVPixelBufferGetBaseAddress(destination) else {
+            return nil
+        }
+
+        let sourceBytesPerRow = CVPixelBufferGetBytesPerRow(source)
+        let destinationBytesPerRow = CVPixelBufferGetBytesPerRow(destination)
+        let bytesToCopy = min(sourceBytesPerRow, destinationBytesPerRow)
+
+        for row in 0..<height {
+            memcpy(
+                destinationBase.advanced(by: row * destinationBytesPerRow),
+                sourceBase.advanced(by: row * sourceBytesPerRow),
+                bytesToCopy
+            )
+        }
+
+        return destination
+    }
+
+    private static func combine(videoURL: URL, audioURL: URL, outputURL: URL) async throws -> URL {
+        let composition = AVMutableComposition()
+        let videoAsset = AVURLAsset(url: videoURL)
+        let audioAsset = AVURLAsset(url: audioURL)
+        let videoDuration = try await videoAsset.load(.duration)
+
+        guard let sourceVideoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+              let videoTrack = composition.addMutableTrack(
+                withMediaType: .video,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+              ) else {
+            throw ProcessorError.noVideoTrack
+        }
+
+        try videoTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: videoDuration),
+            of: sourceVideoTrack,
+            at: .zero
+        )
+        videoTrack.preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
+
+        if let sourceAudioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first,
+           let audioTrack = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let audioDuration = try await audioAsset.load(.duration)
+            let insertDuration = CMTimeCompare(audioDuration, videoDuration) < 0 ? audioDuration : videoDuration
+            try audioTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: insertDuration),
+                of: sourceAudioTrack,
+                at: .zero
+            )
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+        guard let exporter = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw ProcessorError.exportUnavailable
+        }
+        exporter.outputURL = outputURL
+        exporter.outputFileType = .mov
         exporter.shouldOptimizeForNetworkUse = true
 
         nonisolated(unsafe) let unsafeExporter = exporter
