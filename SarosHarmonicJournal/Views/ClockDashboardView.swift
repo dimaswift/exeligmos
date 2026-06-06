@@ -19,56 +19,12 @@ struct ClockDashboardView: View {
     @State private var captureEntity: TrackedEntity?
     @State private var captureStartedAt = Date()
     @State private var selectedGroupFilter: ThreadGroupFilter = .all
-    @State private var now = Date()
-
-    private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         List {
-            if let closestFlip {
-                Section("Next flip") {
-                    ClosestFlipCard(
-                        flip: closestFlip,
-                        countdownText: countdownText(for: closestFlip.timeUntilFlip)
-                    ) {
-                        captureStartedAt = Date()
-                        captureEntity = closestFlip.entity
-                    }
-                }
-            }
+            closestFlipSection
 
-            Section("Threads") {
-                if entities.isEmpty {
-                    ContentUnavailableView {
-                        VStack(spacing: 12) {
-                            OctalGlyph(value: String(repeating: "7", count: harmonicDepth), depth: harmonicDepth, color: .secondary)
-                                .frame(width: 56, height: 56)
-                            Text("No threads yet")
-                        }
-                    } description: {
-                        Text("Add an anchor date to start a private Saros clock.")
-                    }
-                } else if filteredEntities.isEmpty {
-                    ContentUnavailableView("No threads in \(selectedGroupFilter.title(groups: threadGroups))", systemImage: "line.3.horizontal.decrease.circle")
-                } else {
-                    ForEach(filteredEntities) { entity in
-                        let reading = reading(for: entity)
-                        let countdown = reading.flatMap { currentRarityCountdown(for: $0) ?? nearestRarityCountdown(for: $0) }
-                        NavigationLink {
-                            EntityDetailView(entity: entity)
-                        } label: {
-                            EntityCardView(
-                                entity: entity,
-                                reading: reading,
-                                countdown: countdown,
-                                latestRecord: latestRecord(for: entity),
-                                group: group(for: entity)
-                            )
-                        }
-                    }
-                    .onDelete(perform: deleteEntities)
-                }
-            }
+            threadsSection(at: Date())
         }
         .navigationTitle("Threads")
         .toolbar {
@@ -90,25 +46,74 @@ struct ClockDashboardView: View {
         }
         .sheet(item: $captureEntity) { entity in
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {
-                    now = Date()
-                }
+                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {}
             }
-        }
-        .onReceive(countdownTimer) { date in
-            now = date
         }
     }
 
-    private var closestFlip: DashboardFlipItem? {
-        let active = entityReadings.compactMap { item -> DashboardFlipItem? in
-            let regular = currentRarityCountdown(for: item.reading).map {
+    @ViewBuilder
+    private var closestFlipSection: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            if let closestFlip = closestFlip(at: context.date) {
+                Section("Next flip") {
+                    ClosestFlipCard(
+                        flip: closestFlip,
+                        countdownText: countdownText(for: closestFlip.flipDate.timeIntervalSince(context.date))
+                    ) {
+                        captureStartedAt = Date()
+                        captureEntity = closestFlip.entity
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func threadsSection(at date: Date) -> some View {
+        Section("Threads") {
+            if entities.isEmpty {
+                ContentUnavailableView {
+                    VStack(spacing: 12) {
+                        OctalGlyph(value: String(repeating: "7", count: harmonicDepth), depth: harmonicDepth, color: .secondary)
+                            .frame(width: 56, height: 56)
+                        Text("No threads yet")
+                    }
+                } description: {
+                    Text("Add an anchor date to start a private Saros clock.")
+                }
+            } else if filteredEntities.isEmpty {
+                ContentUnavailableView("No threads in \(selectedGroupFilter.title(groups: threadGroups))", systemImage: "line.3.horizontal.decrease.circle")
+            } else {
+                ForEach(filteredEntities) { entity in
+                    let reading = reading(for: entity, at: date)
+                    let countdown = reading.flatMap { currentRarityCountdown(for: $0, at: date) ?? nearestRarityCountdown(for: $0, at: date) }
+                    NavigationLink {
+                        EntityDetailView(entity: entity)
+                    } label: {
+                        EntityCardView(
+                            entity: entity,
+                            reading: reading,
+                            countdown: countdown,
+                            latestRecord: latestRecord(for: entity),
+                            group: group(for: entity)
+                        )
+                    }
+                }
+                .onDelete(perform: deleteEntities)
+            }
+        }
+    }
+
+    private func closestFlip(at date: Date) -> DashboardFlipItem? {
+        let readings = entityReadings(at: date)
+        let active = readings.compactMap { item -> DashboardFlipItem? in
+            let regular = currentRarityCountdown(for: item.reading, at: date).map {
                 DashboardFlipItem(entity: item.entity, reading: item.reading, countdown: $0)
             }
-            let custom = nextCustomFlip(for: item.entity, after: now).flatMap { customFlip -> DashboardFlipItem? in
-                let timeUntil = customFlip.date.timeIntervalSince(now)
+            let custom = nextCustomFlip(for: item.entity, after: date).flatMap { customFlip -> DashboardFlipItem? in
+                let timeUntil = customFlip.date.timeIntervalSince(date)
                 guard timeUntil >= 0 && timeUntil <= Self.currentRarityWindow else { return nil }
-                return DashboardFlipItem(entity: item.entity, reading: item.reading, customFlip: customFlip, now: now)
+                return DashboardFlipItem(entity: item.entity, reading: item.reading, customFlip: customFlip, now: date)
             }
             return [regular, custom].compactMap { $0 }.sorted(by: flipPrioritySort).first
         }
@@ -117,13 +122,13 @@ struct ClockDashboardView: View {
             return best
         }
 
-        return entityReadings
+        return readings
             .compactMap { item -> DashboardFlipItem? in
-                let regular = nearestRarityCountdown(for: item.reading).map {
+                let regular = nearestRarityCountdown(for: item.reading, at: date).map {
                     DashboardFlipItem(entity: item.entity, reading: item.reading, countdown: $0)
                 }
-                let custom = nextCustomFlip(for: item.entity, after: now).map {
-                    DashboardFlipItem(entity: item.entity, reading: item.reading, customFlip: $0, now: now)
+                let custom = nextCustomFlip(for: item.entity, after: date).map {
+                    DashboardFlipItem(entity: item.entity, reading: item.reading, customFlip: $0, now: date)
                 }
                 return [regular, custom].compactMap { $0 }.min { $0.timeUntilFlip < $1.timeUntilFlip }
             }
@@ -132,9 +137,9 @@ struct ClockDashboardView: View {
             }
     }
 
-    private var entityReadings: [(entity: TrackedEntity, reading: SarosClockReading)] {
+    private func entityReadings(at date: Date) -> [(entity: TrackedEntity, reading: SarosClockReading)] {
         filteredEntities.compactMap { entity in
-            guard let reading = reading(for: entity) else { return nil }
+            guard let reading = reading(for: entity, at: date) else { return nil }
             return (entity, reading)
         }
     }
@@ -180,8 +185,8 @@ struct ClockDashboardView: View {
         }
     }
 
-    private func currentRarityCountdown(for reading: SarosClockReading) -> SarosFlipCountdown? {
-        reading.rarityCountdowns(now: now)
+    private func currentRarityCountdown(for reading: SarosClockReading, at date: Date) -> SarosFlipCountdown? {
+        reading.rarityCountdowns(now: date)
             .filter { countdown in
                 countdown.timeUntilFlip >= 0 && countdown.timeUntilFlip <= Self.currentRarityWindow
             }
@@ -194,8 +199,8 @@ struct ClockDashboardView: View {
             .first
     }
 
-    private func nearestRarityCountdown(for reading: SarosClockReading) -> SarosFlipCountdown? {
-        reading.rarityCountdowns(now: now)
+    private func nearestRarityCountdown(for reading: SarosClockReading, at date: Date) -> SarosFlipCountdown? {
+        reading.rarityCountdowns(now: date)
             .filter { $0.timeUntilFlip >= 0 }
             .min { $0.timeUntilFlip < $1.timeUntilFlip }
     }
@@ -212,10 +217,10 @@ struct ClockDashboardView: View {
 
     private static let currentRarityWindow: TimeInterval = 24 * 60 * 60
 
-    private func reading(for entity: TrackedEntity) -> SarosClockReading? {
+    private func reading(for entity: TrackedEntity, at date: Date) -> SarosClockReading? {
         try? services.clockService.reading(
             saros: entity.saros,
-            date: now,
+            date: date,
             harmonicDepth: harmonicDepth
         )
     }
@@ -346,7 +351,7 @@ private struct DashboardFlipItem {
     }
 
     var priorityRank: Int {
-        customFlip == nil ? countdown?.rarity.order ?? 0 : 8
+        customFlip == nil ? countdown?.rarity.rank ?? 0 : 100
     }
 }
 
@@ -437,9 +442,7 @@ private struct EntityCardView: View {
                     .foregroundStyle(.secondary)
 
                 if let countdown {
-                    Text("\(countdown.rarity.title) in \(countdown.timeUntilFlip.compactDuration)")
-                        .font(.caption)
-                        .foregroundStyle(countdown.rarity.color)
+                    EntityCardCountdownText(countdown: countdown)
                 }
 
                 if let latestRecord {
@@ -481,6 +484,23 @@ private struct EntityCardView: View {
     }
 }
 
+private struct EntityCardCountdownText: View {
+    let countdown: SarosFlipCountdown
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            Text("\(countdown.rarity.title) in \(timeLeft(at: context.date).compactDuration)")
+                .font(.caption)
+                .foregroundStyle(countdown.rarity.color)
+                .contentTransition(.numericText())
+        }
+    }
+
+    private func timeLeft(at date: Date) -> TimeInterval {
+        max(countdown.flipDate.timeIntervalSince(date), 0)
+    }
+}
+
 private struct DynamicFlipGlyph: View {
     let reading: SarosClockReading
     let countdown: SarosFlipCountdown?
@@ -498,7 +518,7 @@ private struct DynamicFlipGlyph: View {
                 OctalGlyph(
                     value: dynamicAddress(at: context.date, countdown: activeCountdown),
                     depth: reading.harmonicDepth,
-                    color: color
+                    style: activeCountdown.rarity.glyphStyle
                 )
             }
             .accessibilityLabel("Flip countdown glyph")
@@ -537,9 +557,7 @@ private struct EntityDetailView: View {
     @State private var liveTrackingError: String?
     @State private var customFlipDraft: CustomFlipDraft?
     @State private var threadGroupDraft: ThreadGroupDraft?
-    @State private var now = Date()
-
-    private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var isEditingEntity = false
 
     var body: some View {
         List {
@@ -548,7 +566,11 @@ private struct EntityDetailView: View {
                     let activeCountdown = currentRarityCountdown(for: reading)
                     let glyphColor = activeCountdown?.rarity.color ?? .blue
                     HStack(spacing: 16) {
-                        OctalGlyph(value: reading.octalAddress, depth: reading.harmonicDepth, color: glyphColor)
+                        OctalGlyph(
+                            value: reading.octalAddress,
+                            depth: reading.harmonicDepth,
+                            style: activeCountdown?.rarity.glyphStyle ?? .single(glyphColor)
+                        )
                             .frame(width: 72, height: 72)
                             .padding(8)
                             .background(glyphColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
@@ -557,11 +579,7 @@ private struct EntityDetailView: View {
                                 .font(.system(.title, design: .monospaced))
                             Text("Next flip \(JournalFormatters.dateTime.string(from: reading.nextFlipDate))")
                                 .foregroundStyle(.secondary)
-                            if let activeCountdown {
-                                Text("\(activeCountdown.rarity.title) in \(activeCountdown.timeUntilFlip.compactDuration)")
-                                    .font(.caption)
-                                    .foregroundStyle(activeCountdown.rarity.color)
-                            }
+                            ThreadHeaderCountdownText(reading: reading)
                         }
                     }
                 }
@@ -596,15 +614,23 @@ private struct EntityDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    Section("Track rarity") {
+                    Menu {
                         ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
                             Button {
                                 startLiveTracking(rarity: rarity)
                             } label: {
                                 Label("Track \(rarity.title)", systemImage: rarity.symbolName)
                             }
-                            .disabled(currentReading == nil || isStartingLiveTracking)
+                            .disabled(isStartingLiveTracking)
                         }
+                    } label: {
+                        Label("Track", systemImage: "dot.radiowaves.left.and.right")
+                    }
+
+                    Button {
+                        isEditingEntity = true
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
                     }
                 } label: {
                     Image(systemName: isStartingLiveTracking ? "dot.radiowaves.left.and.right" : "ellipsis.circle")
@@ -621,9 +647,12 @@ private struct EntityDetailView: View {
         }
         .sheet(isPresented: $isCapturing) {
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {
-                    now = Date()
-                }
+                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {}
+            }
+        }
+        .sheet(isPresented: $isEditingEntity) {
+            NavigationStack {
+                EntityEditorView(entity: entity)
             }
         }
         .sheet(item: $customFlipDraft) { draft in
@@ -639,9 +668,6 @@ private struct EntityDetailView: View {
                     addThreadGroup(savedDraft)
                 }
             }
-        }
-        .onReceive(countdownTimer) { date in
-            now = date
         }
         .alert(
             "Live Tracking",
@@ -664,9 +690,13 @@ private struct EntityDetailView: View {
     }
 
     private var currentReading: SarosClockReading? {
+        reading(at: Date())
+    }
+
+    private func reading(at date: Date) -> SarosClockReading? {
         try? services.clockService.reading(
             saros: entity.saros,
-            date: now,
+            date: date,
             harmonicDepth: harmonicDepth
         )
     }
@@ -685,12 +715,28 @@ private struct EntityDetailView: View {
     }
 
     private var selectedThreadGroup: ThreadGroup? {
+        threadGroup(for: entity)
+    }
+
+    private var sarosBuddies: [TrackedEntity] {
+        allEntities
+            .filter { $0.id != entity.id && $0.saros == entity.saros }
+            .sorted {
+                let comparison = $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle)
+                if comparison == .orderedSame {
+                    return $0.createdAt < $1.createdAt
+                }
+                return comparison == .orderedAscending
+            }
+    }
+
+    private func threadGroup(for entity: TrackedEntity) -> ThreadGroup? {
         guard let groupID = entity.groupID else { return nil }
         return threadGroups.first { $0.id == groupID }
     }
 
-    private func currentRarityCountdown(for reading: SarosClockReading) -> SarosFlipCountdown? {
-        reading.rarityCountdowns(now: now)
+    private func currentRarityCountdown(for reading: SarosClockReading, at date: Date = Date()) -> SarosFlipCountdown? {
+        reading.rarityCountdowns(now: date)
             .filter { $0.timeUntilFlip >= 0 && $0.timeUntilFlip <= 24 * 60 * 60 }
             .sorted {
                 if $0.rarity != $1.rarity {
@@ -702,7 +748,7 @@ private struct EntityDetailView: View {
     }
 
     private func startLiveTracking(rarity: FlipRarity) {
-        guard let reading = currentReading else {
+        guard let reading = reading(at: Date()) else {
             liveTrackingError = "The current thread timing is unavailable."
             return
         }
@@ -766,15 +812,7 @@ private struct EntityDetailView: View {
     @ViewBuilder
     private var infoTab: some View {
         if let reading = currentReading {
-            Section("Rarity countdowns") {
-                ForEach(reading.rarityCountdowns(now: now), id: \.rarity) { countdown in
-                    RarityCountdownRow(
-                        countdown: countdown,
-                        depth: harmonicDepth,
-                        now: now
-                    )
-                }
-            }
+            RarityCountdownSection(reading: reading, depth: harmonicDepth)
         } else {
             Section("Info") {
                 ContentUnavailableView("Info unavailable", systemImage: "clock.badge.questionmark")
@@ -782,6 +820,8 @@ private struct EntityDetailView: View {
         }
 
         threadGroupSection
+        sarosBuddiesSection
+        anchorEclipseSection
     }
 
     private var threadGroupSection: some View {
@@ -824,12 +864,86 @@ private struct EntityDetailView: View {
         }
     }
 
+    private var sarosBuddiesSection: some View {
+        Section("Saros buddies") {
+            if sarosBuddies.isEmpty {
+                ContentUnavailableView("No Saros buddies", systemImage: "person.2.slash")
+                    .font(.caption)
+            } else {
+                ForEach(sarosBuddies) { buddy in
+                    NavigationLink {
+                        EntityDetailView(entity: buddy)
+                    } label: {
+                        SarosBuddyRow(entity: buddy, group: threadGroup(for: buddy))
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var anchorEclipseSection: some View {
+        let globalBracket = try? services.eclipseService.eclipseBracket(around: entity.anchorDate)
+        let sarosInterval = try? services.eclipseService.previousAndNextEclipse(
+            saros: entity.saros,
+            around: entity.anchorDate
+        )
+        let storedAnchor = entity.nearestEclipseID.flatMap {
+            try? services.eclipseService.eclipse(withID: $0)
+        }
+        let nearestAnchor = try? services.eclipseService.nearestEclipse(to: entity.anchorDate)
+        let anchorEclipse = storedAnchor ?? globalBracket?.closest(to: entity.anchorDate) ?? nearestAnchor
+        let referenceCycleDuration = sarosInterval.map {
+            max($0.next.date.timeIntervalSince($0.previous.date), 1)
+        } ?? AnchorEclipseMetrics.averageSarosCycleDuration
+
+        Section("Anchor eclipse") {
+            if let globalBracket {
+                let metrics = AnchorEclipseMetrics(
+                    anchorDate: entity.anchorDate,
+                    bracket: globalBracket,
+                    depth: harmonicDepth,
+                    referenceCycleDuration: referenceCycleDuration
+                )
+
+                AnchorEclipseTimelineView(
+                    anchorDate: entity.anchorDate,
+                    bracket: globalBracket,
+                    depth: harmonicDepth,
+                    referenceCycleDuration: referenceCycleDuration
+                )
+
+                MetadataRow(title: "Anchor", value: JournalFormatters.dateTime.string(from: entity.anchorDate))
+                MetadataRow(title: "Left eclipse", value: AnchorEclipseFormat.summary(globalBracket.previous))
+                MetadataRow(title: "Right eclipse", value: AnchorEclipseFormat.summary(globalBracket.next))
+                MetadataRow(title: "Gap period", value: AnchorEclipseFormat.period(globalBracket.gapDuration))
+                MetadataRow(title: "To left eclipse", value: AnchorEclipseFormat.period(metrics.previousDistance))
+                MetadataRow(title: "To right eclipse", value: AnchorEclipseFormat.period(metrics.nextDistance))
+                MetadataRow(title: "To marginal center", value: AnchorEclipseFormat.period(metrics.midpointDistance))
+                MetadataRow(title: "Marginality", value: AnchorEclipseFormat.percent(metrics.marginality))
+
+                AnchorEclipseProximityView(metrics: metrics)
+            } else {
+                ContentUnavailableView("Eclipse interval unavailable", systemImage: "moonphase.new.moon.inverse")
+            }
+        }
+
+        if let anchorEclipse {
+            Section("Anchor path") {
+                ThreadAnchorCubeMapView(eclipse: anchorEclipse)
+                    .frame(height: 260)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
+            }
+        }
+    }
+
     @ViewBuilder
     private var flipsTab: some View {
         if let reading = currentReading {
+            let snapshotNow = Date()
             let timeline = ThreadFlipTimeline(
                 reading: reading,
-                now: now,
+                now: snapshotNow,
                 customFlips: entityCustomFlips
             )
 
@@ -865,7 +979,7 @@ private struct EntityDetailView: View {
             ThreadFlipRow(
                 event: event,
                 depth: harmonicDepth,
-                now: now,
+                now: Date(),
                 resonances: resonances(for: event)
             )
         }
@@ -930,7 +1044,8 @@ private struct EntityDetailView: View {
 
     private func recordRarity(for record: JournalRecord) -> FlipRarity {
         FlipRarity.rarity(
-            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            forOctalAddress: record.octalAddress,
+            harmonicDepth: record.harmonicDepth,
             isEclipse: record.triggerType == .eclipse
         )
     }
@@ -1042,6 +1157,98 @@ private struct ThreadGroupSummaryView: View {
     }
 }
 
+private struct SarosBuddyRow: View {
+    let entity: TrackedEntity
+    let group: ThreadGroup?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            avatar
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entity.displayTitle)
+                    .font(.subheadline.weight(.semibold))
+                Text("Anchor \(JournalFormatters.date.string(from: entity.anchorDate))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            if let group {
+                ThreadGroupInlineBadge(group: group)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let emoji = entity.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .font(.title3)
+                .frame(width: 38, height: 38)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "circle")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 38, height: 38)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+private struct ThreadHeaderCountdownText: View {
+    let reading: SarosClockReading
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            if let countdown = activeCountdown(at: context.date) {
+                Text("\(countdown.rarity.title) in \(timeLeft(for: countdown, at: context.date).compactDuration)")
+                    .font(.caption)
+                    .foregroundStyle(countdown.rarity.color)
+                    .contentTransition(.numericText())
+            }
+        }
+    }
+
+    private func activeCountdown(at date: Date) -> SarosFlipCountdown? {
+        reading.rarityCountdowns(now: date)
+            .filter { $0.flipDate.timeIntervalSince(date) >= 0 && $0.flipDate.timeIntervalSince(date) <= 24 * 60 * 60 }
+            .sorted {
+                if $0.rarity != $1.rarity {
+                    return $0.rarity > $1.rarity
+                }
+                return $0.flipDate.timeIntervalSince(date) < $1.flipDate.timeIntervalSince(date)
+            }
+            .first
+    }
+
+    private func timeLeft(for countdown: SarosFlipCountdown, at date: Date) -> TimeInterval {
+        max(countdown.flipDate.timeIntervalSince(date), 0)
+    }
+}
+
+private struct RarityCountdownSection: View {
+    let reading: SarosClockReading
+    let depth: Int
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            Section("Rarity countdowns") {
+                ForEach(reading.rarityCountdowns(now: context.date), id: \.rarity) { countdown in
+                    RarityCountdownRow(
+                        countdown: countdown,
+                        depth: depth,
+                        now: context.date
+                    )
+                }
+            }
+        }
+    }
+}
+
 struct ThreadGroupDraft: Identifiable {
     let id = UUID()
     var groupID: UUID?
@@ -1129,6 +1336,265 @@ struct ThreadGroupEditorView: View {
     }
 }
 
+private enum AnchorEclipseFormat {
+    private static let periodFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.year, .month, .day, .hour]
+        formatter.unitsStyle = .full
+        formatter.maximumUnitCount = 2
+        return formatter
+    }()
+
+    static func summary(_ eclipse: Eclipse) -> String {
+        "Saros \(eclipse.saros) \(eclipse.displayTypeLabel) · \(JournalFormatters.date.string(from: eclipse.date))"
+    }
+
+    static func period(_ interval: TimeInterval) -> String {
+        periodFormatter.string(from: abs(interval)) ?? "\(Int(abs(interval) / 86_400)) days"
+    }
+
+    static func percent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+}
+
+private struct AnchorEclipseMetrics {
+    static let averageSarosCycleDuration: TimeInterval = 6_585.3211 * 24 * 60 * 60
+
+    let anchorDate: Date
+    let bracket: EclipseBracket
+    let depth: Int
+    let referenceCycleDuration: TimeInterval
+
+    private var bracketDuration: TimeInterval {
+        max(bracket.next.date.timeIntervalSince(bracket.previous.date), 1)
+    }
+
+    var progress: Double {
+        let elapsed = anchorDate.timeIntervalSince(bracket.previous.date)
+        return min(max(elapsed / bracketDuration, 0), 1)
+    }
+
+    var previousDistance: TimeInterval {
+        abs(anchorDate.timeIntervalSince(bracket.previous.date))
+    }
+
+    var nextDistance: TimeInterval {
+        abs(bracket.next.date.timeIntervalSince(anchorDate))
+    }
+
+    var closestDistance: TimeInterval {
+        min(previousDistance, nextDistance)
+    }
+
+    var midpointDate: Date {
+        bracket.previous.date.addingTimeInterval(bracketDuration / 2)
+    }
+
+    var midpointDistance: TimeInterval {
+        abs(anchorDate.timeIntervalSince(midpointDate))
+    }
+
+    var rarityDistance: TimeInterval {
+        min(closestDistance, midpointDistance)
+    }
+
+    var marginality: Double {
+        let balance = abs(previousDistance - nextDistance) / bracketDuration
+        return min(max(1 - balance, 0), 1)
+    }
+
+    var inverseRarity: FlipRarity {
+        let commonPeriod = periodDuration(order: FlipRarity.common.order)
+        let rarePeriod = periodDuration(order: FlipRarity.rare.order)
+        let epicPeriod = periodDuration(order: FlipRarity.epic.order)
+        let legendaryPeriod = periodDuration(order: FlipRarity.legendary.order)
+
+        if rarityDistance <= commonPeriod {
+            return .mythic
+        }
+        if rarityDistance <= rarePeriod {
+            return .legendary
+        }
+        if rarityDistance <= epicPeriod {
+            return .epic
+        }
+        if rarityDistance <= legendaryPeriod {
+            return .rare
+        }
+        return .common
+    }
+
+    private func periodDuration(order: Int) -> TimeInterval {
+        let clampedDepth = JournalSettings.clampedHarmonicDepth(depth)
+        let exponent = max(clampedDepth - order, 0)
+        return max(referenceCycleDuration, 1) / pow(8, Double(exponent))
+    }
+}
+
+private struct AnchorEclipseTimelineView: View {
+    let anchorDate: Date
+    let bracket: EclipseBracket
+    let depth: Int
+    let referenceCycleDuration: TimeInterval
+
+    private var metrics: AnchorEclipseMetrics {
+        AnchorEclipseMetrics(
+            anchorDate: anchorDate,
+            bracket: bracket,
+            depth: depth,
+            referenceCycleDuration: referenceCycleDuration
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                endpoint(bracket.previous, alignment: .leading)
+                Spacer(minLength: 16)
+                endpoint(bracket.next, alignment: .trailing)
+            }
+
+            GeometryReader { proxy in
+                let width = max(proxy.size.width, 1)
+                let dotX = min(max(metrics.progress * width, 9), width - 9)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.secondary.opacity(0.26))
+                        .frame(height: 3)
+                        .position(x: width / 2, y: 18)
+
+                    Circle()
+                        .fill(metrics.inverseRarity.color)
+                        .frame(width: 18, height: 18)
+                        .shadow(color: metrics.inverseRarity.color.opacity(0.45), radius: 6)
+                        .position(x: dotX, y: 18)
+                }
+            }
+            .frame(height: 36)
+
+            HStack {
+                Text("Birthday / anchor \(JournalFormatters.dateTime.string(from: anchorDate))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 12)
+
+                FlipRarityBadge(rarity: metrics.inverseRarity, compact: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func endpoint(_ eclipse: Eclipse, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 3) {
+            Text("Saros \(eclipse.saros) \(eclipse.displayTypeLabel)")
+                .font(.caption.weight(.semibold))
+            Text(JournalFormatters.date.string(from: eclipse.date))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct AnchorEclipseProximityView: View {
+    let metrics: AnchorEclipseMetrics
+
+    var body: some View {
+        HStack(spacing: 12) {
+            FlipRarityBadge(rarity: metrics.inverseRarity)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Anchor rarity")
+                    .font(.caption.weight(.semibold))
+                Text("Uses closest eclipse or exact marginal center")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+private struct ThreadAnchorCubeMapView: View {
+    @EnvironmentObject private var services: AppServices
+
+    let eclipse: Eclipse
+
+    @State private var overlay: CubeMapEclipseOverlay?
+    @State private var focus = CubeMapProjectionFocus.zero
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ZStack {
+            if let overlay {
+                CubeMapView(
+                    overlays: [overlay],
+                    displayMode: .isometric,
+                    projectionOffsets: focus.offsets,
+                    initialYawQuarter: focus.yawQuarter,
+                    initialShowsTop: focus.showsTop,
+                    allowsInteraction: false
+                )
+                .id("\(eclipse.id)-\(focus.offsets.longitude)-\(focus.showsTop)")
+            } else if !isLoading {
+                ContentUnavailableView("No eclipse path", systemImage: "map")
+                    .font(.caption)
+            }
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(10)
+                    .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .task(id: eclipse.id) {
+            await loadPath()
+        }
+    }
+
+    @MainActor
+    private func loadPath() async {
+        isLoading = true
+        errorMessage = nil
+        overlay = nil
+
+        do {
+            guard let geometry = try services.eclipseService.pathGeometry(for: eclipse.id),
+                  !geometry.polygons.isEmpty
+            else {
+                isLoading = false
+                return
+            }
+
+            focus = CubeMapProjectionFocus.fitting(rings: geometry.polygons)
+            overlay = CubeMapEclipseOverlay(
+                id: eclipse.id,
+                saros: eclipse.saros,
+                title: "Saros \(eclipse.saros)",
+                date: eclipse.date,
+                color: .green,
+                polygons: geometry.polygons
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+}
+
 private struct RarityCountdownRow: View {
     let countdown: SarosFlipCountdown
     let depth: Int
@@ -1136,7 +1602,7 @@ private struct RarityCountdownRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            OctalGlyph(value: countdown.targetOctalAddress, depth: depth, color: countdown.rarity.color)
+            OctalGlyph(value: countdown.targetOctalAddress, depth: depth, style: countdown.rarity.glyphStyle)
                 .frame(width: 42, height: 42)
                 .padding(5)
                 .background(countdown.rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
@@ -1188,8 +1654,12 @@ private struct ThreadFlipEvent: Identifiable {
         customColorHex.map { Color(hex: $0) } ?? rarity.color
     }
 
+    var glyphStyle: OctalGlyphStyle {
+        customColorHex.map { .single(Color(hex: $0)) } ?? rarity.glyphStyle
+    }
+
     var priorityRank: Int {
-        isCustom ? 8 : rarity.order
+        isCustom ? 100 : rarity.rank
     }
 }
 
@@ -1247,10 +1717,12 @@ private struct ThreadFlipTimeline {
             }
         }
 
-        let eclipseBin = direction == .forward ? reading.binCount : 0
-        let eclipseEvent = event(for: eclipseBin, reading: reading, now: now)
-        if seenIDs.insert(eclipseEvent.id).inserted {
-            events.append(eclipseEvent)
+        for rarity in FlipRarity.sarosPatternRarities {
+            guard let event = sarosPatternEvent(for: rarity, reading: reading, now: now, direction: direction),
+                  seenIDs.insert(event.id).inserted else {
+                continue
+            }
+            events.append(event)
         }
 
         for customFlip in customFlips {
@@ -1275,17 +1747,22 @@ private struct ThreadFlipTimeline {
     private static func event(for binIndex: Int, reading: SarosClockReading, now: Date) -> ThreadFlipEvent {
         let date = reading.date(forBinIndex: binIndex)
         let isEclipse = binIndex <= 0 || binIndex >= reading.binCount
+        let octalAddress = reading.octalAddress(forBinIndex: binIndex)
         let baseOrder = reading.flipOrder(forBinIndex: binIndex)
-        let rarity = FlipRarity.rarity(forOrder: baseOrder, isEclipse: isEclipse)
-        let order = rarity == .saros ? max(7, baseOrder) : baseOrder
-        let periodDuration = rarity == .saros
-            ? reading.intervalDuration
+        let rarity = FlipRarity.rarity(
+            forOctalAddress: octalAddress,
+            harmonicDepth: reading.harmonicDepth,
+            isEclipse: isEclipse
+        )
+        let order = rarity.isSarosPattern ? max(7, baseOrder) : baseOrder
+        let periodDuration = rarity.isSarosPattern
+            ? date.timeIntervalSince(reading.previousEclipse.date)
             : Double(reading.qualifiedFlipStride(forOrder: max(1, min(order, 6)))) * reading.binDuration
         return ThreadFlipEvent(
             id: "flip-\(binIndex)-\(rarity.id)",
-            title: rarity == .saros ? "Saros" : "Flip",
+            title: rarity.isSarosPattern ? "Saros" : "Flip",
             date: date,
-            octalAddress: reading.octalAddress(forBinIndex: binIndex),
+            octalAddress: octalAddress,
             order: order,
             rarity: rarity,
             customColorHex: nil,
@@ -1295,6 +1772,30 @@ private struct ThreadFlipTimeline {
         )
     }
 
+    private static func sarosPatternEvent(
+        for rarity: FlipRarity,
+        reading: SarosClockReading,
+        now: Date,
+        direction: ThreadFlipBinCollection.Direction
+    ) -> ThreadFlipEvent? {
+        guard let address = rarity.sarosPatternAddress(depth: reading.harmonicDepth),
+              let binIndex = Int(address, radix: 8),
+              binIndex > 0,
+              binIndex < reading.binCount
+        else {
+            return nil
+        }
+
+        switch direction {
+        case .forward:
+            guard binIndex > reading.binIndex else { return nil }
+        case .backward:
+            guard binIndex <= reading.binIndex else { return nil }
+        }
+
+        return event(for: binIndex, reading: reading, now: now)
+    }
+
     static func event(for customFlip: CustomFlipEvent, now: Date) -> ThreadFlipEvent {
         ThreadFlipEvent(
             id: "custom-\(customFlip.id.uuidString)",
@@ -1302,7 +1803,7 @@ private struct ThreadFlipTimeline {
             date: customFlip.date,
             octalAddress: customFlip.octalAddress,
             order: 8,
-            rarity: .saros,
+            rarity: .saros7,
             customColorHex: customFlip.colorHex,
             isCustom: true,
             isFuture: customFlip.date >= now,
@@ -1382,7 +1883,7 @@ private struct ThreadFlipRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-                OctalGlyph(value: event.octalAddress, depth: depth, color: rowColor)
+                OctalGlyph(value: event.octalAddress, depth: depth, style: event.glyphStyle)
                     .frame(width: 42, height: 42)
                     .padding(5)
                     .background(rowColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
@@ -1570,7 +2071,7 @@ private enum ThreadFlipResonanceCalculator {
                     title: customFlip.displayName,
                     date: customFlip.date,
                     octalAddress: customFlip.octalAddress,
-                    rarity: .saros,
+                    rarity: .saros7,
                     customColorHex: customFlip.colorHex,
                     isCustom: true
                 )
@@ -1629,7 +2130,7 @@ private struct ThreadFlipCandidate {
     let isCustom: Bool
 
     var priorityRank: Int {
-        isCustom ? 8 : rarity.order
+        isCustom ? 100 : rarity.rank
     }
 }
 
@@ -1658,7 +2159,7 @@ private struct ThreadFlipResonanceDetailView: View {
         List {
             Section {
                 HStack(spacing: 16) {
-                    OctalGlyph(value: event.octalAddress, depth: harmonicDepth, color: event.color)
+                    OctalGlyph(value: event.octalAddress, depth: harmonicDepth, style: event.glyphStyle)
                         .frame(width: 76, height: 76)
                         .padding(8)
                         .background(event.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
@@ -1722,9 +2223,13 @@ private struct ThreadFlipOverlapRow: View {
         overlap.customColorHex.map { Color(hex: $0) } ?? overlap.rarity.color
     }
 
+    private var glyphStyle: OctalGlyphStyle {
+        overlap.customColorHex.map { .single(Color(hex: $0)) } ?? overlap.rarity.glyphStyle
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            OctalGlyph(value: overlap.octalAddress, depth: harmonicDepth, color: color)
+            OctalGlyph(value: overlap.octalAddress, depth: harmonicDepth, style: glyphStyle)
                 .frame(width: 42, height: 42)
                 .padding(5)
                 .background(color.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))

@@ -86,6 +86,22 @@ struct SarosInterval: Codable, Hashable {
     let normalizedPhase: Double
 }
 
+struct EclipseBracket: Codable, Hashable {
+    let previous: Eclipse
+    let next: Eclipse
+    let normalizedPhase: Double
+
+    var gapDuration: TimeInterval {
+        next.date.timeIntervalSince(previous.date)
+    }
+
+    func closest(to date: Date) -> Eclipse {
+        abs(date.timeIntervalSince(previous.date)) <= abs(next.date.timeIntervalSince(date))
+            ? previous
+            : next
+    }
+}
+
 struct EclipsePathGeometry: Codable, Hashable {
     var centerline: [Coordinate]
     var polygons: [[Coordinate]]

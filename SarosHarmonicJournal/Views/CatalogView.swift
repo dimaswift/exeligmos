@@ -12,7 +12,7 @@ struct CatalogView: View {
     @State private var resonanceRarity: FlipRarity = .epic
     @State private var resonanceDisplayMode: CatalogResonanceDisplayMode = .phase
     @State private var resonanceSelectedFamilyIDs: Set<Int> = []
-    @State private var resonanceSelectedRarities: Set<FlipRarity> = [.epic, .legendary, .mythic, .saros]
+    @State private var resonanceSelectedRarities: Set<FlipRarity> = [.epic, .legendary, .mythic]
     @State private var resonanceTimelineCycles = 1.0
     @State private var resonanceTimelineZoom = 2.0
     @State private var resonanceWaveSampleDensity = 8.0
@@ -306,20 +306,20 @@ private struct CatalogResonanceView: View {
     @Binding var mapLatitudeOffset: Double
     @Binding var mapLongitudeOffset: Double
     @Binding var mapRollOffset: Double
-    @State private var mapDisplayMode: CatalogMapDisplayMode = .singleFace
+    @State private var mapDisplayMode: CubeMapDisplayMode = .singleFace
     @State private var hasEditedFamilySelection = false
     @State private var hasEditedRaritySelection = false
 
     private var selectableRarities: [FlipRarity] {
-        FlipRarity.visibleRarities(for: harmonicDepth).filter { $0 >= .rare }
+        FlipRarity.visibleRarities(for: harmonicDepth, includeSaros: false).filter { $0 >= .rare }
     }
 
     private var referenceFamily: CatalogActiveSarosFamily? {
         families.first
     }
 
-    private var mapProjectionOffsets: CatalogMapProjectionOffsets {
-        CatalogMapProjectionOffsets(
+    private var mapProjectionOffsets: CubeMapProjectionOffsets {
+        CubeMapProjectionOffsets(
             latitude: mapLatitudeOffset,
             longitude: mapLongitudeOffset,
             roll: mapRollOffset
@@ -404,7 +404,7 @@ private struct CatalogResonanceView: View {
 
                     if displayMode == .map {
                         Picker("Map display", selection: $mapDisplayMode) {
-                            ForEach(CatalogMapDisplayMode.allCases) { mode in
+                            ForEach(CubeMapDisplayMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
                         }
@@ -418,7 +418,7 @@ private struct CatalogResonanceView: View {
                 let selectedBands = model.bands.filter { selectedRarities.contains($0.rarity) }
                 Section {
                     if displayMode == .map {
-                        CatalogResonanceMapView(
+                        CatalogResonanceCubeMapView(
                             model: model,
                             selectedSeries: selectedSeries,
                             displayMode: mapDisplayMode,
@@ -558,7 +558,7 @@ private struct CatalogResonanceView: View {
                 return nil
             }
 
-            let interval = FlipRarity.visibleRarities(for: harmonicDepth)
+            let interval = FlipRarity.visibleRarities(for: harmonicDepth, includeSaros: false)
                 .filter { $0 > .common }
                 .compactMap { reading.countdown(rarity: $0, now: now)?.timeUntilFlip }
                 .filter { $0 >= 0 }
@@ -579,7 +579,7 @@ private struct CatalogResonanceView: View {
     }
 
     private func waveFrequency(for rarity: FlipRarity, reading: SarosClockReading) -> Double {
-        if rarity == .saros {
+        if rarity.isSarosPattern {
             return 1
         }
         let stride = reading.qualifiedFlipStride(forOrder: rarity.order)
@@ -597,6 +597,74 @@ private struct CatalogResonanceView: View {
     private func phasePairSummary(for series: [CatalogResonanceSeries]) -> String {
         guard series.count >= 2 else { return "Select 2 families" }
         return "\(series[0].title) × \(series[1].title)"
+    }
+}
+
+private struct CatalogResonanceCubeMapView: View {
+    @EnvironmentObject private var services: AppServices
+
+    let model: CatalogResonanceModel
+    let selectedSeries: [CatalogResonanceSeries]
+    let displayMode: CubeMapDisplayMode
+    let projectionOffsets: CubeMapProjectionOffsets
+
+    @State private var overlays: [CubeMapEclipseOverlay] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ZStack {
+            CubeMapView(
+                overlays: overlays,
+                displayMode: displayMode,
+                projectionOffsets: projectionOffsets
+            )
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(10)
+                    .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .task(id: selectedSeries.map(\.saros)) {
+            await loadOverlays()
+        }
+    }
+
+    @MainActor
+    private func loadOverlays() async {
+        isLoading = true
+        errorMessage = nil
+
+        var loaded: [CubeMapEclipseOverlay] = []
+        for (index, series) in selectedSeries.enumerated() {
+            guard let geometry = try? services.eclipseService.pathGeometry(for: series.nextEclipseID),
+                  !geometry.polygons.isEmpty
+            else {
+                continue
+            }
+
+            loaded.append(CubeMapEclipseOverlay(
+                id: series.nextEclipseID,
+                saros: series.saros,
+                title: series.title,
+                date: series.nextEclipseDate,
+                color: CatalogResonancePalette.color(
+                    at: model.series.firstIndex(where: { $0.saros == series.saros }) ?? index
+                ),
+                polygons: geometry.polygons
+            ))
+        }
+
+        overlays = loaded
+        isLoading = false
     }
 }
 

@@ -107,8 +107,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             }
         }
 
-        let customPreference = preferencesByRarity[.saros]
-            ?? defaultPreferences.first { $0.rarity == .saros }
+        let customPreference = preferencesByRarity[.saros7]
+            ?? defaultPreferences.first { $0.rarity == .saros7 }
         if let customPreference, customPreference.mode != .silent {
             for customFlip in customFlips {
                 guard
@@ -185,7 +185,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         content.sound = notificationSound(for: mode)
         content.interruptionLevel = interruptionLevel(for: mode)
         content.threadIdentifier = "saros-\(entity.saros)-\(countdown.rarity.id)"
-        content.relevanceScore = min(Double(countdown.rarity.order) / 7.0, 1.0)
+        content.relevanceScore = min(Double(countdown.rarity.rank) / Double(FlipRarity.saros7.rank), 1.0)
         content.userInfo = [
             "entityID": entity.id.uuidString,
             "trigger": JournalTriggerType.binFlip.rawValue,
@@ -199,7 +199,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         if let attachment = await glyphAttachment(
             octalAddress: countdown.targetOctalAddress,
             harmonicDepth: harmonicDepth,
-            color: countdown.rarity.color
+            style: countdown.rarity.glyphStyle
         ) {
             content.attachments = [attachment]
         }
@@ -249,7 +249,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         if let attachment = await glyphAttachment(
             octalAddress: customFlip.octalAddress,
             harmonicDepth: harmonicDepth,
-            color: customColor
+            style: .single(customColor)
         ) {
             content.attachments = [attachment]
         }
@@ -318,9 +318,9 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     }
 
     @MainActor
-    private func glyphAttachment(octalAddress: String, harmonicDepth: Int, color: Color) -> UNNotificationAttachment? {
+    private func glyphAttachment(octalAddress: String, harmonicDepth: Int, style: OctalGlyphStyle) -> UNNotificationAttachment? {
         let renderer = ImageRenderer(
-            content: OctalGlyph(value: octalAddress, depth: harmonicDepth, color: color)
+            content: OctalGlyph(value: octalAddress, depth: harmonicDepth, style: style)
                 .frame(width: 180, height: 180)
                 .padding(18)
                 .background(Color(.systemBackground))

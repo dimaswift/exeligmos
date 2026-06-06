@@ -70,7 +70,12 @@ private struct TrackedThreadWidgetView: View {
             switch family {
             case .systemMedium:
                 HStack(spacing: 20) {
-                    WidgetOctalGlyph(value: payload.glyph, depth: snapshot.harmonicDepth, color: color)
+                    WidgetOctalGlyph(
+                        value: payload.glyph,
+                        depth: snapshot.harmonicDepth,
+                        color: color,
+                        secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                    )
                         .frame(width: 78, height: 78)
                         .offset(x: 3, y: 3)
                     VStack(alignment: .leading, spacing: 6) {
@@ -91,7 +96,12 @@ private struct TrackedThreadWidgetView: View {
             default:
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        WidgetOctalGlyph(value: payload.glyph, depth: snapshot.harmonicDepth, color: color)
+                        WidgetOctalGlyph(
+                            value: payload.glyph,
+                            depth: snapshot.harmonicDepth,
+                            color: color,
+                            secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                        )
                             .frame(width: 54, height: 54)
                             .offset(x: 3, y: 3)
                         Spacer(minLength: 0)
@@ -152,6 +162,7 @@ extension ThreadTrackingSnapshot {
         rarityOrderLabel: "Order 3",
         raritySymbolName: "diamond",
         rarityColorHex: "#3D9BFF",
+        raritySecondaryColorHex: "#3D9BFF",
         flipDate: Date.now.addingTimeInterval(2 * 60 * 60 + 17 * 60),
         createdAt: .now,
         nextGlyph: "7210231",
@@ -160,6 +171,7 @@ extension ThreadTrackingSnapshot {
         nextRarityOrderLabel: "Order 2",
         nextRaritySymbolName: "circle.fill",
         nextRarityColorHex: "#8E8E93",
+        nextRaritySecondaryColorHex: "#8E8E93",
         nextFlipDate: Date.now.addingTimeInterval(2 * 60 * 60 + 18 * 60)
     )
 }

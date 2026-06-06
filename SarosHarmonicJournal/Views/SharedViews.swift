@@ -134,15 +134,88 @@ enum JournalSettings {
     }
 }
 
-enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashable {
+enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawRepresentable {
     case common
     case rare
     case epic
     case legendary
     case mythic
-    case saros
+    case saros1
+    case saros2
+    case saros3
+    case saros4
+    case saros5
+    case saros6
+    case saros7
+
+    static let allCases: [FlipRarity] = [
+        .common,
+        .rare,
+        .epic,
+        .legendary,
+        .mythic,
+        .saros1,
+        .saros2,
+        .saros3,
+        .saros4,
+        .saros5,
+        .saros6,
+        .saros7
+    ]
 
     var id: String { rawValue }
+
+    var rawValue: String {
+        switch self {
+        case .common: "common"
+        case .rare: "rare"
+        case .epic: "epic"
+        case .legendary: "legendary"
+        case .mythic: "mythic"
+        case .saros1: "saros1"
+        case .saros2: "saros2"
+        case .saros3: "saros3"
+        case .saros4: "saros4"
+        case .saros5: "saros5"
+        case .saros6: "saros6"
+        case .saros7: "saros7"
+        }
+    }
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "common": self = .common
+        case "rare": self = .rare
+        case "epic": self = .epic
+        case "legendary": self = .legendary
+        case "mythic": self = .mythic
+        case "saros1": self = .saros1
+        case "saros2": self = .saros2
+        case "saros3": self = .saros3
+        case "saros4": self = .saros4
+        case "saros5": self = .saros5
+        case "saros6": self = .saros6
+        case "saros", "saros7": self = .saros7
+        default: return nil
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let rarity = FlipRarity(rawValue: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown flip rarity \(rawValue)."
+            )
+        }
+        self = rarity
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     var order: Int {
         switch self {
@@ -151,7 +224,24 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
         case .epic: 4
         case .legendary: 5
         case .mythic: 6
-        case .saros: 7
+        case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: 7
+        }
+    }
+
+    var rank: Int {
+        switch self {
+        case .common: 2
+        case .rare: 3
+        case .epic: 4
+        case .legendary: 5
+        case .mythic: 6
+        case .saros1: 7
+        case .saros2: 8
+        case .saros3: 9
+        case .saros4: 10
+        case .saros5: 11
+        case .saros6: 12
+        case .saros7: 13
         }
     }
 
@@ -162,7 +252,13 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
         case .epic: "Epic"
         case .legendary: "Legendary"
         case .mythic: "Mythic"
-        case .saros: "Saros"
+        case .saros1: "Saros 1"
+        case .saros2: "Saros 2"
+        case .saros3: "Saros 3"
+        case .saros4: "Saros 4"
+        case .saros5: "Saros 5"
+        case .saros6: "Saros 6"
+        case .saros7: "Saros 7"
         }
     }
 
@@ -173,18 +269,49 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
         case .epic: "sparkles"
         case .legendary: "crown"
         case .mythic: "flame"
-        case .saros: "leaf.fill"
+        case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: "leaf.fill"
         }
     }
 
     var color: Color {
+        primaryColor
+    }
+
+    var primaryColor: Color {
         switch self {
         case .common: .gray
         case .rare: .blue
         case .epic: .purple
         case .legendary: .yellow
         case .mythic: .red
-        case .saros: .green
+        case .saros1: Self.rainbowRed
+        case .saros2: Self.rainbowOrange
+        case .saros3: Self.rainbowYellow
+        case .saros4: Self.rainbowGreen
+        case .saros5: Self.rainbowCyan
+        case .saros6: Self.rainbowBlue
+        case .saros7: Self.rainbowViolet
+        }
+    }
+
+    var secondaryColor: Color {
+        switch self {
+        case .common, .rare, .epic, .legendary, .mythic:
+            primaryColor
+        case .saros1:
+            Self.rainbowOrange
+        case .saros2:
+            Self.rainbowYellow
+        case .saros3:
+            Self.rainbowGreen
+        case .saros4:
+            Self.rainbowCyan
+        case .saros5:
+            Self.rainbowBlue
+        case .saros6:
+            Self.rainbowViolet
+        case .saros7:
+            Self.rainbowRed
         }
     }
 
@@ -193,16 +320,47 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
     }
 
     var orderLabel: String {
-        self == .saros ? "Order 7+" : "Order \(order)"
+        if let sarosDigit {
+            return String(repeating: "\(sarosDigit)", count: JournalSettings.defaultHarmonicDepth)
+        }
+        return "Order \(order)"
+    }
+
+    var isSarosPattern: Bool {
+        sarosDigit != nil
+    }
+
+    var sarosDigit: Int? {
+        switch self {
+        case .saros1: 1
+        case .saros2: 2
+        case .saros3: 3
+        case .saros4: 4
+        case .saros5: 5
+        case .saros6: 6
+        case .saros7: 7
+        default: nil
+        }
+    }
+
+    var glyphStyle: OctalGlyphStyle {
+        isSarosPattern
+            ? .split(primary: primaryColor, secondary: secondaryColor, splitAfterDigitCount: 3)
+            : .single(primaryColor)
+    }
+
+    func sarosPatternAddress(depth: Int) -> String? {
+        guard let sarosDigit else { return nil }
+        return String(repeating: "\(sarosDigit)", count: JournalSettings.clampedHarmonicDepth(depth))
     }
 
     static func < (lhs: FlipRarity, rhs: FlipRarity) -> Bool {
-        lhs.order < rhs.order
+        lhs.rank < rhs.rank
     }
 
     static func rarity(forOrder order: Int, isEclipse: Bool = false) -> FlipRarity {
         if isEclipse || order >= 7 {
-            return .saros
+            return .saros7
         }
 
         switch max(order, 1) {
@@ -211,8 +369,30 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
         case 4: return .epic
         case 5: return .legendary
         case 6: return .mythic
-        default: return .saros
+        default: return .saros7
         }
+    }
+
+    static func rarity(forOctalAddress octalAddress: String, harmonicDepth: Int, isEclipse: Bool = false) -> FlipRarity {
+        if isEclipse {
+            return .saros7
+        }
+
+        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        let padded = octalAddress.leftPadded(toLength: depth, withPad: "0")
+        if padded.count == depth,
+           let first = padded.first,
+           first != "0",
+           padded.allSatisfy({ $0 == first }),
+           let digit = Int(String(first)),
+           (1...7).contains(digit) {
+            return sarosPatternRarity(forDigit: digit) ?? .saros7
+        }
+
+        return rarity(
+            forOrder: order(forOctalAddress: padded, harmonicDepth: depth),
+            isEclipse: false
+        )
     }
 
     static func order(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
@@ -224,15 +404,47 @@ enum FlipRarity: String, Codable, CaseIterable, Identifiable, Comparable, Hashab
     static func visibleRarities(for harmonicDepth: Int, includeSaros: Bool = true) -> [FlipRarity] {
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
         let regular = allCases.filter { rarity in
-            rarity != .saros && rarity.order <= min(depth, 6)
+            !rarity.isSarosPattern && rarity.order <= min(depth, 6)
         }
-        return includeSaros ? regular + [.saros] : regular
+        guard includeSaros, depth >= 7 else { return regular }
+        return regular + sarosPatternRarities
     }
 
     static func notificationRarities(for harmonicDepth: Int) -> [FlipRarity] {
         visibleRarities(for: harmonicDepth)
             .filter(\.notificationEligible)
     }
+
+    static let sarosPatternRarities: [FlipRarity] = [
+        .saros1,
+        .saros2,
+        .saros3,
+        .saros4,
+        .saros5,
+        .saros6,
+        .saros7
+    ]
+
+    static func sarosPatternRarity(forDigit digit: Int) -> FlipRarity? {
+        switch digit {
+        case 1: .saros1
+        case 2: .saros2
+        case 3: .saros3
+        case 4: .saros4
+        case 5: .saros5
+        case 6: .saros6
+        case 7: .saros7
+        default: nil
+        }
+    }
+
+    private static let rainbowRed = Color(red: 1.0, green: 0.23, blue: 0.19)
+    private static let rainbowOrange = Color(red: 1.0, green: 0.58, blue: 0.0)
+    private static let rainbowYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
+    private static let rainbowGreen = Color(red: 0.20, green: 0.84, blue: 0.29)
+    private static let rainbowCyan = Color(red: 0.20, green: 0.78, blue: 1.0)
+    private static let rainbowBlue = Color(red: 0.25, green: 0.50, blue: 1.0)
+    private static let rainbowViolet = Color(red: 0.67, green: 0.34, blue: 1.0)
 }
 
 struct CatalogCenturyBounds: Hashable {
@@ -332,14 +544,14 @@ enum FlipNotificationPreferences {
             let mode: FlipNotificationMode = switch rarity {
             case .rare: .event
             case .epic: .live
-            case .legendary, .mythic, .saros: .alarm
+            case .legendary, .mythic, .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: .alarm
             default: .silent
             }
             let advanceMinutes = switch rarity {
             case .epic: 30
             case .legendary: 60
             case .mythic: 120
-            case .saros: 240
+            case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: 240
             default: 10
             }
             return FlipNotificationRarityPreference(
@@ -376,7 +588,8 @@ enum FlipNotificationPreferences {
 
     static func rarity(forOctalAddress octalAddress: String, harmonicDepth: Int, isEclipse: Bool = false) -> FlipRarity {
         FlipRarity.rarity(
-            forOrder: order(forOctalAddress: octalAddress, harmonicDepth: harmonicDepth),
+            forOctalAddress: octalAddress,
+            harmonicDepth: harmonicDepth,
             isEclipse: isEclipse
         )
     }
@@ -420,15 +633,56 @@ struct PhaseRing: View {
     }
 }
 
+struct OctalGlyphStyle {
+    let primary: Color
+    let secondary: Color
+    let splitAfterDigitCount: Int?
+
+    var isSingleColor: Bool {
+        splitAfterDigitCount == nil
+    }
+
+    static func single(_ color: Color) -> OctalGlyphStyle {
+        OctalGlyphStyle(primary: color, secondary: color, splitAfterDigitCount: nil)
+    }
+
+    static func split(primary: Color, secondary: Color, splitAfterDigitCount: Int) -> OctalGlyphStyle {
+        OctalGlyphStyle(
+            primary: primary,
+            secondary: secondary,
+            splitAfterDigitCount: splitAfterDigitCount
+        )
+    }
+
+    func color(forDigitIndex digitIndex: Int) -> Color {
+        guard let splitAfterDigitCount else {
+            return primary
+        }
+        return digitIndex < splitAfterDigitCount ? primary : secondary
+    }
+}
+
 struct OctalGlyph: View {
     let value: String
     let depth: Int
-    var color: Color
+    var style: OctalGlyphStyle
 
     init(value: String, depth: Int = JournalSettings.defaultHarmonicDepth, color: Color = .cyan) {
         self.value = value
         self.depth = JournalSettings.clampedHarmonicDepth(depth)
-        self.color = color
+        self.style = .single(color)
+    }
+
+    init(value: String, depth: Int = JournalSettings.defaultHarmonicDepth, style: OctalGlyphStyle) {
+        self.value = value
+        self.depth = JournalSettings.clampedHarmonicDepth(depth)
+        self.style = style
+    }
+
+    init(value: String, depth: Int = JournalSettings.defaultHarmonicDepth, rarity: FlipRarity) {
+        self.value = value
+        self.depth = JournalSettings.clampedHarmonicDepth(depth)
+        self.style = rarity.glyphStyle
     }
 
     var body: some View {
@@ -436,9 +690,17 @@ struct OctalGlyph: View {
 
         ZStack {
             OctalGlyphCoreShape(depth: depth)
-                .fill(color, style: FillStyle(eoFill: true))
-            OctalGlyphArmShape(value: value, depth: depth)
-                .fill(color)
+                .fill(style.secondary, style: FillStyle(eoFill: true))
+
+            if style.isSingleColor {
+                OctalGlyphArmShape(value: value, depth: depth)
+                    .fill(style.primary)
+            } else {
+                ForEach(0..<geometry.digitCount, id: \.self) { socketIndex in
+                    OctalGlyphArmSegmentShape(value: value, depth: depth, socketIndex: socketIndex)
+                        .fill(style.primary)
+                }
+            }
         }
         .aspectRatio(geometry.aspectRatio, contentMode: .fit)
         .accessibilityElement(children: .ignore)
@@ -488,6 +750,20 @@ private struct OctalGlyphArmShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         OctalGlyphGeometryCache.geometry(for: depth).armPath(for: value, in: rect)
+    }
+}
+
+private struct OctalGlyphArmSegmentShape: Shape {
+    let value: String
+    let depth: Int
+    let socketIndex: Int
+
+    func path(in rect: CGRect) -> Path {
+        OctalGlyphGeometryCache.geometry(for: depth).armPath(
+            for: value,
+            socketIndex: socketIndex,
+            in: rect
+        )
     }
 }
 
@@ -710,7 +986,15 @@ private struct OctalGlyphGeometry {
         return path.applying(transform(in: rect))
     }
 
-    private func digitIndex(forSocketIndex socketIndex: Int) -> Int {
+    func armPath(for value: String, socketIndex: Int, in rect: CGRect) -> Path {
+        guard (0..<digitCount).contains(socketIndex) else { return Path() }
+
+        let digits = normalizedDigits(value)
+        let digit = digits[digitIndex(forSocketIndex: socketIndex)]
+        return armTemplatePaths[socketIndex][digit].applying(transform(in: rect))
+    }
+
+    func digitIndex(forSocketIndex socketIndex: Int) -> Int {
         socketIndex == 0 ? 0 : digitCount - socketIndex
     }
 

@@ -47,7 +47,8 @@ enum ThreadLiveActivityService {
             rarityTitle: currentPayload.rarity.title,
             rarityOrderLabel: currentPayload.orderLabel,
             raritySymbolName: currentPayload.rarity.symbolName,
-            rarityColorHex: trackingColorHex(for: currentPayload.rarity),
+            rarityColorHex: trackingPrimaryColorHex(for: currentPayload.rarity),
+            raritySecondaryColorHex: trackingSecondaryColorHex(for: currentPayload.rarity),
             flipDate: currentPayload.flipDate,
             createdAt: Date(),
             nextGlyph: nextPayload?.glyph,
@@ -55,7 +56,8 @@ enum ThreadLiveActivityService {
             nextRarityTitle: nextPayload?.rarity.title,
             nextRarityOrderLabel: nextPayload?.orderLabel,
             nextRaritySymbolName: nextPayload?.rarity.symbolName,
-            nextRarityColorHex: nextPayload.map { trackingColorHex(for: $0.rarity) },
+            nextRarityColorHex: nextPayload.map { trackingPrimaryColorHex(for: $0.rarity) },
+            nextRaritySecondaryColorHex: nextPayload.map { trackingSecondaryColorHex(for: $0.rarity) },
             nextFlipDate: nextPayload?.flipDate
         )
     }
@@ -84,6 +86,7 @@ enum ThreadLiveActivityService {
             rarityOrderLabel: snapshot.rarityOrderLabel,
             raritySymbolName: snapshot.raritySymbolName,
             rarityColorHex: snapshot.rarityColorHex,
+            raritySecondaryColorHex: snapshot.raritySecondaryColorHex,
             flipDate: snapshot.flipDate,
             updatedAt: Date(),
             nextGlyph: snapshot.nextGlyph,
@@ -92,6 +95,7 @@ enum ThreadLiveActivityService {
             nextRarityOrderLabel: snapshot.nextRarityOrderLabel,
             nextRaritySymbolName: snapshot.nextRaritySymbolName,
             nextRarityColorHex: snapshot.nextRarityColorHex,
+            nextRaritySecondaryColorHex: snapshot.nextRaritySecondaryColorHex,
             nextFlipDate: snapshot.nextFlipDate
         )
         let content = ActivityContent(
@@ -130,7 +134,7 @@ enum ThreadLiveActivityService {
             targetBinIndex: targetBinIndex,
             glyph: glyph,
             rarity: rarity,
-            orderLabel: rarity == .saros ? "Order 7+" : "Order \(order)",
+            orderLabel: rarity.orderLabel,
             flipDate: reading.date(forBinIndex: targetBinIndex)
         )
     }
@@ -148,7 +152,7 @@ enum ThreadLiveActivityService {
         trackingRarity rarity: FlipRarity,
         reading: SarosClockReading
     ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date)? {
-        guard rarity != .saros,
+        guard !rarity.isSarosPattern,
               let nextBinIndex = reading.nextQualifiedFlipBin(after: targetBinIndex, order: rarity.order, exact: true)
         else {
             return nil
@@ -156,14 +160,41 @@ enum ThreadLiveActivityService {
         return flipPayload(for: nextBinIndex, reading: reading)
     }
 
-    private static func trackingColorHex(for rarity: FlipRarity) -> String {
+    private static func trackingPrimaryColorHex(for rarity: FlipRarity) -> String {
         switch rarity {
         case .common: "#8E8E93"
         case .rare: "#3D9BFF"
         case .epic: "#BF5AF2"
         case .legendary: "#FFD60A"
         case .mythic: "#FF453A"
-        case .saros: "#32D74B"
+        case .saros1: "#FF3B30"
+        case .saros2: "#FF9500"
+        case .saros3: "#FFD60A"
+        case .saros4: "#32D74B"
+        case .saros5: "#40C8FF"
+        case .saros6: "#4080FF"
+        case .saros7: "#AB57FF"
+        }
+    }
+
+    private static func trackingSecondaryColorHex(for rarity: FlipRarity) -> String {
+        switch rarity {
+        case .common, .rare, .epic, .legendary, .mythic:
+            trackingPrimaryColorHex(for: rarity)
+        case .saros1:
+            "#FF9500"
+        case .saros2:
+            "#FFD60A"
+        case .saros3:
+            "#32D74B"
+        case .saros4:
+            "#40C8FF"
+        case .saros5:
+            "#4080FF"
+        case .saros6:
+            "#AB57FF"
+        case .saros7:
+            "#FF3B30"
         }
     }
 

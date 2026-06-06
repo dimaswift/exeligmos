@@ -6,6 +6,7 @@ protocol EclipseService {
     func eclipses(forSaros saros: Int) throws -> [Eclipse]
     func eclipse(withID eclipseID: String) throws -> Eclipse?
     func previousAndNextEclipse(saros: Int, around date: Date) throws -> SarosInterval?
+    func eclipseBracket(around date: Date) throws -> EclipseBracket?
     func nearestEclipse(to date: Date) throws -> Eclipse?
     func pathGeometry(for eclipseID: String) throws -> EclipsePathGeometry?
 }

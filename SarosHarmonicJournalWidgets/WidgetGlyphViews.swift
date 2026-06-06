@@ -10,6 +10,7 @@ struct TrackingDisplayPayload {
     let rarityOrderLabel: String
     let raritySymbolName: String
     let rarityColorHex: String
+    let raritySecondaryColorHex: String?
     let flipDate: Date
     let isFlipWindow: Bool
 }
@@ -71,6 +72,7 @@ extension ThreadTrackingSnapshot {
                 rarityOrderLabel: nextRarityOrderLabel,
                 raritySymbolName: nextRaritySymbolName,
                 rarityColorHex: nextRarityColorHex,
+                raritySecondaryColorHex: nextRaritySecondaryColorHex,
                 flipDate: nextFlipDate,
                 isFlipWindow: false
             )
@@ -82,6 +84,7 @@ extension ThreadTrackingSnapshot {
             rarityOrderLabel: rarityOrderLabel,
             raritySymbolName: raritySymbolName,
             rarityColorHex: rarityColorHex,
+            raritySecondaryColorHex: raritySecondaryColorHex,
             flipDate: flipDate,
             isFlipWindow: now >= flipDate
         )
@@ -106,6 +109,7 @@ extension ThreadTrackingAttributes.ContentState {
                 rarityOrderLabel: nextRarityOrderLabel,
                 raritySymbolName: nextRaritySymbolName,
                 rarityColorHex: nextRarityColorHex,
+                raritySecondaryColorHex: nextRaritySecondaryColorHex,
                 flipDate: nextFlipDate,
                 isFlipWindow: false
             )
@@ -117,6 +121,7 @@ extension ThreadTrackingAttributes.ContentState {
             rarityOrderLabel: rarityOrderLabel,
             raritySymbolName: raritySymbolName,
             rarityColorHex: rarityColorHex,
+            raritySecondaryColorHex: raritySecondaryColorHex,
             flipDate: flipDate,
             isFlipWindow: now >= flipDate
         )
@@ -128,15 +133,24 @@ struct WidgetOctalGlyph: View {
     let value: String
     let depth: Int
     let color: Color
+    var secondaryColor: Color?
 
     var body: some View {
         let geometry = WidgetOctalGlyphGeometryCache.geometry(for: depth)
 
         ZStack {
             WidgetOctalGlyphCoreShape(depth: depth)
-                .fill(color, style: FillStyle(eoFill: true))
-            WidgetOctalGlyphArmShape(value: value, depth: depth)
-                .fill(color)
+                .fill(secondaryColor ?? color, style: FillStyle(eoFill: true))
+
+            if secondaryColor != nil {
+                ForEach(0..<geometry.digitCount, id: \.self) { socketIndex in
+                    WidgetOctalGlyphArmSegmentShape(value: value, depth: depth, socketIndex: socketIndex)
+                        .fill(color)
+                }
+            } else {
+                WidgetOctalGlyphArmShape(value: value, depth: depth)
+                    .fill(color)
+            }
         }
         .aspectRatio(geometry.aspectRatio, contentMode: .fit)
         .accessibilityLabel("Octal glyph")
@@ -173,6 +187,16 @@ private struct WidgetOctalGlyphArmShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         WidgetOctalGlyphGeometryCache.geometry(for: depth).armPath(for: value, in: rect)
+    }
+}
+
+private struct WidgetOctalGlyphArmSegmentShape: Shape {
+    let value: String
+    let depth: Int
+    let socketIndex: Int
+
+    func path(in rect: CGRect) -> Path {
+        WidgetOctalGlyphGeometryCache.geometry(for: depth).armPath(for: value, socketIndex: socketIndex, in: rect)
     }
 }
 
@@ -256,7 +280,14 @@ private struct WidgetOctalGlyphGeometry {
         return path.applying(transform(in: rect))
     }
 
-    private func digitIndex(forSocketIndex socketIndex: Int) -> Int {
+    func armPath(for value: String, socketIndex: Int, in rect: CGRect) -> Path {
+        guard (0..<digitCount).contains(socketIndex) else { return Path() }
+        let digits = normalizedDigits(value)
+        let digit = digits[digitIndex(forSocketIndex: socketIndex)]
+        return armTemplatePaths[socketIndex][digit].applying(transform(in: rect))
+    }
+
+    func digitIndex(forSocketIndex socketIndex: Int) -> Int {
         socketIndex == 0 ? 0 : digitCount - socketIndex
     }
 

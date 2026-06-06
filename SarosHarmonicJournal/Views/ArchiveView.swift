@@ -12,7 +12,8 @@ struct JournalRecordRow: View {
 
     private var resolvedRarity: FlipRarity {
         rarity ?? FlipRarity.rarity(
-            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            forOctalAddress: record.octalAddress,
+            harmonicDepth: record.harmonicDepth,
             isEclipse: record.triggerType == .eclipse
         )
     }
@@ -21,7 +22,7 @@ struct JournalRecordRow: View {
         let rowRarity = resolvedRarity
 
         HStack(alignment: .top, spacing: 12) {
-            OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, color: rowRarity.color)
+            OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rowRarity.glyphStyle)
                 .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -83,7 +84,8 @@ struct JournalRecordDetailView: View {
 
     private var rarity: FlipRarity {
         FlipRarity.rarity(
-            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            forOctalAddress: record.octalAddress,
+            harmonicDepth: record.harmonicDepth,
             isEclipse: record.triggerType == .eclipse
         )
     }
@@ -99,7 +101,7 @@ struct JournalRecordDetailView: View {
         List {
             Section {
                 HStack(alignment: .center, spacing: 16) {
-                    OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, color: rarity.color)
+                    OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rarity.glyphStyle)
                         .frame(width: 88, height: 88)
                         .padding(10)
                         .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))

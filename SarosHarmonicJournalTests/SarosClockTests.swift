@@ -316,7 +316,22 @@ final class FlipNotificationOrderTests: XCTestCase {
         )
         XCTAssertEqual(
             FlipNotificationPreferences.rarity(forOctalAddress: "0000000", harmonicDepth: 7, isEclipse: true),
-            .saros
+            .saros7
+        )
+    }
+
+    func testRepeatedDigitAddressesBecomeSarosPatternRarities() {
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1111111", harmonicDepth: 7),
+            .saros1
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "4444444", harmonicDepth: 7),
+            .saros4
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "7777777", harmonicDepth: 7),
+            .saros7
         )
     }
 }
@@ -452,6 +467,12 @@ private final class FixtureEclipseService: EclipseService {
 
     func previousAndNextEclipse(saros: Int, around date: Date) throws -> SarosInterval? {
         SarosInterval(saros: saros, previous: Fixtures.previous, next: Fixtures.next, normalizedPhase: 0)
+    }
+
+    func eclipseBracket(around date: Date) throws -> EclipseBracket? {
+        let total = max(Fixtures.next.date.timeIntervalSince(Fixtures.previous.date), 1)
+        let phase = min(max(date.timeIntervalSince(Fixtures.previous.date) / total, 0), 1)
+        return EclipseBracket(previous: Fixtures.previous, next: Fixtures.next, normalizedPhase: phase)
     }
 
     func nearestEclipse(to date: Date) throws -> Eclipse? {

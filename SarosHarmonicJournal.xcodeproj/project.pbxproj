@@ -29,6 +29,7 @@
 		A10000000000000000000009 /* LiveTrackingFlip.wav in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* LiveTrackingFlip.wav */; };
 		B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageSonificationEngine.swift */; };
 		B10000000000000000000002 /* ImageSonificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ImageSonificationView.swift */; };
+		C0DE00000000000000000001 /* CubeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* CubeMapView.swift */; };
 		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
 		22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A7C096DCD9F7577546E63A /* SettingsView.swift */; };
 		2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */; };
@@ -116,6 +117,7 @@
 			A20000000000000000000011 /* LiveTrackingFlip.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; name = LiveTrackingFlip.wav; path = SarosHarmonicJournal/Resources/LiveTrackingFlip.wav; sourceTree = "<group>"; };
 			B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
 			B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
+			C0DE00000000000000000002 /* CubeMapView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CubeMapView.swift; path = SarosHarmonicJournal/Views/CubeMapView.swift; sourceTree = "<group>"; };
 			1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
 		1BCEE1F54899D79E29687187 /* CaptureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptureView.swift; path = SarosHarmonicJournal/Views/CaptureView.swift; sourceTree = "<group>"; };
 		246FCF65FF5518283A599C02 /* EntityEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityEditorView.swift; path = SarosHarmonicJournal/Views/EntityEditorView.swift; sourceTree = "<group>"; };
@@ -243,6 +245,7 @@
 				1BCEE1F54899D79E29687187 /* CaptureView.swift */,
 				810C0A3E37210050EA9773EA /* CatalogView.swift */,
 				FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */,
+				C0DE00000000000000000002 /* CubeMapView.swift */,
 				246FCF65FF5518283A599C02 /* EntityEditorView.swift */,
 				B20000000000000000000002 /* ImageSonificationView.swift */,
 				41A7C096DCD9F7577546E63A /* SettingsView.swift */,
@@ -469,6 +472,7 @@
 				3A352A24CA6539B5AA096F11 /* CaptureView.swift in Sources */,
 				7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */,
 				4C8CA36AA3A8BD095C43A3C3 /* ClockDashboardView.swift in Sources */,
+				C0DE00000000000000000001 /* CubeMapView.swift in Sources */,
 				FA7A3351463DABA7D573857F /* EntityEditorView.swift in Sources */,
 				B10000000000000000000002 /* ImageSonificationView.swift in Sources */,
 				22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */,

@@ -174,8 +174,8 @@ extension SarosClockReading {
     }
 
     func countdown(rarity: FlipRarity, now: Date) -> SarosFlipCountdown? {
-        if rarity == .saros {
-            return countdown(targetBinIndex: binCount, order: harmonicDepth, now: now)
+        if rarity.isSarosPattern {
+            return countdown(sarosPatternRarity: rarity, now: now)
         }
 
         guard rarity.order <= min(harmonicDepth, 6) else { return nil }
@@ -193,27 +193,65 @@ extension SarosClockReading {
 
     func flipRarity(forBinIndex index: Int) -> FlipRarity {
         FlipRarity.rarity(
-            forOrder: flipOrder(forBinIndex: index),
+            forOctalAddress: octalAddress(forBinIndex: index),
+            harmonicDepth: harmonicDepth,
             isEclipse: index >= binCount
         )
     }
 
-    private func countdown(targetBinIndex: Int, order rawOrder: Int, now: Date) -> SarosFlipCountdown {
+    private func countdown(sarosPatternRarity rarity: FlipRarity, now: Date) -> SarosFlipCountdown? {
+        guard let targetAddress = rarity.sarosPatternAddress(depth: harmonicDepth),
+              let patternBinIndex = Int(targetAddress, radix: 8)
+        else {
+            return nil
+        }
+
+        let targetBinIndex: Int
+        if rarity == .saros7, binIndex >= patternBinIndex {
+            targetBinIndex = binCount
+        } else {
+            targetBinIndex = patternBinIndex
+        }
+
+        guard targetBinIndex > binIndex, targetBinIndex <= binCount else {
+            return nil
+        }
+
+        return countdown(
+            targetBinIndex: targetBinIndex,
+            order: harmonicDepth,
+            now: now,
+            explicitRarity: rarity,
+            periodStartBinIndex: 0
+        )
+    }
+
+    private func countdown(
+        targetBinIndex: Int,
+        order rawOrder: Int,
+        now: Date,
+        explicitRarity: FlipRarity? = nil,
+        periodStartBinIndex: Int? = nil
+    ) -> SarosFlipCountdown {
         let order = clampedFlipOrder(rawOrder)
-        let binStride = targetBinIndex >= binCount ? binCount : qualifiedFlipStride(forOrder: order)
-        let previousTargetBin = targetBinIndex >= binCount
-            ? 0
-            : max(targetBinIndex - binStride, 0)
-        let periodStartDate = date(forBinIndex: previousTargetBin)
-        let flipDate = date(forBinIndex: targetBinIndex)
-        let targetOctalAddress = octalAddress(forBinIndex: targetBinIndex)
-        let rarity = FlipRarity.rarity(
-            forOrder: FlipRarity.order(forOctalAddress: targetOctalAddress, harmonicDepth: harmonicDepth),
+        let targetOctalAddress = explicitRarity?.sarosPatternAddress(depth: harmonicDepth)
+            ?? octalAddress(forBinIndex: targetBinIndex)
+        let rarity = explicitRarity ?? FlipRarity.rarity(
+            forOctalAddress: targetOctalAddress,
+            harmonicDepth: harmonicDepth,
             isEclipse: targetBinIndex >= binCount
         )
+        let defaultStride = targetBinIndex >= binCount ? binCount : qualifiedFlipStride(forOrder: order)
+        let defaultPreviousTargetBin = targetBinIndex >= binCount
+            ? 0
+            : max(targetBinIndex - defaultStride, 0)
+        let previousTargetBin = min(max(periodStartBinIndex ?? defaultPreviousTargetBin, 0), binCount)
+        let binStride = max(targetBinIndex - previousTargetBin, 1)
+        let periodStartDate = date(forBinIndex: previousTargetBin)
+        let flipDate = date(forBinIndex: targetBinIndex)
 
         return SarosFlipCountdown(
-            order: rarity == .saros ? max(order, 7) : order,
+            order: rarity.isSarosPattern ? max(order, 7) : order,
             rarity: rarity,
             binStride: binStride,
             targetBinIndex: targetBinIndex,

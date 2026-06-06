@@ -51,6 +51,10 @@ final class BundledSolarEclipseService: EclipseService {
         return SarosInterval(saros: saros, previous: previous, next: next, normalizedPhase: phase)
     }
 
+    func eclipseBracket(around date: Date) throws -> EclipseBracket? {
+        try store().eclipseBracket(around: date)
+    }
+
     func nearestEclipse(to date: Date) throws -> Eclipse? {
         try store().nearestEclipse(to: date)
     }
@@ -132,6 +136,31 @@ private struct SolarEclipseStore {
 
         guard let nearestIndex else { return nil }
         return try makeEclipse(at: nearestIndex, includeGeometryMetadata: false)
+    }
+
+    func eclipseBracket(around date: Date) throws -> EclipseBracket? {
+        guard count >= 2 else { return nil }
+        let key = Int64(date.timeIntervalSince1970.rounded(.towardZero))
+        let insertion = lowerBound(key)
+
+        let previousIndex: Int
+        let nextIndex: Int
+        if insertion <= 0 {
+            previousIndex = 0
+            nextIndex = 1
+        } else if insertion >= count {
+            previousIndex = count - 2
+            nextIndex = count - 1
+        } else {
+            previousIndex = insertion - 1
+            nextIndex = insertion
+        }
+
+        let previous = try makeEclipse(at: previousIndex, includeGeometryMetadata: false)
+        let next = try makeEclipse(at: nextIndex, includeGeometryMetadata: false)
+        let total = max(next.date.timeIntervalSince(previous.date), 1)
+        let phase = min(max(date.timeIntervalSince(previous.date) / total, 0), 1)
+        return EclipseBracket(previous: previous, next: next, normalizedPhase: phase)
     }
 
     func pathGeometry(for eclipseID: String) throws -> EclipsePathGeometry? {

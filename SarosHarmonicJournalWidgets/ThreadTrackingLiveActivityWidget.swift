@@ -60,7 +60,8 @@ private struct ThreadTrackingLockScreenView: View {
             WidgetOctalGlyph(
                 value: payload.glyph,
                 depth: context.attributes.harmonicDepth,
-                color: color
+                color: color,
+                secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
             )
             .frame(width: 68, height: 68)
             .offset(x: 4, y: 4)
@@ -104,7 +105,8 @@ private struct LiveTrackingGlyphView: View {
             WidgetOctalGlyph(
                 value: payload.glyph,
                 depth: context.attributes.harmonicDepth,
-                color: Color(hexString: payload.rarityColorHex)
+                color: Color(hexString: payload.rarityColorHex),
+                secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
             )
             .frame(width: size, height: size)
             .offset(x: 4, y: 4)

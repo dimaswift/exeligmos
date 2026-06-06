@@ -27,6 +27,10 @@ final class CPlusPlusEclipseService: EclipseService {
         try fallback.previousAndNextEclipse(saros: saros, around: date)
     }
 
+    func eclipseBracket(around date: Date) throws -> EclipseBracket? {
+        try fallback.eclipseBracket(around: date)
+    }
+
     func nearestEclipse(to date: Date) throws -> Eclipse? {
         try fallback.nearestEclipse(to: date)
     }

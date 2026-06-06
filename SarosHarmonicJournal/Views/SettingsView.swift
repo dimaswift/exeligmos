@@ -709,17 +709,23 @@ private struct RarityPeriodRow: View {
     }
 
     private var stride: Int {
-        rarity == .saros ? binCount : (0..<rarity.order).reduce(1) { value, _ in value * 8 }
+        if rarity.isSarosPattern,
+           let address = rarity.sarosPatternAddress(depth: depth),
+           let binIndex = Int(address, radix: 8) {
+            return max(binIndex, 1)
+        }
+        return (0..<rarity.order).reduce(1) { value, _ in value * 8 }
     }
 
     private var periodDuration: TimeInterval {
-        rarity == .saros ? JournalSettings.averageSarosPeriod : JournalSettings.averageSarosPeriod / Double(binCount) * Double(stride)
+        JournalSettings.averageSarosPeriod / Double(binCount) * Double(stride)
     }
 
     private var stepOctalLabel: String {
-        rarity == .saros
-            ? String(repeating: "0", count: depth)
-            : String(stride, radix: 8).leftPadded(toLength: rarity.order + 1, withPad: "0")
+        if let address = rarity.sarosPatternAddress(depth: depth) {
+            return address
+        }
+        return String(stride, radix: 8).leftPadded(toLength: rarity.order + 1, withPad: "0")
     }
 
     var body: some View {
@@ -769,7 +775,7 @@ private struct FlipNotificationSettingsView: View {
                     RarityPreferenceRow(preference: $preference)
                 }
             } footer: {
-                Text("Notifications are scheduled for Rare and above. Order N is the number of trailing zeroes in the flip address; Saros covers seven zeroes or the eclipse rollover.")
+                Text("Notifications are scheduled for Rare and above. Order N is the number of trailing zeroes; Saros-pattern events use repeated octal addresses.")
             }
 
             Section {

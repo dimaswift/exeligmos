@@ -15,6 +15,7 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let rarityOrderLabel: String
     let raritySymbolName: String
     let rarityColorHex: String
+    let raritySecondaryColorHex: String?
     let flipDate: Date
     let createdAt: Date
     let nextGlyph: String?
@@ -23,6 +24,7 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let nextRarityOrderLabel: String?
     let nextRaritySymbolName: String?
     let nextRarityColorHex: String?
+    let nextRaritySecondaryColorHex: String?
     let nextFlipDate: Date?
 
     var deepLinkURL: URL? {
@@ -70,6 +72,7 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let rarityOrderLabel: String
         let raritySymbolName: String
         let rarityColorHex: String
+        let raritySecondaryColorHex: String?
         let flipDate: Date
         let updatedAt: Date
         let nextGlyph: String?
@@ -78,6 +81,7 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let nextRarityOrderLabel: String?
         let nextRaritySymbolName: String?
         let nextRarityColorHex: String?
+        let nextRaritySecondaryColorHex: String?
         let nextFlipDate: Date?
     }
 
