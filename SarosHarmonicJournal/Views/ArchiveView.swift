@@ -6,6 +6,8 @@ import SwiftUI
 import UIKit
 
 struct JournalRecordRow: View {
+    @EnvironmentObject private var services: AppServices
+
     let record: JournalRecord
     let entityTitle: String
     var rarity: FlipRarity?
@@ -18,12 +20,17 @@ struct JournalRecordRow: View {
         )
     }
 
+    private var moonReading: MoonPhaseOctalReading? {
+        try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 3)
+    }
+
     var body: some View {
         let rowRarity = resolvedRarity
+        let moonReading = moonReading
 
         HStack(alignment: .top, spacing: 12) {
             OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rowRarity.glyphStyle)
-                .frame(width: 44, height: 44)
+                .frame(width: 52, height: 52)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
@@ -46,6 +53,11 @@ struct JournalRecordRow: View {
 
                 HStack {
                     Text(JournalFormatters.dateTime.string(from: record.eventDate))
+                    Spacer(minLength: 12)
+                    if let moonReading {
+                        MoonPhaseGlyph(reading: moonReading)
+                            .frame(width: 28, height: 28)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -90,6 +102,14 @@ struct JournalRecordDetailView: View {
         )
     }
 
+    private var moonReading: MoonPhaseOctalReading? {
+        try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 3)
+    }
+
+    private var moonMetadataReading: MoonPhaseOctalReading? {
+        try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 7)
+    }
+
     private var recordCoordinate: CLLocationCoordinate2D? {
         guard let latitude = record.latitude, let longitude = record.longitude else {
             return nil
@@ -100,27 +120,37 @@ struct JournalRecordDetailView: View {
     var body: some View {
         List {
             Section {
-                HStack(alignment: .center, spacing: 16) {
-                    OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rarity.glyphStyle)
-                        .frame(width: 88, height: 88)
-                        .padding(10)
-                        .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 16) {
+                        OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rarity.glyphStyle)
+                            .frame(width: 88, height: 88)
+                            .padding(10)
+                            .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(entityTitle)
-                            .font(.headline)
-                        FlipRarityBadge(rarity: rarity)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(entityTitle)
+                                .font(.headline)
+                            FlipRarityBadge(rarity: rarity)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(JournalRecordMarkers.marker(from: record.emoji))
+                            .font(.system(size: 58))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
+
+                    HStack(spacing: 10) {
                         Text(JournalFormatters.dateTime.string(from: record.eventDate))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 12)
+                        if let moonReading {
+                            MoonPhaseGlyph(reading: moonReading)
+                                .frame(width: 34, height: 34)
+                        }
                     }
-
-                    Spacer(minLength: 12)
-
-                    Text(JournalRecordMarkers.marker(from: record.emoji))
-                        .font(.system(size: 58))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
                 }
                 .padding(.vertical, 4)
 
@@ -142,9 +172,10 @@ struct JournalRecordDetailView: View {
                     ForEach(Array(videoItems.enumerated()), id: \.element.id) { index, item in
                         let url = MediaStorage.url(for: item)
                         if FileManager.default.fileExists(atPath: url.path) {
+                            let title = videoTitle(index: index)
                             RecordVideoPlayerView(
                                 url: url,
-                                title: videoItems.count == 1 ? "Video capture" : "Video capture \(index + 1)"
+                                title: title
                             )
                             .frame(height: 260)
                             .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
@@ -172,6 +203,9 @@ struct JournalRecordDetailView: View {
 
             Section("Metadata") {
                 MetadataRow(title: "Octal", value: record.octalAddress)
+                if let moonMetadataReading {
+                    MetadataRow(title: "Moon phase", value: moonMetadataReading.octalAddress)
+                }
                 MetadataRow(title: "Saros", value: "\(record.saros)")
                 if let recordCoordinate {
                     Button {
@@ -268,6 +302,10 @@ struct JournalRecordDetailView: View {
             return "Stop audio"
         }
         return audioItems.count == 1 ? "Play audio record" : "Play audio \(index + 1)"
+    }
+
+    private func videoTitle(index: Int) -> String {
+        videoItems.count == 1 ? "Video capture" : "Video capture \(index + 1)"
     }
 
     private func exportRecord() {

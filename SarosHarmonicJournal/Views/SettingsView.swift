@@ -117,7 +117,7 @@ struct SettingsView: View {
                     if isSyncing {
                         ProgressView()
                     } else {
-                        Label("Push backup to server", systemImage: "arrow.up.doc")
+                        Label("Upload all records", systemImage: "arrow.up.doc")
                     }
                 }
                 .disabled(isSyncing)
@@ -136,7 +136,7 @@ struct SettingsView: View {
                 Button {
                     Task { await restoreSyncBackup() }
                 } label: {
-                    Label("Restore latest from server", systemImage: "arrow.down.doc")
+                    Label("Restore from server folders", systemImage: "arrow.down.doc")
                 }
                 .disabled(isSyncing)
 
@@ -246,9 +246,9 @@ struct SettingsView: View {
         do {
             let status = try await services.syncService.checkStatus(from: syncServerURL)
             if let exportTimestamp = status.exportTimestamp, status.hasBackup {
-                syncMessage = "Server OK. Latest backup \(exportTimestamp.formatted(date: .abbreviated, time: .shortened)): \(status.entityCount) threads, \(status.recordCount) records, \(status.mediaCount) media files."
+                syncMessage = "Server OK. Folder state \(exportTimestamp.formatted(date: .abbreviated, time: .shortened)): \(status.entityCount) threads, \(status.recordCount) records, \(status.mediaCount) media files."
             } else {
-                syncMessage = "Server OK. No backup has been pushed yet."
+                syncMessage = "Server OK. No records have been uploaded yet."
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -267,7 +267,7 @@ struct SettingsView: View {
                 records: records,
                 groups: threadGroups
             )
-            syncMessage = "Pushed \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files."
+            syncMessage = "Uploaded \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files."
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -308,7 +308,7 @@ struct SettingsView: View {
                 records: records,
                 groups: threadGroups
             )
-            syncMessage = "Restored \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files."
+            syncMessage = "Restored \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files from server folders."
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -820,6 +820,7 @@ private struct EntityDetailView: View {
         }
 
         threadGroupSection
+        anchorMoonSection
         sarosBuddiesSection
         anchorEclipseSection
     }
@@ -861,6 +862,40 @@ private struct EntityDetailView: View {
                 }
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    @ViewBuilder
+    private var anchorMoonSection: some View {
+        Section("Moon phase") {
+            if let moonReading = try? services.moonPhaseService.octalReading(for: entity.anchorDate, depth: 3) {
+                HStack(spacing: 14) {
+                    MoonPhaseGlyph(reading: moonReading)
+                        .frame(width: 58, height: 58)
+                        .padding(8)
+                        .background(moonReading.rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text(moonReading.octalAddress)
+                                .font(.system(.title3, design: .monospaced).weight(.semibold))
+                            FlipRarityBadge(rarity: moonReading.rarity, compact: true)
+                        }
+                        Text(moonReading.phaseReading.phase.displayName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+                }
+                .padding(.vertical, 4)
+
+                MetadataRow(title: "Anchor moon", value: JournalFormatters.dateTime.string(from: entity.anchorDate))
+                MetadataRow(title: "Previous new", value: JournalFormatters.dateTime.string(from: moonReading.phaseReading.previousNewMoon.date))
+                MetadataRow(title: "Next new", value: JournalFormatters.dateTime.string(from: moonReading.phaseReading.nextNewMoon.date))
+            } else {
+                ContentUnavailableView("Moon phase unavailable", systemImage: "moonphase.new.moon")
+            }
         }
     }
 

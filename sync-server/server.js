@@ -9,7 +9,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.EXELIGMOS_SYNC_DATA || path.join(__dirname, 'data');
 const PORT = Number(process.env.PORT || 8787);
 const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 2 * 1024 * 1024 * 1024);
+const OCTAL_GLYPH_BUNDLE =
+  process.env.OCTAL_GLYPH_BUNDLE ||
+  '/Users/dimas/projects/octal-glyph-gen/octal-glyph.js';
 const ANIMACY_RARITIES = ['common', 'rare', 'epic', 'legendary', 'mythic'];
+const RARITY_DEFINITIONS = {
+  common: { key: 'common', title: 'Common', rank: 2, color: '#8f98a3' },
+  rare: { key: 'rare', title: 'Rare', rank: 3, color: '#2f9bff' },
+  epic: { key: 'epic', title: 'Epic', rank: 4, color: '#b45cff' },
+  legendary: { key: 'legendary', title: 'Legendary', rank: 5, color: '#f4c542' },
+  mythic: { key: 'mythic', title: 'Mythic', rank: 6, color: '#ef4136' },
+  saros1: { key: 'saros1', title: 'Saros 1', rank: 7, color: '#ff3b30' },
+  saros2: { key: 'saros2', title: 'Saros 2', rank: 8, color: '#ff9500' },
+  saros3: { key: 'saros3', title: 'Saros 3', rank: 9, color: '#ffd60a' },
+  saros4: { key: 'saros4', title: 'Saros 4', rank: 10, color: '#30d158' },
+  saros5: { key: 'saros5', title: 'Saros 5', rank: 11, color: '#40c8e0' },
+  saros6: { key: 'saros6', title: 'Saros 6', rank: 12, color: '#0a84ff' },
+  saros7: { key: 'saros7', title: 'Saros 7', rank: 13, color: '#bf5af2' }
+};
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -31,13 +48,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/vendor/octal-glyph.js') {
+      await serveOctalGlyphBundle(res);
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/favicon.ico') {
       send(res, 204, 'image/x-icon', '');
       return;
     }
 
     if (req.method === 'GET' && (url.pathname === '/api/status' || url.pathname === '/health')) {
-      const payload = await readLatestPayload();
+      const payload = await readLatestPayload({ includeMediaData: false });
       sendJSON(res, 200, {
         ok: true,
         hasBackup: Boolean(payload),
@@ -50,13 +72,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/manifest') {
-      const payload = await readLatestPayload();
+      const payload = await readLatestPayload({ includeMediaData: false });
       sendJSON(res, 200, manifestView(payload));
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/records') {
-      const payload = await readLatestPayload();
+      const payload = await readLatestPayload({ includeMediaData: false });
       sendJSON(res, 200, payload ? recordsView(payload) : { threads: [], records: [] });
       return;
     }
@@ -86,12 +108,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/backups/latest') {
-      const payload = await readLatestPayload();
+      const payload = await readLatestPayload({ includeMediaData: true });
       if (!payload) {
-        sendJSON(res, 404, { error: 'No backup has been pushed yet.' });
+        sendJSON(res, 404, { error: 'No synced records have been uploaded yet.' });
         return;
       }
       sendJSON(res, 200, payload);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/sync/thread') {
+      const body = await readBody(req);
+      const payload = JSON.parse(body);
+      const result = await writeThreadPayload(payload);
+      console.log(`Stored thread ${result.threadID} in ${result.threadFolder}.`);
+      sendJSON(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/sync/record') {
+      const body = await readBody(req);
+      const payload = JSON.parse(body);
+      const result = await writeRecordPayload(payload);
+      console.log(`Stored record ${result.recordID} in ${result.recordFolder} with ${result.mediaCount} media files.`);
+      sendJSON(res, 200, { ok: true, ...result });
       return;
     }
 
@@ -113,18 +153,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/backups/delta') {
       const body = await readBody(req);
       const deltaPayload = JSON.parse(body);
-      const latestPayload = await readLatestPayload();
-      const payload = mergeBackupPayload(latestPayload, deltaPayload);
-      await writeBackup(payload);
+      await writeBackup(deltaPayload);
       console.log(`Merged delta with ${deltaPayload.archive?.records?.length ?? 0} records and ${deltaPayload.media?.length ?? 0} media blobs.`);
       sendJSON(res, 200, {
         ok: true,
-        exportTimestamp: payload.exportTimestamp,
+        exportTimestamp: new Date().toISOString(),
         addedRecordCount: deltaPayload.archive?.records?.length ?? 0,
         addedMediaCount: deltaPayload.media?.length ?? 0,
-        entityCount: payload.archive?.entities?.length ?? 0,
-        recordCount: payload.archive?.records?.length ?? 0,
-        mediaCount: payload.media?.length ?? 0
+        entityCount: deltaPayload.archive?.entities?.length ?? 0,
+        recordCount: deltaPayload.archive?.records?.length ?? 0,
+        mediaCount: deltaPayload.media?.length ?? 0
       });
       return;
     }
@@ -176,56 +214,40 @@ async function readBody(req) {
 async function writeBackup(payload) {
   validatePayload(payload);
 
-  const stamp = timestamp();
-  const backupDir = path.join(DATA_DIR, 'backups', stamp);
-  const latestDir = path.join(DATA_DIR, 'latest');
-  await fs.rm(latestDir, { recursive: true, force: true });
-  await fs.mkdir(backupDir, { recursive: true });
-  await fs.mkdir(latestDir, { recursive: true });
+  const groups = new Map((payload.archive?.threadGroups ?? []).map((group) => [group.id, group]));
+  const threads = new Map((payload.archive?.entities ?? []).map((thread) => [thread.id, thread]));
+  const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
 
-  await writeBackupFiles(payload, backupDir);
-  await writeBackupFiles(payload, latestDir);
-}
-
-async function writeBackupFiles(payload, rootDir) {
-  await fs.writeFile(path.join(rootDir, 'payload.json'), JSON.stringify(payload));
-  await fs.writeFile(path.join(rootDir, 'archive.json'), JSON.stringify(payload.archive, null, 2));
-  await fs.writeFile(path.join(rootDir, 'entities.json'), JSON.stringify(payload.archive.entities ?? [], null, 2));
-  await fs.writeFile(path.join(rootDir, 'records.json'), JSON.stringify(payload.archive.records ?? [], null, 2));
-
-  for (const blob of payload.media ?? []) {
-    const relativePath = safeRelativePath(blob.relativePath || `SarosMedia/${blob.fileName || blob.id}`);
-    const destination = path.join(rootDir, relativePath);
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, Buffer.from(blob.dataBase64 ?? '', 'base64'));
-  }
-}
-
-function mergeBackupPayload(currentPayload, deltaPayload) {
-  validatePayload(deltaPayload);
-
-  if (!currentPayload) {
-    return {
-      ...deltaPayload,
-      exportTimestamp: new Date().toISOString()
-    };
+  for (const group of groups.values()) {
+    await writeGroupSnapshot(group);
   }
 
-  validatePayload(currentPayload);
+  for (const thread of threads.values()) {
+    await writeThreadPayload({
+      schemaVersion: 1,
+      appVersion: payload.appVersion,
+      uploadedAt: payload.exportTimestamp,
+      group: groups.get(thread.groupID) ?? null,
+      thread
+    });
+  }
 
-  return {
-    schemaVersion: 1,
-    appVersion: deltaPayload.appVersion || currentPayload.appVersion,
-    exportTimestamp: new Date().toISOString(),
-    archive: {
-      appVersion: deltaPayload.archive?.appVersion || currentPayload.archive?.appVersion || deltaPayload.appVersion,
-      exportTimestamp: new Date().toISOString(),
-      entities: mergeById(currentPayload.archive?.entities, deltaPayload.archive?.entities),
-      records: mergeById(currentPayload.archive?.records, deltaPayload.archive?.records)
-        .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime())
-    },
-    media: mergeById(currentPayload.media, deltaPayload.media)
-  };
+  for (const record of payload.archive?.records ?? []) {
+    const thread = threads.get(record.entityID);
+    if (!thread) continue;
+    const recordMedia = (record.mediaItems ?? [])
+      .map((item) => media.get(item.id))
+      .filter(Boolean);
+    await writeRecordPayload({
+      schemaVersion: 1,
+      appVersion: payload.appVersion,
+      uploadedAt: payload.exportTimestamp,
+      group: groups.get(thread.groupID) ?? null,
+      thread,
+      record,
+      media: recordMedia
+    });
+  }
 }
 
 function validatePayload(payload) {
@@ -234,24 +256,318 @@ function validatePayload(payload) {
   }
 }
 
-function mergeById(currentItems = [], nextItems = []) {
-  const items = new Map();
-  for (const item of currentItems || []) {
-    if (item?.id) items.set(item.id, item);
+async function writeThreadPayload(payload) {
+  validateThreadPayload(payload);
+
+  if (payload.group) {
+    await writeGroupSnapshot(payload.group);
   }
-  for (const item of nextItems || []) {
-    if (item?.id) items.set(item.id, item);
-  }
-  return [...items.values()];
+
+  const threadDir = await threadDirectoryFor(payload.thread);
+  await fs.mkdir(path.join(threadDir, 'records'), { recursive: true });
+  await writeJSONAtomic(path.join(threadDir, 'thread.json'), payload.thread);
+
+  return {
+    threadID: payload.thread.id,
+    threadFolder: path.basename(threadDir)
+  };
 }
 
-async function readLatestPayload() {
+async function writeRecordPayload(payload) {
+  validateRecordPayload(payload);
+
+  const threadResult = await writeThreadPayload({
+    schemaVersion: 1,
+    appVersion: payload.appVersion,
+    uploadedAt: payload.uploadedAt,
+    group: payload.group,
+    thread: payload.thread
+  });
+
+  const threadDir = path.join(DATA_DIR, 'threads', threadResult.threadFolder);
+  const recordDir = await recordDirectoryFor(threadDir, payload.record);
+  const mediaDir = path.join(recordDir, 'media');
+  await fs.mkdir(recordDir, { recursive: true });
+  await fs.rm(mediaDir, { recursive: true, force: true });
+  await fs.mkdir(mediaDir, { recursive: true });
+
+  const mediaMetadata = [];
+  for (const blob of payload.media ?? []) {
+    const fileName = mediaFileName(blob);
+    const destination = path.join(mediaDir, fileName);
+    await fs.writeFile(destination, Buffer.from(blob.dataBase64 ?? '', 'base64'));
+    mediaMetadata.push({
+      id: blob.id,
+      type: blob.type,
+      createdAt: blob.createdAt,
+      relativePath: storedRelativePath(destination),
+      fileName,
+      contentType: blob.contentType || contentTypeForPath(fileName)
+    });
+  }
+
+  await writeJSONAtomic(path.join(recordDir, 'record.json'), payload.record);
+  await writeJSONAtomic(path.join(recordDir, 'media.json'), mediaMetadata);
+
+  return {
+    threadID: payload.thread.id,
+    threadFolder: threadResult.threadFolder,
+    recordID: payload.record.id,
+    recordFolder: path.basename(recordDir),
+    mediaCount: mediaMetadata.length
+  };
+}
+
+async function writeGroupSnapshot(group) {
+  if (!group?.id) return;
+  const groupDir = path.join(DATA_DIR, 'groups', safeFileName(group.id));
+  await fs.mkdir(groupDir, { recursive: true });
+  await writeJSONAtomic(path.join(groupDir, 'group.json'), group);
+}
+
+function validateThreadPayload(payload) {
+  if (!payload || payload.schemaVersion !== 1 || !payload.thread?.id) {
+    throw new Error('Invalid Exeligmos thread sync payload.');
+  }
+}
+
+function validateRecordPayload(payload) {
+  if (!payload || payload.schemaVersion !== 1 || !payload.thread?.id || !payload.record?.id) {
+    throw new Error('Invalid Exeligmos record sync payload.');
+  }
+}
+
+async function threadDirectoryFor(thread) {
+  const root = path.join(DATA_DIR, 'threads');
+  await fs.mkdir(root, { recursive: true });
+
+  const existing = await findChildDirectoryByJSON(root, 'thread.json', (value) => value?.id === thread.id);
+  if (existing) return existing;
+
+  return path.join(root, threadFolderName(thread));
+}
+
+async function recordDirectoryFor(threadDir, record) {
+  const root = path.join(threadDir, 'records');
+  await fs.mkdir(root, { recursive: true });
+
+  const existing = await findChildDirectoryByJSON(root, 'record.json', (value) => value?.id === record.id);
+  if (existing) return existing;
+
+  const base = recordFolderName(record);
+  const preferred = path.join(root, base);
+  const preferredRecord = await readJSONIfExists(path.join(preferred, 'record.json'));
+  if (!preferredRecord || preferredRecord.id === record.id) {
+    return preferred;
+  }
+
+  return path.join(root, `${base}-${String(record.id).slice(0, 8)}`);
+}
+
+async function findChildDirectoryByJSON(root, fileName, predicate) {
+  let entries = [];
   try {
-    const data = await fs.readFile(path.join(DATA_DIR, 'latest', 'payload.json'), 'utf8');
-    return JSON.parse(data);
+    entries = await fs.readdir(root, { withFileTypes: true });
   } catch {
     return null;
   }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const directory = path.join(root, entry.name);
+    const value = await readJSONIfExists(path.join(directory, fileName));
+    if (value && predicate(value)) {
+      return directory;
+    }
+  }
+  return null;
+}
+
+async function readLatestPayload(options = {}) {
+  const payload = await readFolderPayload(options);
+  const hasState = (payload.archive.threadGroups.length + payload.archive.entities.length + payload.archive.records.length) > 0;
+  return hasState ? payload : null;
+}
+
+async function readFolderPayload({ includeMediaData = false } = {}) {
+  const threadGroups = await readGroupSnapshots();
+  const { entities, records, media, latestModifiedAt } = await readThreadSnapshots(includeMediaData);
+  const exportTimestamp = latestModifiedAt?.toISOString() ?? new Date().toISOString();
+
+  return {
+    schemaVersion: 1,
+    appVersion: 'folder-sync',
+    exportTimestamp,
+    archive: {
+      appVersion: 'folder-sync',
+      exportTimestamp,
+      threadGroups,
+      entities,
+      records
+    },
+    media
+  };
+}
+
+async function readGroupSnapshots() {
+  const root = path.join(DATA_DIR, 'groups');
+  const groups = [];
+  for (const directory of await childDirectories(root)) {
+    const group = await readJSONIfExists(path.join(directory, 'group.json'));
+    if (group?.id) groups.push(group);
+  }
+  return groups.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+async function readThreadSnapshots(includeMediaData) {
+  const root = path.join(DATA_DIR, 'threads');
+  const entities = [];
+  const records = [];
+  const media = [];
+  let latestModifiedAt = null;
+
+  for (const threadDir of await childDirectories(root)) {
+    const threadFile = path.join(threadDir, 'thread.json');
+    const thread = await readJSONIfExists(threadFile);
+    if (!thread?.id) continue;
+    entities.push(thread);
+    latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(threadFile));
+
+    const recordsRoot = path.join(threadDir, 'records');
+    for (const recordDir of await childDirectories(recordsRoot)) {
+      const recordFile = path.join(recordDir, 'record.json');
+      const record = await readJSONIfExists(recordFile);
+      if (!record?.id) continue;
+      records.push(record);
+      latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(recordFile));
+
+      const recordMedia = await readRecordMedia(recordDir, record, includeMediaData);
+      media.push(...recordMedia);
+      for (const item of recordMedia) {
+        latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(path.join(DATA_DIR, item.relativePath)));
+      }
+    }
+  }
+
+  entities.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  records.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  return { entities, records, media, latestModifiedAt };
+}
+
+async function readRecordMedia(recordDir, record, includeMediaData) {
+  const mediaJSON = await readJSONIfExists(path.join(recordDir, 'media.json'));
+  const metadata = Array.isArray(mediaJSON) ? mediaJSON : await inferRecordMedia(recordDir, record);
+  const blobs = [];
+
+  for (const item of metadata) {
+    if (!item?.id || !item.relativePath) continue;
+    const filePath = path.join(DATA_DIR, safeRelativePath(item.relativePath));
+    const blob = {
+      id: item.id,
+      type: item.type,
+      createdAt: item.createdAt,
+      relativePath: storedRelativePath(filePath),
+      fileName: item.fileName || path.basename(filePath),
+      contentType: item.contentType || contentTypeForPath(filePath),
+      dataBase64: ''
+    };
+    if (includeMediaData) {
+      try {
+        blob.dataBase64 = (await fs.readFile(filePath)).toString('base64');
+      } catch {
+        continue;
+      }
+    }
+    blobs.push(blob);
+  }
+
+  return blobs;
+}
+
+async function inferRecordMedia(recordDir, record) {
+  const mediaDir = path.join(recordDir, 'media');
+  const files = [];
+  try {
+    for (const entry of await fs.readdir(mediaDir, { withFileTypes: true })) {
+      if (entry.isFile()) files.push(entry.name);
+    }
+  } catch {
+    return [];
+  }
+
+  return (record.mediaItems ?? []).map((item) => {
+    const fileName = files.find((name) => name.startsWith(item.id)) ?? files.shift();
+    if (!fileName) return null;
+    const filePath = path.join(mediaDir, fileName);
+    return {
+      id: item.id,
+      type: item.type,
+      createdAt: item.createdAt,
+      relativePath: storedRelativePath(filePath),
+      fileName,
+      contentType: contentTypeForPath(fileName)
+    };
+  }).filter(Boolean);
+}
+
+async function childDirectories(root) {
+  try {
+    return (await fs.readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(root, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+async function readJSONIfExists(filePath) {
+  try {
+    return JSON.parse(await fs.readFile(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function writeJSONAtomic(filePath, value) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, JSON.stringify(value, null, 2));
+  await fs.rename(tempPath, filePath);
+}
+
+async function modifiedAt(filePath) {
+  try {
+    return (await fs.stat(filePath)).mtime;
+  } catch {
+    return null;
+  }
+}
+
+function maxDate(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+function threadFolderName(thread) {
+  const title = slug(thread.title || 'untitled');
+  const saros = Number.isFinite(Number(thread.saros)) ? `saros-${thread.saros}` : 'saros';
+  return safeFolderName(`${saros}-${title}-${String(thread.id).slice(0, 8)}`);
+}
+
+function recordFolderName(record) {
+  return safeFolderName(record.octalAddress || unixOctal(record.eventDate) || String(record.id).slice(0, 8));
+}
+
+function mediaFileName(blob) {
+  const fallback = `${blob.id || 'media'}${extensionForContentType(blob.contentType)}`;
+  const fileName = safeFileName(blob.fileName || fallback);
+  if (path.extname(fileName)) return fileName;
+  return `${fileName}${extensionForContentType(blob.contentType)}`;
+}
+
+function storedRelativePath(filePath) {
+  return path.relative(DATA_DIR, filePath).replaceAll(path.sep, '/');
 }
 
 function manifestView(payload) {
@@ -267,20 +583,29 @@ function manifestView(payload) {
 
 function recordsView(payload) {
   const entities = new Map((payload.archive.entities ?? []).map((entity) => [entity.id, entity]));
+  const groups = new Map((payload.archive.threadGroups ?? []).map((group) => [group.id, group]));
   const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
   const records = [...(payload.archive.records ?? [])]
     .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime())
     .map((record) => {
       const entity = entities.get(record.entityID);
+      const group = entity?.groupID ? groups.get(entity.groupID) : null;
+      const rarity = rarityForRecord(record);
       return {
         id: record.id,
         entityID: record.entityID,
         entityTitle: entity?.title || 'Untitled thread',
+        entityEmoji: entity?.emoji ?? null,
+        groupID: group?.id ?? 'common',
+        groupName: group?.name || 'Common',
+        groupEmoji: group?.emoji || '○',
         eventDate: record.eventDate,
         emoji: record.emoji,
         text: record.text,
         saros: record.saros,
         octalAddress: record.octalAddress,
+        harmonicDepth: record.harmonicDepth ?? 7,
+        rarity,
         media: (record.mediaItems ?? []).map((item) => {
           const blob = media.get(item.id);
           const relativePath = blob?.relativePath || item.localPath;
@@ -297,10 +622,13 @@ function recordsView(payload) {
   const threads = [...entities.values()]
     .map((entity) => {
       const threadRecords = records.filter((record) => record.entityID === entity.id);
+      const group = entity.groupID ? groups.get(entity.groupID) : null;
       return {
         id: entity.id,
         title: entity.title || 'Untitled thread',
         emoji: entity.emoji,
+        groupID: group?.id ?? 'common',
+        groupName: group?.name || 'Common',
         saros: entity.saros,
         recordCount: threadRecords.length,
         latestRecordDate: threadRecords[0]?.eventDate ?? null,
@@ -309,6 +637,17 @@ function recordsView(payload) {
     })
     .filter((thread) => thread.recordCount > 0)
     .sort((a, b) => new Date(b.latestRecordDate).getTime() - new Date(a.latestRecordDate).getTime());
+  const groupFilters = groupedFilterOptions(records, 'groupID', (record) => ({
+    id: record.groupID,
+    name: record.groupName,
+    emoji: record.groupEmoji
+  }));
+  const rarityFilters = groupedFilterOptions(records, 'rarityKey', (record) => ({
+    id: record.rarity.key,
+    name: record.rarity.title,
+    rank: record.rarity.rank,
+    color: record.rarity.color
+  })).sort((a, b) => a.rank - b.rank);
 
   return {
     exportTimestamp: payload.exportTimestamp,
@@ -316,8 +655,55 @@ function recordsView(payload) {
     recordCount: records.length,
     mediaCount: payload.media?.length ?? 0,
     threads,
+    groups: groupFilters,
+    rarities: rarityFilters,
     records
   };
+}
+
+function groupedFilterOptions(records, key, mapper) {
+  const values = new Map();
+  for (const record of records) {
+    const id = key === 'rarityKey' ? record.rarity.key : record[key];
+    if (!id) continue;
+    const existing = values.get(id);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      values.set(id, { ...mapper(record), count: 1 });
+    }
+  }
+  return [...values.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+function rarityForRecord(record) {
+  const depth = Math.max(1, Math.min(Number(record.harmonicDepth) || 7, 8));
+  const address = String(record.octalAddress || '').padStart(depth, '0').slice(-depth);
+  const repeated = repeatedSarosDigit(address);
+  if (repeated) {
+    return rarityDefinition(`saros${repeated}`);
+  }
+
+  const trailingZeroes = [...address].reverse().findIndex((digit) => digit !== '0');
+  const order = trailingZeroes === -1 ? depth : trailingZeroes;
+
+  if (order >= 7) return rarityDefinition('saros7');
+  if (order >= 6) return rarityDefinition('mythic');
+  if (order >= 5) return rarityDefinition('legendary');
+  if (order >= 4) return rarityDefinition('epic');
+  if (order >= 3) return rarityDefinition('rare');
+  return rarityDefinition('common');
+}
+
+function repeatedSarosDigit(address) {
+  if (!address || address.length < 7) return null;
+  const first = address[0];
+  if (first === '0' || first === '8' || first === '9') return null;
+  return address.split('').every((digit) => digit === first) ? first : null;
+}
+
+function rarityDefinition(key) {
+  return RARITY_DEFINITIONS[key] ?? RARITY_DEFINITIONS.common;
 }
 
 async function writeAnimacyCapture(payload) {
@@ -506,7 +892,7 @@ function rarityFromLegacyScore(value) {
 
 async function serveMedia(encodedRelativePath, res) {
   const relativePath = safeRelativePath(decodeURIComponent(encodedRelativePath));
-  const filePath = path.join(DATA_DIR, 'latest', relativePath);
+  const filePath = path.join(DATA_DIR, relativePath);
   try {
     await fs.access(filePath);
   } catch {
@@ -538,6 +924,21 @@ async function serveAnimacyMedia(encodedRelativePath, res) {
   createReadStream(filePath).pipe(res);
 }
 
+async function serveOctalGlyphBundle(res) {
+  try {
+    await fs.access(OCTAL_GLYPH_BUNDLE);
+  } catch {
+    send(res, 404, 'text/javascript; charset=utf-8', 'globalThis.OctalGlyph = null;');
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'no-store'
+  });
+  createReadStream(OCTAL_GLYPH_BUNDLE).pipe(res);
+}
+
 function pageHTML() {
   return `<!doctype html>
 <html>
@@ -548,98 +949,200 @@ function pageHTML() {
   <style>
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #0b0d10; color: #f3f5f7; }
-    header { position: sticky; top: 0; background: rgba(11,13,16,.92); backdrop-filter: blur(14px); padding: 18px 20px; border-bottom: 1px solid #222832; }
+    header { position: sticky; top: 0; z-index: 2; background: rgba(11,13,16,.94); backdrop-filter: blur(14px); padding: 18px 20px; border-bottom: 1px solid #222832; }
     h1 { margin: 0 0 6px; font-size: 22px; }
     .meta { color: #95a0ad; font-size: 13px; }
-    main { max-width: 980px; margin: 0 auto; padding: 20px; }
-    .thread { margin-bottom: 22px; }
-    .thread-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 0 10px; border-bottom: 1px solid #232a34; }
-    .thread-title { font-weight: 800; font-size: 20px; }
-    .thread-meta { color: #95a0ad; font-size: 13px; margin-top: 4px; }
-    .record { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 16px; margin-top: 12px; border: 1px solid #232a34; border-radius: 10px; background: #11151b; }
-    .title { font-weight: 700; font-size: 17px; }
-    .sub { color: #9ca6b3; font-size: 13px; margin-top: 4px; }
-    .emoji { font-size: 38px; line-height: 1; }
+    main { max-width: 980px; margin: 0 auto; padding: 18px 20px 40px; }
+    nav { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+    .filters { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) minmax(150px, 220px); margin-bottom: 18px; }
+    .rarity-filter { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    button, select { color: #f3f5f7; background: #121820; border: 1px solid #2b3541; border-radius: 8px; font: inherit; font-size: 13px; }
+    button { padding: 8px 10px; cursor: pointer; white-space: nowrap; }
+    button.active { background: var(--rarity-color, #e8edf3); border-color: var(--rarity-color, #e8edf3); color: #071018; }
+    select { min-width: 0; padding: 8px 10px; }
+    .day { margin: 22px 0 10px; color: #8f98a3; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .record { display: grid; grid-template-columns: minmax(0, 1fr) 86px; gap: 14px; padding: 16px; margin-top: 10px; border: 1px solid #232a34; border-radius: 10px; background: #11151b; }
+    .record-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .title { font-weight: 800; font-size: 17px; }
+    .sub { color: #9ca6b3; font-size: 13px; margin-top: 6px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2d3946; border-radius: 999px; padding: 4px 8px; color: #c8d0d9; font-size: 12px; }
+    .rarity { border-color: color-mix(in srgb, var(--rarity-color), transparent 45%); color: var(--rarity-color); background: color-mix(in srgb, var(--rarity-color), transparent 88%); }
+    .record-side { display: grid; gap: 8px; justify-items: center; align-content: start; }
+    .glyph { width: 76px; height: 76px; display: grid; place-items: center; color: var(--rarity-color, #8f98a3); }
+    .glyph svg { width: 100%; height: 100%; display: block; overflow: visible; }
+    .glyph path, .glyph polygon, .glyph circle { fill: currentColor; }
+    .glyph-fallback { width: 72px; height: 72px; }
+    .emoji { font-size: 30px; line-height: 1; }
     .text { margin-top: 10px; white-space: pre-wrap; color: #d8dde4; }
     .media { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
     .media img, .media video { width: 160px; height: 160px; object-fit: cover; border-radius: 8px; background: #050607; }
+    .media-preview { padding: 0; border: 0; background: transparent; line-height: 0; cursor: zoom-in; }
+    .media-preview:focus-visible { outline: 2px solid #2f9bff; outline-offset: 3px; }
     audio { width: 260px; }
-    nav { margin-top: 10px; display: flex; gap: 8px; }
-    nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
     .empty { color: #95a0ad; padding: 40px 0; text-align: center; }
+    .lightbox[hidden] { display: none; }
+    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.86); backdrop-filter: blur(12px); }
+    .lightbox img, .lightbox video { max-width: min(96vw, 1280px); max-height: 92vh; object-fit: contain; border-radius: 10px; box-shadow: 0 24px 80px rgba(0,0,0,.7); }
+    .lightbox-close { position: absolute; top: 18px; right: 18px; width: 44px; height: 44px; border-radius: 999px; font-size: 20px; background: rgba(15,18,22,.78); }
+    @media (max-width: 720px) {
+      .filters { grid-template-columns: 1fr; }
+      .record { grid-template-columns: minmax(0, 1fr) 72px; }
+      .glyph { width: 64px; height: 64px; }
+      .emoji { font-size: 26px; }
+      audio { width: 100%; }
+      .media img, .media video { width: calc(50vw - 34px); height: calc(50vw - 34px); }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>Exeligmos Sync</h1>
-    <div class="meta" id="status">Loading backup...</div>
+    <div class="meta" id="status">Loading synced folders...</div>
     <nav><a href="/dataset">Dataset</a></nav>
   </header>
   <main id="records"></main>
+  <div class="lightbox" id="lightbox" hidden>
+    <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close media preview">X</button>
+    <img id="lightbox-image" alt="">
+    <video id="lightbox-video" controls playsinline hidden></video>
+  </div>
+  <script src="/vendor/octal-glyph.js"></script>
   <script>
     const status = document.getElementById('status');
     const recordsEl = document.getElementById('records');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImage = document.getElementById('lightbox-image');
+    const lightboxVideo = document.getElementById('lightbox-video');
+    const lightboxClose = document.getElementById('lightbox-close');
+    const state = { rarity: 'all', thread: 'all', group: 'all', data: null };
+    const glyphFontCache = new Map();
+
+    lightboxClose.addEventListener('click', closeMediaPreview);
+    lightbox.addEventListener('click', (event) => {
+      if (event.target === lightbox) closeMediaPreview();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !lightbox.hidden) closeMediaPreview();
+    });
 
     fetch('/api/records')
       .then((response) => response.json())
       .then((data) => {
         status.textContent = data.exportTimestamp
-          ? \`Latest backup: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} threads · \${data.recordCount} records · \${data.mediaCount} media\`
-          : 'No backup yet. Push one from the iOS app Settings screen.';
-        recordsEl.innerHTML = '';
-        if ((!data.threads || data.threads.length === 0) && (!data.records || data.records.length === 0)) {
-          recordsEl.innerHTML = '<div class="empty">No records to show.</div>';
-          return;
-        }
-        if (data.threads?.length) {
-          for (const thread of data.threads) {
-            recordsEl.appendChild(renderThread(thread));
-          }
-        } else {
-          for (const record of data.records) {
-            recordsEl.appendChild(renderRecord(record, true));
-          }
-        }
+          ? \`Folder state: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} threads · \${data.recordCount} records · \${data.mediaCount} media\`
+          : 'No synced records yet. Upload from the iOS app Settings screen.';
+        state.data = data;
+        renderPage();
       })
       .catch((error) => {
         status.textContent = error.message;
       });
 
-    function renderThread(thread) {
-      const section = document.createElement('section');
-      section.className = 'thread';
+    function renderPage() {
+      const data = state.data || { records: [], threads: [], groups: [], rarities: [] };
+      recordsEl.innerHTML = '';
 
-      const header = document.createElement('div');
-      header.className = 'thread-header';
-      const body = document.createElement('div');
-      body.innerHTML = \`
-        <div class="thread-title">\${escapeHTML(thread.title || 'Untitled thread')}</div>
-        <div class="thread-meta">Saros \${thread.saros} · \${thread.recordCount} \${thread.recordCount === 1 ? 'record' : 'records'}\${thread.latestRecordDate ? \` · latest \${new Date(thread.latestRecordDate).toLocaleString()}\` : ''}</div>
-      \`;
+      const filters = document.createElement('section');
+      filters.className = 'filters';
+      filters.append(renderRarityFilter(data.rarities || []));
+      filters.append(renderSelect('thread', 'Thread', data.threads || [], (thread) => \`\${thread.emoji || ''} \${thread.title || 'Untitled thread'} (\${thread.recordCount})\`));
+      filters.append(renderSelect('group', 'Group', data.groups || [], (group) => \`\${group.emoji || ''} \${group.name || 'Common'} (\${group.count})\`));
+      recordsEl.appendChild(filters);
 
-      const emoji = document.createElement('div');
-      emoji.className = 'emoji';
-      emoji.textContent = thread.emoji || '✦';
-      header.append(body, emoji);
-      section.appendChild(header);
-
-      for (const record of thread.records || []) {
-        section.appendChild(renderRecord(record, false));
+      const records = filteredRecords(data.records || []);
+      if (!records.length) {
+        recordsEl.insertAdjacentHTML('beforeend', '<div class="empty">No records match these filters.</div>');
+        return;
       }
 
-      return section;
+      let lastDay = '';
+      for (const record of records) {
+        const day = dayKey(record.eventDate);
+        if (day !== lastDay) {
+          const divider = document.createElement('div');
+          divider.className = 'day';
+          divider.textContent = new Date(record.eventDate).toLocaleDateString(undefined, { dateStyle: 'full' });
+          recordsEl.appendChild(divider);
+          lastDay = day;
+        }
+        recordsEl.appendChild(renderRecord(record));
+      }
     }
 
-    function renderRecord(record, showThreadTitle) {
+    function renderRarityFilter(rarities) {
+      const wrap = document.createElement('div');
+      wrap.className = 'rarity-filter';
+      const all = document.createElement('button');
+      all.type = 'button';
+      all.textContent = 'All';
+      all.className = state.rarity === 'all' ? 'active' : '';
+      all.addEventListener('click', () => { state.rarity = 'all'; renderPage(); });
+      wrap.appendChild(all);
+
+      for (const rarity of rarities) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = \`\${rarity.name} \${rarity.count}\`;
+        button.style.setProperty('--rarity-color', rarity.color || '#e8edf3');
+        button.className = state.rarity === rarity.id ? 'active' : '';
+        button.addEventListener('click', () => { state.rarity = rarity.id; renderPage(); });
+        wrap.appendChild(button);
+      }
+      return wrap;
+    }
+
+    function renderSelect(kind, label, options, titleForOption) {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', label);
+
+      const all = document.createElement('option');
+      all.value = 'all';
+      all.textContent = \`All \${label.toLowerCase()}s\`;
+      select.appendChild(all);
+
+      for (const option of options) {
+        const node = document.createElement('option');
+        node.value = option.id;
+        node.textContent = titleForOption(option).trim();
+        select.appendChild(node);
+      }
+
+      select.value = state[kind];
+      select.addEventListener('change', () => {
+        state[kind] = select.value;
+        renderPage();
+      });
+      return select;
+    }
+
+    function filteredRecords(records) {
+      return records.filter((record) => {
+        if (state.rarity !== 'all' && record.rarity?.key !== state.rarity) return false;
+        if (state.thread !== 'all' && record.entityID !== state.thread) return false;
+        if (state.group !== 'all' && record.groupID !== state.group) return false;
+        return true;
+      });
+    }
+
+    function renderRecord(record) {
       const node = document.createElement('article');
       node.className = 'record';
       const body = document.createElement('div');
+      const side = document.createElement('div');
+      side.className = 'record-side';
+      side.appendChild(renderOctalGlyph(record.octalAddress, record.harmonicDepth || 7, record.rarity?.color || '#8f98a3'));
       const emoji = document.createElement('div');
       emoji.className = 'emoji';
       emoji.textContent = record.emoji || '✦';
+      side.appendChild(emoji);
 
       body.innerHTML = \`
-        \${showThreadTitle ? \`<div class="title">\${escapeHTML(record.entityTitle)}</div>\` : ''}
+        <div class="record-head">
+          <div class="title">\${escapeHTML(record.entityTitle)}</div>
+          <span class="badge rarity" style="--rarity-color: \${escapeHTML(record.rarity?.color || '#8f98a3')}">\${escapeHTML(record.rarity?.title || 'Common')}</span>
+          <span class="badge">\${escapeHTML(record.groupEmoji || '○')} \${escapeHTML(record.groupName || 'Common')}</span>
+        </div>
         <div class="sub">\${new Date(record.eventDate).toLocaleString()} · Saros \${record.saros} · \${record.octalAddress}</div>
       \`;
       if (record.text) {
@@ -651,7 +1154,7 @@ function pageHTML() {
       if (record.media?.length) {
         body.appendChild(renderMedia(record.media));
       }
-      node.append(body, emoji);
+      node.append(body, side);
       return node;
     }
 
@@ -660,15 +1163,29 @@ function pageHTML() {
       wrap.className = 'media';
       for (const item of media) {
         if (item.type === 'photo' || item.type === 'symbolicPhoto') {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'media-preview';
+          button.setAttribute('aria-label', 'Open image preview');
           const image = document.createElement('img');
           image.src = item.url;
           image.loading = 'lazy';
-          wrap.appendChild(image);
+          button.appendChild(image);
+          button.addEventListener('click', () => openMediaPreview(item.url, 'image'));
+          wrap.appendChild(button);
         } else if (item.type === 'video') {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'media-preview';
+          button.setAttribute('aria-label', 'Open video preview');
           const video = document.createElement('video');
           video.src = item.url;
-          video.controls = true;
-          wrap.appendChild(video);
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = 'metadata';
+          button.appendChild(video);
+          button.addEventListener('click', () => openMediaPreview(item.url, 'video'));
+          wrap.appendChild(button);
         } else if (item.type === 'audio') {
           const audio = document.createElement('audio');
           audio.src = item.url;
@@ -677,6 +1194,102 @@ function pageHTML() {
         }
       }
       return wrap;
+    }
+
+    function renderOctalGlyph(value, depth, color) {
+      const glyph = document.createElement('div');
+      glyph.className = 'glyph';
+      glyph.style.setProperty('--rarity-color', color || '#8f98a3');
+      glyph.title = normalizeOctalGlyphValue(value, depth);
+      const size = Math.max(3, Math.min(Number(depth) || 7, 8));
+      glyph.dataset.digitOrder = counterclockwiseDigitOrder(size).join(',');
+
+      if (globalThis.OctalGlyph?.renderSvg) {
+        glyph.innerHTML = globalThis.OctalGlyph.renderSvg(glyph.title, {
+          digitsPerGlyph: size,
+          inputBase: 'octal',
+          font: counterclockwiseGlyphFont(size),
+          fill: 'currentColor',
+          paddingCells: 3,
+          precision: 2
+        });
+      } else {
+        glyph.innerHTML = fallbackGlyphSvg(glyph.title);
+      }
+
+      return glyph;
+    }
+
+    function counterclockwiseGlyphFont(size) {
+      if (!globalThis.OctalGlyph?.DEFAULT_FONT) return undefined;
+      if (glyphFontCache.has(size)) return glyphFontCache.get(size);
+
+      const font = JSON.parse(JSON.stringify(globalThis.OctalGlyph.DEFAULT_FONT));
+      const key = String(size);
+      const species = font.species?.[key] || {};
+      font.species = font.species || {};
+      font.species[key] = {
+        ...species,
+        digitOrder: counterclockwiseDigitOrder(size)
+      };
+      glyphFontCache.set(size, font);
+      return font;
+    }
+
+    function counterclockwiseDigitOrder(size) {
+      return [0, ...Array.from({ length: Math.max(0, size - 1) }, (_, index) => size - index - 1)];
+    }
+
+    function normalizeOctalGlyphValue(value, depth) {
+      const size = Math.max(3, Math.min(Number(depth) || 7, 8));
+      const clean = String(value || '0').replace(/[^0-7]/g, '');
+      return (clean || '0').padStart(size, '0').slice(-size);
+    }
+
+    function fallbackGlyphSvg(value) {
+      const digits = normalizeOctalGlyphValue(value, 7).split('');
+      const center = 50;
+      const coreRadius = 13;
+      const socketRadius = 35;
+      const arms = digits.map((digit, index) => {
+        const angle = -Math.PI / 2 - (index * 2 * Math.PI / digits.length);
+        const reach = socketRadius + Number(digit) * 4;
+        const x = center + Math.cos(angle) * reach;
+        const y = center + Math.sin(angle) * reach;
+        return \`<line x1="\${center}" y1="\${center}" x2="\${x.toFixed(2)}" y2="\${y.toFixed(2)}" stroke="currentColor" stroke-width="7" stroke-linecap="round"/>\`;
+      }).join('');
+      return \`<svg class="glyph-fallback" viewBox="0 0 100 100" aria-hidden="true">\${arms}<circle cx="50" cy="50" r="\${coreRadius}" fill="currentColor"/></svg>\`;
+    }
+
+    function openMediaPreview(url, type) {
+      if (type === 'video') {
+        lightboxImage.hidden = true;
+        lightboxImage.removeAttribute('src');
+        lightboxVideo.hidden = false;
+        lightboxVideo.src = url;
+      } else {
+        lightboxVideo.pause();
+        lightboxVideo.hidden = true;
+        lightboxVideo.removeAttribute('src');
+        lightboxImage.hidden = false;
+        lightboxImage.src = url;
+      }
+      lightbox.hidden = false;
+      lightboxClose.focus();
+    }
+
+    function closeMediaPreview() {
+      lightbox.hidden = true;
+      lightboxVideo.pause();
+      lightboxVideo.hidden = true;
+      lightboxVideo.removeAttribute('src');
+      lightboxImage.hidden = false;
+      lightboxImage.removeAttribute('src');
+    }
+
+    function dayKey(value) {
+      const date = new Date(value);
+      return [date.getFullYear(), date.getMonth(), date.getDate()].join('-');
     }
 
     function escapeHTML(value) {
@@ -833,12 +1446,11 @@ function send(res, status, contentType, body) {
 }
 
 function safeRelativePath(value) {
-  const parts = String(value || '')
+  return String(value || '')
     .replaceAll('\\\\', '/')
     .split('/')
-    .filter((part) => part && part !== '.' && part !== '..');
-  const relative = parts.join('/');
-  return relative.startsWith('SarosMedia/') ? relative : `SarosMedia/${path.basename(relative || 'media.bin')}`;
+    .filter((part) => part && part !== '.' && part !== '..')
+    .join('/');
 }
 
 function safeAnimacyRelativePath(value) {
@@ -851,6 +1463,19 @@ function safeAnimacyRelativePath(value) {
 
 function safeFileName(value) {
   return path.basename(String(value || 'file.bin').replaceAll('\\\\', '/')) || 'file.bin';
+}
+
+function safeFolderName(value) {
+  const cleaned = String(value || 'item')
+    .normalize('NFKD')
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+  return cleaned || 'item';
+}
+
+function slug(value) {
+  return safeFolderName(value).toLowerCase() || 'untitled';
 }
 
 function encodePath(value) {
@@ -872,8 +1497,21 @@ function contentTypeForPath(filePath) {
   return 'application/octet-stream';
 }
 
-function timestamp() {
-  return new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
+function extensionForContentType(contentType) {
+  const value = String(contentType || '').toLowerCase();
+  if (value.includes('jpeg') || value.includes('jpg')) return '.jpg';
+  if (value.includes('png')) return '.png';
+  if (value.includes('quicktime')) return '.mov';
+  if (value.includes('mp4') && value.includes('video')) return '.mp4';
+  if (value.includes('mp4') && value.includes('audio')) return '.m4a';
+  if (value.includes('caf')) return '.caf';
+  return '';
+}
+
+function unixOctal(value) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return '';
+  return Math.floor(time / 1000).toString(8);
 }
 
 function localAddresses() {

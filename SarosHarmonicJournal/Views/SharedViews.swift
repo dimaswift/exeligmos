@@ -137,7 +137,7 @@ enum JournalSettings {
     }
 }
 
-enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawRepresentable {
+enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawRepresentable, Sendable {
     case common
     case rare
     case epic
@@ -736,6 +736,16 @@ struct FlipRarityBadge: View {
                 .stroke(rarity.color.opacity(0.28), lineWidth: 1)
         }
         .accessibilityLabel(rarity.title)
+    }
+}
+
+struct MoonPhaseGlyph: View {
+    let reading: MoonPhaseOctalReading
+
+    var body: some View {
+        OctalGlyph(value: reading.octalAddress, depth: reading.depth, style: reading.rarity.glyphStyle)
+            .accessibilityLabel("Moon phase glyph")
+            .accessibilityValue(reading.octalAddress)
     }
 }
 

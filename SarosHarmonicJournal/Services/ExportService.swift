@@ -382,7 +382,7 @@ private extension Data {
     }
 }
 
-private extension TrackedEntitySnapshot {
+extension TrackedEntitySnapshot {
     init(entity: TrackedEntity) {
         self.init(
             id: entity.id,
@@ -404,7 +404,7 @@ private extension TrackedEntitySnapshot {
     }
 }
 
-private extension ThreadGroupSnapshot {
+extension ThreadGroupSnapshot {
     init(group: ThreadGroup) {
         self.init(
             id: group.id,
@@ -417,7 +417,7 @@ private extension ThreadGroupSnapshot {
     }
 }
 
-private extension JournalRecordSnapshot {
+extension JournalRecordSnapshot {
     init(record: JournalRecord) {
         let portableMediaItems = record.mediaItems.map { item in
             JournalMediaItem(

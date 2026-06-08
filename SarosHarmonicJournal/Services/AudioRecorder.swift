@@ -162,9 +162,9 @@ enum MediaPalindromeProcessor {
             }
         }
 
-        let destinationURL = try outputURL ?? MediaStorage.newMediaURL(fileExtension: "caf")
+        let destinationURL = try outputURL ?? MediaStorage.newMediaURL(fileExtension: "m4a")
         try? FileManager.default.removeItem(at: destinationURL)
-        let outputFile = try AVAudioFile(forWriting: destinationURL, settings: outputBuffer.format.settings)
+        let outputFile = try AVAudioFile(forWriting: destinationURL, settings: m4aSettings(for: outputBuffer))
         try outputFile.write(from: outputBuffer)
         return destinationURL
     }
@@ -210,9 +210,9 @@ enum MediaPalindromeProcessor {
             }
         }
 
-        let destinationURL = try outputURL ?? MediaStorage.newMediaURL(fileExtension: "caf")
+        let destinationURL = try outputURL ?? MediaStorage.newMediaURL(fileExtension: "m4a")
         try? FileManager.default.removeItem(at: destinationURL)
-        let outputFile = try AVAudioFile(forWriting: destinationURL, settings: outputBuffer.format.settings)
+        let outputFile = try AVAudioFile(forWriting: destinationURL, settings: m4aSettings(for: outputBuffer))
         try outputFile.write(from: outputBuffer)
         return destinationURL
     }
@@ -231,7 +231,7 @@ enum MediaPalindromeProcessor {
             .appendingPathExtension("m4a")
         let palindromeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("caf")
+            .appendingPathExtension("m4a")
 
         [forwardAudioURL, palindromeURL].forEach { url in
             try? FileManager.default.removeItem(at: url)
@@ -264,6 +264,15 @@ enum MediaPalindromeProcessor {
             try? FileManager.default.removeItem(at: forwardAudioURL)
         }
         return try makeTemporalAudio(from: forwardAudioURL, mode: mode, outputURL: palindromeURL)
+    }
+
+    private static func m4aSettings(for buffer: AVAudioPCMBuffer) -> [String: Any] {
+        [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: buffer.format.sampleRate,
+            AVNumberOfChannelsKey: Int(buffer.format.channelCount),
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
     }
 
     private static func floatBuffer(from sourceBuffer: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {

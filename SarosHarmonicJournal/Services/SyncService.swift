@@ -19,6 +19,24 @@ struct SyncMediaBlob: Codable, Identifiable {
     let dataBase64: String
 }
 
+struct SyncThreadPayload: Codable {
+    let schemaVersion: Int
+    let appVersion: String
+    let uploadedAt: Date
+    let group: ThreadGroupSnapshot?
+    let thread: TrackedEntitySnapshot
+}
+
+struct SyncRecordPayload: Codable {
+    let schemaVersion: Int
+    let appVersion: String
+    let uploadedAt: Date
+    let group: ThreadGroupSnapshot?
+    let thread: TrackedEntitySnapshot
+    let record: JournalRecordSnapshot
+    let media: [SyncMediaBlob]
+}
+
 struct SyncPushSummary: Hashable {
     let entityCount: Int
     let recordCount: Int
@@ -122,22 +140,21 @@ final class SyncService {
         records: [JournalRecord],
         groups: [ThreadGroup] = []
     ) async throws -> SyncPushSummary {
-        let payload = try makePayload(entities: entities, records: records, groups: groups)
-        let url = try endpoint(serverURLString, path: "/api/backups")
+        let entityMap = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
+        let groupMap = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        var uploadedMediaCount = 0
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(payload)
+        for entity in entities {
+            try await uploadThread(entity, group: entity.groupID.flatMap { groupMap[$0] }, to: serverURLString)
+        }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
+        for record in records {
+            guard let entity = entityMap[record.entityID] else { continue }
+            let group = entity.groupID.flatMap { groupMap[$0] }
+            uploadedMediaCount += try await uploadRecord(record, entity: entity, group: group, to: serverURLString)
+        }
 
-        return SyncPushSummary(
-            entityCount: payload.archive.entities.count,
-            recordCount: payload.archive.records.count,
-            mediaCount: payload.media.count
-        )
+        return SyncPushSummary(entityCount: entities.count, recordCount: records.count, mediaCount: uploadedMediaCount)
     }
 
     func pushMissingRecords(
@@ -149,30 +166,31 @@ final class SyncService {
         let manifest = try await fetchManifest(from: serverURLString)
         let uploadedRecordIDs = Set(manifest.recordIDs)
         let missingRecords = records.filter { !uploadedRecordIDs.contains($0.id) }
+        let groupMap = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+
+        for entity in entities {
+            try await uploadThread(entity, group: entity.groupID.flatMap { groupMap[$0] }, to: serverURLString)
+        }
 
         guard !missingRecords.isEmpty else {
             return SyncPushSummary(entityCount: 0, recordCount: 0, mediaCount: 0)
         }
 
-        let neededEntityIDs = Set(missingRecords.map(\.entityID))
-        let entitiesForRecords = entities.filter { neededEntityIDs.contains($0.id) }
-        let neededGroupIDs = Set(entitiesForRecords.compactMap(\.groupID))
-        let groupsForRecords = groups.filter { neededGroupIDs.contains($0.id) }
-        let payload = try makePayload(entities: entitiesForRecords, records: missingRecords, groups: groupsForRecords)
-        let url = try endpoint(serverURLString, path: "/api/backups/delta")
+        let entityMap = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
+        var uploadedMediaCount = 0
+        var uploadedRecordCount = 0
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(payload)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
+        for record in missingRecords {
+            guard let entity = entityMap[record.entityID] else { continue }
+            let group = entity.groupID.flatMap { groupMap[$0] }
+            uploadedMediaCount += try await uploadRecord(record, entity: entity, group: group, to: serverURLString)
+            uploadedRecordCount += 1
+        }
 
         return SyncPushSummary(
-            entityCount: payload.archive.entities.count,
-            recordCount: payload.archive.records.count,
-            mediaCount: payload.media.count
+            entityCount: entities.count,
+            recordCount: uploadedRecordCount,
+            mediaCount: uploadedMediaCount
         )
     }
 
@@ -223,10 +241,54 @@ final class SyncService {
         }
     }
 
-    private func makePayload(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) throws -> SyncBackupPayload {
-        let archive = ExportService().makeArchive(entities: entities, records: records, groups: groups)
+    private func uploadThread(_ entity: TrackedEntity, group: ThreadGroup?, to serverURLString: String) async throws {
+        let payload = SyncThreadPayload(
+            schemaVersion: 1,
+            appVersion: appVersion,
+            uploadedAt: Date(),
+            group: group.map(ThreadGroupSnapshot.init(group:)),
+            thread: TrackedEntitySnapshot(entity: entity)
+        )
+
+        try await post(payload, to: serverURLString, path: "/api/sync/thread")
+    }
+
+    private func uploadRecord(
+        _ record: JournalRecord,
+        entity: TrackedEntity,
+        group: ThreadGroup?,
+        to serverURLString: String
+    ) async throws -> Int {
+        let media = try mediaBlobs(for: [record])
+        let payload = SyncRecordPayload(
+            schemaVersion: 1,
+            appVersion: appVersion,
+            uploadedAt: Date(),
+            group: group.map(ThreadGroupSnapshot.init(group:)),
+            thread: TrackedEntitySnapshot(entity: entity),
+            record: JournalRecordSnapshot(record: record),
+            media: media
+        )
+
+        try await post(payload, to: serverURLString, path: "/api/sync/record")
+        return media.count
+    }
+
+    private func post<T: Encodable>(_ payload: T, to serverURLString: String, path: String) async throws {
+        let url = try endpoint(serverURLString, path: path)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+    }
+
+    private func mediaBlobs(for records: [JournalRecord]) throws -> [SyncMediaBlob] {
         var seenMediaIDs = Set<UUID>()
-        let media = try records.flatMap(\.mediaItems).compactMap { item -> SyncMediaBlob? in
+        return try records.flatMap(\.mediaItems).compactMap { item -> SyncMediaBlob? in
             guard seenMediaIDs.insert(item.id).inserted else { return nil }
 
             let url = MediaStorage.url(for: item)
@@ -244,14 +306,6 @@ final class SyncService {
                 dataBase64: data.base64EncodedString()
             )
         }
-
-        return SyncBackupPayload(
-            schemaVersion: 1,
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
-            exportTimestamp: Date(),
-            archive: archive,
-            media: media
-        )
     }
 
     private func restore(
@@ -431,6 +485,10 @@ final class SyncService {
 
     private func documentsDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
     private var encoder: JSONEncoder {

@@ -63,6 +63,62 @@ final class SarosClockTests: XCTestCase {
         XCTAssertFalse(geometry.polygons.isEmpty)
     }
 
+    func testBundledMoonPhaseDatabaseSummary() throws {
+        let service = BundledMoonPhaseService()
+        let summary = try service.databaseSummary()
+
+        XCTAssertEqual(summary.byteCount, 14_924)
+        XCTAssertEqual(summary.newMoonCount, 2_478)
+        XCTAssertEqual(summary.fullMoonCount, 2_478)
+        XCTAssertEqual(summary.coverageStart, Self.date(year: 1900, month: 1, day: 1))
+        XCTAssertEqual(summary.coverageEnd, Self.date(year: 2100, month: 1, day: 1))
+        XCTAssertEqual(summary.referenceNewMoon, Self.date("1992-01-04T23:09:35Z"))
+        XCTAssertEqual(summary.synodicMonthSeconds, 2_551_442.876899, accuracy: 0.000001)
+    }
+
+    func testMoonPhaseReadingUsesBakedNewAndFullEvents() throws {
+        let service = BundledMoonPhaseService()
+
+        let newMoonReading = try service.reading(for: Self.date("1992-01-04T23:09:35Z"))
+        XCTAssertEqual(newMoonReading.phase, .new)
+        XCTAssertEqual(newMoonReading.previousEvent.kind, .new)
+        XCTAssertEqual(newMoonReading.previousEvent.date, Self.date("1992-01-04T23:09:35Z"))
+        XCTAssertEqual(newMoonReading.normalizedPhase, 0, accuracy: 0.000001)
+
+        let fullMoonReading = try service.reading(for: Self.date("1992-01-19T21:28:29Z"))
+        XCTAssertEqual(fullMoonReading.phase, .full)
+        XCTAssertEqual(fullMoonReading.nearestEvent.kind, .full)
+        XCTAssertEqual(fullMoonReading.nearestEvent.date, Self.date("1992-01-19T21:28:29Z"))
+        XCTAssertEqual(fullMoonReading.illuminatedFraction, 1, accuracy: 0.01)
+    }
+
+    func testMoonOctalReadingUsesNewMoonnessRarity() throws {
+        let service = BundledMoonPhaseService()
+        let newMoonDate = Self.date("1992-01-04T23:09:35Z")
+        let phase = try service.reading(for: newMoonDate)
+        let binDuration = phase.nextNewMoon.date.timeIntervalSince(newMoonDate) / 512
+
+        let newMoon = try service.octalReading(for: newMoonDate, depth: 3)
+        XCTAssertEqual(newMoon.octalAddress, "000")
+        XCTAssertEqual(newMoon.rarity, .legendary)
+
+        let epic = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 1.1), depth: 3)
+        XCTAssertEqual(epic.octalAddress, "001")
+        XCTAssertEqual(epic.rarity, .epic)
+
+        let rare = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 8.1), depth: 3)
+        XCTAssertEqual(rare.octalAddress, "010")
+        XCTAssertEqual(rare.rarity, .rare)
+
+        let common = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 64.1), depth: 3)
+        XCTAssertEqual(common.octalAddress, "100")
+        XCTAssertEqual(common.rarity, .common)
+
+        let nextNewMoonEdge = try service.octalReading(for: phase.nextNewMoon.date.addingTimeInterval(-1), depth: 3)
+        XCTAssertEqual(nextNewMoonEdge.octalAddress, "777")
+        XCTAssertEqual(nextNewMoonEdge.rarity, .legendary)
+    }
+
     func testPhaseAtPreviousEclipseStartsAtZero() throws {
         let reading = try SarosClockCalculator.reading(
             saros: 141,
@@ -88,6 +144,10 @@ final class SarosClockTests: XCTestCase {
         components.month = month
         components.day = day
         return calendar.date(from: components) ?? .distantPast
+    }
+
+    private static func date(_ iso8601: String) -> Date {
+        ISO8601DateFormatter().date(from: iso8601) ?? .distantPast
     }
 
     private static func splitColorImage() -> UIImage {
