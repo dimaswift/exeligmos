@@ -24,7 +24,7 @@ struct ClockDashboardView: View {
         List {
             closestFlipSection
 
-            threadsSection(at: Date())
+            threadsSection
         }
         .navigationTitle("Threads")
         .toolbar {
@@ -69,7 +69,7 @@ struct ClockDashboardView: View {
     }
 
     @ViewBuilder
-    private func threadsSection(at date: Date) -> some View {
+    private var threadsSection: some View {
         Section("Threads") {
             if entities.isEmpty {
                 ContentUnavailableView {
@@ -85,18 +85,23 @@ struct ClockDashboardView: View {
                 ContentUnavailableView("No threads in \(selectedGroupFilter.title(groups: threadGroups))", systemImage: "line.3.horizontal.decrease.circle")
             } else {
                 ForEach(filteredEntities) { entity in
-                    let reading = reading(for: entity, at: date)
-                    let countdown = reading.flatMap { currentRarityCountdown(for: $0, at: date) ?? nearestRarityCountdown(for: $0, at: date) }
                     NavigationLink {
                         EntityDetailView(entity: entity)
                     } label: {
-                        EntityCardView(
-                            entity: entity,
-                            reading: reading,
-                            countdown: countdown,
-                            latestRecord: latestRecord(for: entity),
-                            group: group(for: entity)
-                        )
+                        TimelineView(.periodic(from: Date(), by: 1)) { context in
+                            let reading = reading(for: entity, at: context.date)
+                            let countdown = reading.flatMap {
+                                currentRarityCountdown(for: $0, at: context.date)
+                                    ?? nearestRarityCountdown(for: $0, at: context.date)
+                            }
+                            EntityCardView(
+                                entity: entity,
+                                reading: reading,
+                                countdown: countdown,
+                                latestRecord: latestRecord(for: entity),
+                                group: group(for: entity)
+                            )
+                        }
                     }
                 }
                 .onDelete(perform: deleteEntities)
@@ -423,7 +428,8 @@ private struct EntityCardView: View {
     let group: ThreadGroup?
 
     var body: some View {
-        let rarityColor = countdown?.rarity.color ?? .secondary
+        let displayRarity = displayedRarity
+        let rarityColor = displayRarity.color
 
         HStack(spacing: 14) {
             avatar(color: rarityColor)
@@ -461,6 +467,12 @@ private struct EntityCardView: View {
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private var displayedRarity: FlipRarity {
+        let current = reading?.currentRarity ?? .common
+        guard let countdown else { return current }
+        return max(current, countdown.rarity)
     }
 
     @ViewBuilder
@@ -561,32 +573,8 @@ private struct EntityDetailView: View {
 
     var body: some View {
         List {
-            Section {
-                if let reading = currentReading {
-                    let activeCountdown = currentRarityCountdown(for: reading)
-                    let glyphColor = activeCountdown?.rarity.color ?? .blue
-                    HStack(spacing: 16) {
-                        OctalGlyph(
-                            value: reading.octalAddress,
-                            depth: reading.harmonicDepth,
-                            style: activeCountdown?.rarity.glyphStyle ?? .single(glyphColor)
-                        )
-                            .frame(width: 72, height: 72)
-                            .padding(8)
-                            .background(glyphColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(reading.octalAddress)
-                                .font(.system(.title, design: .monospaced))
-                            Text("Next flip \(JournalFormatters.dateTime.string(from: reading.nextFlipDate))")
-                                .foregroundStyle(.secondary)
-                            ThreadHeaderCountdownText(reading: reading)
-                        }
-                    }
-                }
-
-                if let notes = entity.notes, !notes.isEmpty {
-                    Text(notes)
-                }
+            TimelineView(.periodic(from: Date(), by: 1)) { context in
+                threadHeaderSection(at: context.date)
             }
 
             Section {
@@ -686,6 +674,39 @@ private struct EntityDetailView: View {
         }
         .navigationDestination(item: $selectedRecord) { record in
             JournalRecordDetailView(record: record, entityTitle: entity.displayTitle)
+        }
+    }
+
+    @ViewBuilder
+    private func threadHeaderSection(at date: Date) -> some View {
+        Section {
+            if let reading = reading(at: date) {
+                let activeCountdown = currentRarityCountdown(for: reading, at: date)
+                let displayRarity = max(reading.currentRarity, activeCountdown?.rarity ?? .common)
+                let glyphColor = displayRarity.color
+                HStack(spacing: 16) {
+                    OctalGlyph(
+                        value: reading.octalAddress,
+                        depth: reading.harmonicDepth,
+                        style: displayRarity.glyphStyle
+                    )
+                        .frame(width: 72, height: 72)
+                        .padding(8)
+                        .background(glyphColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(reading.octalAddress)
+                            .font(.system(.title, design: .monospaced))
+                            .contentTransition(.numericText())
+                        Text("Next flip \(JournalFormatters.dateTime.string(from: reading.nextFlipDate))")
+                            .foregroundStyle(.secondary)
+                        ThreadHeaderCountdownText(reading: reading)
+                    }
+                }
+            }
+
+            if let notes = entity.notes, !notes.isEmpty {
+                Text(notes)
+            }
         }
     }
 
@@ -811,11 +832,13 @@ private struct EntityDetailView: View {
 
     @ViewBuilder
     private var infoTab: some View {
-        if let reading = currentReading {
-            RarityCountdownSection(reading: reading, depth: harmonicDepth)
-        } else {
-            Section("Info") {
-                ContentUnavailableView("Info unavailable", systemImage: "clock.badge.questionmark")
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            if let reading = reading(at: context.date) {
+                RarityCountdownSection(reading: reading, depth: harmonicDepth, now: context.date)
+            } else {
+                Section("Info") {
+                    ContentUnavailableView("Info unavailable", systemImage: "clock.badge.questionmark")
+                }
             }
         }
 
@@ -868,7 +891,7 @@ private struct EntityDetailView: View {
     @ViewBuilder
     private var anchorMoonSection: some View {
         Section("Moon phase") {
-            if let moonReading = try? services.moonPhaseService.octalReading(for: entity.anchorDate, depth: 3) {
+            if let moonReading = try? services.moonPhaseService.octalReading(for: entity.anchorDate, depth: 8) {
                 HStack(spacing: 14) {
                     MoonPhaseGlyph(reading: moonReading)
                         .frame(width: 58, height: 58)
@@ -891,8 +914,20 @@ private struct EntityDetailView: View {
                 .padding(.vertical, 4)
 
                 MetadataRow(title: "Anchor moon", value: JournalFormatters.dateTime.string(from: entity.anchorDate))
-                MetadataRow(title: "Previous new", value: JournalFormatters.dateTime.string(from: moonReading.phaseReading.previousNewMoon.date))
-                MetadataRow(title: "Next new", value: JournalFormatters.dateTime.string(from: moonReading.phaseReading.nextNewMoon.date))
+                ForEach(moonReading.components) { component in
+                    MetadataRow(
+                        title: "\(component.kind.displayName) phase",
+                        value: component.detailOctalAddress
+                    )
+                    MetadataRow(
+                        title: "Previous \(component.kind.eventName.lowercased())",
+                        value: JournalFormatters.dateTime.string(from: component.cycleReading.previousEvent.date)
+                    )
+                    MetadataRow(
+                        title: "Next \(component.kind.eventName.lowercased())",
+                        value: JournalFormatters.dateTime.string(from: component.cycleReading.nextEvent.date)
+                    )
+                }
             } else {
                 ContentUnavailableView("Moon phase unavailable", systemImage: "moonphase.new.moon")
             }
@@ -1268,17 +1303,16 @@ private struct ThreadHeaderCountdownText: View {
 private struct RarityCountdownSection: View {
     let reading: SarosClockReading
     let depth: Int
+    let now: Date
 
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 1)) { context in
-            Section("Rarity countdowns") {
-                ForEach(reading.rarityCountdowns(now: context.date), id: \.rarity) { countdown in
-                    RarityCountdownRow(
-                        countdown: countdown,
-                        depth: depth,
-                        now: context.date
-                    )
-                }
+        Section("Rarity countdowns") {
+            ForEach(reading.rarityCountdowns(now: now), id: \.rarity) { countdown in
+                RarityCountdownRow(
+                    countdown: countdown,
+                    depth: depth,
+                    now: now
+                )
             }
         }
     }

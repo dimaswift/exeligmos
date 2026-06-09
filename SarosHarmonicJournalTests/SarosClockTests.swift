@@ -67,13 +67,21 @@ final class SarosClockTests: XCTestCase {
         let service = BundledMoonPhaseService()
         let summary = try service.databaseSummary()
 
-        XCTAssertEqual(summary.byteCount, 14_924)
+        XCTAssertEqual(summary.byteCount, 47_070)
         XCTAssertEqual(summary.newMoonCount, 2_478)
         XCTAssertEqual(summary.fullMoonCount, 2_478)
+        XCTAssertEqual(summary.apogeeCount, 2_655)
+        XCTAssertEqual(summary.perigeeCount, 2_657)
+        XCTAssertEqual(summary.ascendingNodeCount, 2_689)
+        XCTAssertEqual(summary.descendingNodeCount, 2_689)
         XCTAssertEqual(summary.coverageStart, Self.date(year: 1900, month: 1, day: 1))
         XCTAssertEqual(summary.coverageEnd, Self.date(year: 2100, month: 1, day: 1))
         XCTAssertEqual(summary.referenceNewMoon, Self.date("1992-01-04T23:09:35Z"))
         XCTAssertEqual(summary.synodicMonthSeconds, 2_551_442.876899, accuracy: 0.000001)
+        XCTAssertEqual(summary.referenceApogee, Self.date("1992-01-06T11:55:22Z"))
+        XCTAssertEqual(summary.anomalisticMonthSeconds, 2_380_713.109632, accuracy: 0.000001)
+        XCTAssertEqual(summary.referenceAscendingNode, Self.date("1992-01-04T15:04:50Z"))
+        XCTAssertEqual(summary.draconicMonthSeconds, 2_351_135.878589, accuracy: 0.000001)
     }
 
     func testMoonPhaseReadingUsesBakedNewAndFullEvents() throws {
@@ -90,6 +98,21 @@ final class SarosClockTests: XCTestCase {
         XCTAssertEqual(fullMoonReading.nearestEvent.kind, .full)
         XCTAssertEqual(fullMoonReading.nearestEvent.date, Self.date("1992-01-19T21:28:29Z"))
         XCTAssertEqual(fullMoonReading.illuminatedFraction, 1, accuracy: 0.01)
+
+        let apogee = try service.octalReading(for: Self.date("1992-01-06T11:55:22Z"), depth: 8)
+        XCTAssertEqual(apogee.component(.anomalistic)?.detailOctalAddress, "00000000")
+
+        let ascendingNode = try service.octalReading(for: Self.date("1992-01-04T15:04:50Z"), depth: 8)
+        XCTAssertEqual(ascendingNode.component(.draconic)?.detailOctalAddress, "00000000")
+
+        let orbitalEvents = try service.orbitalEvents(
+            from: Self.date("1991-12-20T00:00:00Z"),
+            through: Self.date("1992-01-08T00:00:00Z")
+        )
+        XCTAssertTrue(orbitalEvents.contains { $0.kind == .apogee && $0.date == Self.date("1992-01-06T11:55:22Z") })
+        XCTAssertTrue(orbitalEvents.contains { $0.kind == .perigee })
+        XCTAssertTrue(orbitalEvents.contains { $0.kind == .ascendingNode && $0.date == Self.date("1992-01-04T15:04:50Z") })
+        XCTAssertTrue(orbitalEvents.contains { $0.kind == .descendingNode })
     }
 
     func testMoonOctalReadingUsesNewMoonnessRarity() throws {
@@ -99,24 +122,30 @@ final class SarosClockTests: XCTestCase {
         let binDuration = phase.nextNewMoon.date.timeIntervalSince(newMoonDate) / 512
 
         let newMoon = try service.octalReading(for: newMoonDate, depth: 3)
-        XCTAssertEqual(newMoon.octalAddress, "000")
+        XCTAssertEqual(newMoon.octalAddress, "070")
+        XCTAssertEqual(newMoon.component(.synodic)?.detailOctalAddress, "000")
         XCTAssertEqual(newMoon.rarity, .legendary)
 
         let epic = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 1.1), depth: 3)
-        XCTAssertEqual(epic.octalAddress, "001")
+        XCTAssertEqual(epic.component(.synodic)?.detailOctalAddress, "001")
         XCTAssertEqual(epic.rarity, .epic)
 
         let rare = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 8.1), depth: 3)
-        XCTAssertEqual(rare.octalAddress, "010")
+        XCTAssertEqual(rare.component(.synodic)?.detailOctalAddress, "010")
         XCTAssertEqual(rare.rarity, .rare)
 
         let common = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 64.1), depth: 3)
-        XCTAssertEqual(common.octalAddress, "100")
+        XCTAssertEqual(common.component(.synodic)?.detailOctalAddress, "100")
         XCTAssertEqual(common.rarity, .common)
 
         let nextNewMoonEdge = try service.octalReading(for: phase.nextNewMoon.date.addingTimeInterval(-1), depth: 3)
-        XCTAssertEqual(nextNewMoonEdge.octalAddress, "777")
+        XCTAssertEqual(nextNewMoonEdge.octalAddress, "700")
+        XCTAssertEqual(nextNewMoonEdge.component(.synodic)?.detailOctalAddress, "777")
         XCTAssertEqual(nextNewMoonEdge.rarity, .legendary)
+
+        let detailedNextNewMoonEdge = try service.octalReading(for: phase.nextNewMoon.date.addingTimeInterval(-1), depth: 8)
+        XCTAssertEqual(detailedNextNewMoonEdge.component(.synodic)?.detailOctalAddress.hasPrefix("777"), true)
+        XCTAssertEqual(detailedNextNewMoonEdge.rarity, .legendary)
     }
 
     func testPhaseAtPreviousEclipseStartsAtZero() throws {

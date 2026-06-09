@@ -107,7 +107,7 @@ struct JournalRecordDetailView: View {
     }
 
     private var moonMetadataReading: MoonPhaseOctalReading? {
-        try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 7)
+        try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 8)
     }
 
     private var recordCoordinate: CLLocationCoordinate2D? {
@@ -189,7 +189,7 @@ struct JournalRecordDetailView: View {
             if !audioItems.isEmpty {
                 Section("Audio") {
                     ForEach(Array(audioItems.enumerated()), id: \.element.id) { index, item in
-                        Button {
+                         Button {
                             audioPlayer.toggle(url: MediaStorage.url(for: item))
                         } label: {
                             Label(
@@ -204,7 +204,13 @@ struct JournalRecordDetailView: View {
             Section("Metadata") {
                 MetadataRow(title: "Octal", value: record.octalAddress)
                 if let moonMetadataReading {
-                    MetadataRow(title: "Moon phase", value: moonMetadataReading.octalAddress)
+                    MetadataRow(title: "Moon glyph", value: moonMetadataReading.octalAddress)
+                    ForEach(moonMetadataReading.components) { component in
+                        MetadataRow(
+                            title: "Moon \(component.kind.displayName.lowercased())",
+                            value: component.detailOctalAddress
+                        )
+                    }
                 }
                 MetadataRow(title: "Saros", value: "\(record.saros)")
                 if let recordCoordinate {

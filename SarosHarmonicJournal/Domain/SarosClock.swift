@@ -112,6 +112,13 @@ extension SarosClockReading {
         intervalDuration / Double(binCount)
     }
 
+    var currentRarity: FlipRarity {
+        FlipRarity.rarity(
+            forOctalAddress: octalAddress,
+            harmonicDepth: harmonicDepth
+        )
+    }
+
     func date(forBinIndex index: Int) -> Date {
         let clampedIndex = min(max(index, 0), binCount)
         return previousEclipse.date.addingTimeInterval(Double(clampedIndex) / Double(binCount) * intervalDuration)

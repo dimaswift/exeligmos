@@ -462,7 +462,7 @@ private struct MoonTimelineCanvas: View {
             if let label = event.label {
                 context.draw(
                     Text(label)
-                        .font(.caption2.weight(event.rarity >= .epic ? .semibold : .regular))
+                        .font(.caption2.weight(event.isMajor ? .semibold : .regular))
                         .foregroundStyle(color),
                     at: CGPoint(x: x - event.markLength / 2 - 8, y: y),
                     anchor: .trailing
@@ -558,14 +558,33 @@ private struct MoonTimelineLunarEvent: Identifiable {
     let date: Date
     let rarity: FlipRarity
     let label: String?
-    let isFullMoon: Bool
+    let kind: MoonTimelineLunarEventKind
 
     var color: Color {
-        isFullMoon ? .cyan : rarity.color
+        switch kind {
+        case .phaseSubdivision, .newMoon:
+            rarity.color
+        case .fullMoon:
+            .cyan
+        case .apogee:
+            .orange
+        case .perigee:
+            .pink
+        case .ascendingNode:
+            .green
+        case .descendingNode:
+            .mint
+        }
     }
 
     var markLength: CGFloat {
-        if isFullMoon { return 116 }
+        switch kind {
+        case .fullMoon: return 116
+        case .apogee, .perigee: return 84
+        case .ascendingNode, .descendingNode: return 70
+        default: break
+        }
+
         switch rarity {
         case .legendary: return 126
         case .epic: return 92
@@ -575,13 +594,34 @@ private struct MoonTimelineLunarEvent: Identifiable {
     }
 
     var lineWidth: CGFloat {
-        if isFullMoon { return 1.8 }
+        switch kind {
+        case .fullMoon:
+            return 1.8
+        case .apogee, .perigee, .ascendingNode, .descendingNode:
+            return 1.4
+        default:
+            break
+        }
         return rarity >= .epic ? 2 : 1
     }
 
     var opacity: Double {
-        rarity == .rare && !isFullMoon ? 0.55 : 0.9
+        kind == .phaseSubdivision && rarity == .rare ? 0.55 : 0.9
     }
+
+    var isMajor: Bool {
+        kind != .phaseSubdivision || rarity >= .epic
+    }
+}
+
+private enum MoonTimelineLunarEventKind {
+    case phaseSubdivision
+    case newMoon
+    case fullMoon
+    case apogee
+    case perigee
+    case ascendingNode
+    case descendingNode
 }
 
 private struct MoonTimelineSarosEvent: Identifiable {
@@ -699,10 +739,21 @@ private enum MoonTimelineModelBuilder {
                     date: event.date,
                     rarity: isNew ? .legendary : .rare,
                     label: isNew ? "New" : "Full",
-                    isFullMoon: !isNew
+                    kind: isNew ? .newMoon : .fullMoon
                 ))
             }
             cursor = event.date.addingTimeInterval(1)
+        }
+
+        if let orbitalEvents = try? moonService.orbitalEvents(from: startDate, through: endDate) {
+            events.append(contentsOf: orbitalEvents.map { event in
+                MoonTimelineLunarEvent(
+                    date: event.date,
+                    rarity: .rare,
+                    label: moonOrbitalTimelineLabel(for: event.kind),
+                    kind: moonTimelineKind(for: event.kind)
+                )
+            })
         }
 
         return events.sorted { $0.date < $1.date }
@@ -730,8 +781,26 @@ private enum MoonTimelineModelBuilder {
                 date: date,
                 rarity: rarity,
                 label: nil,
-                isFullMoon: false
+                kind: .phaseSubdivision
             ))
+        }
+    }
+
+    private static func moonOrbitalTimelineLabel(for kind: MoonOrbitalEventKind) -> String {
+        switch kind {
+        case .apogee: "Apo"
+        case .perigee: "Peri"
+        case .ascendingNode: "Asc"
+        case .descendingNode: "Desc"
+        }
+    }
+
+    private static func moonTimelineKind(for kind: MoonOrbitalEventKind) -> MoonTimelineLunarEventKind {
+        switch kind {
+        case .apogee: .apogee
+        case .perigee: .perigee
+        case .ascendingNode: .ascendingNode
+        case .descendingNode: .descendingNode
         }
     }
 

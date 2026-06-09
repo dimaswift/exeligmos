@@ -36,10 +36,71 @@ enum MoonPhaseName: String, Codable, Hashable, Sendable {
     }
 }
 
+enum MoonCycleKind: UInt8, CaseIterable, Codable, Hashable, Sendable {
+    case synodic
+    case anomalistic
+    case draconic
+
+    var displayName: String {
+        switch self {
+        case .synodic: "Synodic"
+        case .anomalistic: "Anomalistic"
+        case .draconic: "Draconic"
+        }
+    }
+
+    var eventName: String {
+        switch self {
+        case .synodic: "New moon"
+        case .anomalistic: "Apogee"
+        case .draconic: "Ascending node"
+        }
+    }
+}
+
+enum MoonOrbitalEventKind: UInt8, CaseIterable, Codable, Hashable, Sendable {
+    case apogee
+    case perigee
+    case ascendingNode
+    case descendingNode
+
+    var displayName: String {
+        switch self {
+        case .apogee: "Apogee"
+        case .perigee: "Perigee"
+        case .ascendingNode: "Ascending node"
+        case .descendingNode: "Descending node"
+        }
+    }
+}
+
 struct MoonPhaseEvent: Codable, Hashable, Sendable {
     let kind: MoonPhaseKind
     let date: Date
     let lunationIndex: Int
+}
+
+struct MoonOrbitalEvent: Codable, Hashable, Sendable {
+    let kind: MoonOrbitalEventKind
+    let date: Date
+    let cycleIndex: Int
+}
+
+struct MoonCycleEvent: Codable, Hashable, Sendable {
+    let kind: MoonCycleKind
+    let date: Date
+    let cycleIndex: Int
+}
+
+struct MoonCycleReading: Codable, Hashable, Sendable {
+    let kind: MoonCycleKind
+    let normalizedPhase: Double
+    let previousEvent: MoonCycleEvent
+    let nextEvent: MoonCycleEvent
+
+    var duration: TimeInterval {
+        max(nextEvent.date.timeIntervalSince(previousEvent.date), 1)
+    }
 }
 
 struct MoonPhaseReading: Codable, Hashable, Sendable {
@@ -52,21 +113,40 @@ struct MoonPhaseReading: Codable, Hashable, Sendable {
     let previousEvent: MoonPhaseEvent
     let nextEvent: MoonPhaseEvent
     let nearestEvent: MoonPhaseEvent
+    let synodicCycle: MoonCycleReading
+    let anomalisticCycle: MoonCycleReading
+    let draconicCycle: MoonCycleReading
 }
 
 struct MoonPhaseOctalReading: Codable, Hashable, Sendable {
     let date: Date
     let phaseReading: MoonPhaseReading
     let depth: Int
+    let detailDepth: Int
     let binCount: Int
     let binIndex: Int
     let octalAddress: String
     let rarity: FlipRarity
+    let components: [MoonCycleOctalComponent]
 
     var binDuration: TimeInterval {
-        let duration = phaseReading.nextNewMoon.date.timeIntervalSince(phaseReading.previousNewMoon.date)
-        return max(duration / Double(binCount), 1)
+        max(phaseReading.synodicCycle.duration / Double(binCount), 1)
     }
+
+    func component(_ kind: MoonCycleKind) -> MoonCycleOctalComponent? {
+        components.first { $0.kind == kind }
+    }
+}
+
+struct MoonCycleOctalComponent: Codable, Hashable, Sendable, Identifiable {
+    let kind: MoonCycleKind
+    let digit: Int
+    let detailBinCount: Int
+    let detailBinIndex: Int
+    let detailOctalAddress: String
+    let cycleReading: MoonCycleReading
+
+    var id: MoonCycleKind { kind }
 }
 
 struct MoonPhaseDatabaseSummary: Codable, Hashable, Sendable {
@@ -76,12 +156,21 @@ struct MoonPhaseDatabaseSummary: Codable, Hashable, Sendable {
     let synodicMonthSeconds: Double
     let newMoonCount: Int
     let fullMoonCount: Int
+    let referenceApogee: Date
+    let anomalisticMonthSeconds: Double
+    let apogeeCount: Int
+    let perigeeCount: Int
+    let referenceAscendingNode: Date
+    let draconicMonthSeconds: Double
+    let ascendingNodeCount: Int
+    let descendingNodeCount: Int
     let byteCount: Int
 }
 
 protocol MoonPhaseService {
     func reading(for date: Date) throws -> MoonPhaseReading
     func octalReading(for date: Date, depth: Int) throws -> MoonPhaseOctalReading
+    func orbitalEvents(from startDate: Date, through endDate: Date) throws -> [MoonOrbitalEvent]
     func databaseSummary() throws -> MoonPhaseDatabaseSummary
 }
 
@@ -117,6 +206,10 @@ final class BundledMoonPhaseService: MoonPhaseService {
         try MoonPhaseOctalCalculator.reading(from: reading(for: date), date: date, depth: depth)
     }
 
+    func orbitalEvents(from startDate: Date, through endDate: Date) throws -> [MoonOrbitalEvent] {
+        try store().orbitalEvents(from: startDate, through: endDate)
+    }
+
     func databaseSummary() throws -> MoonPhaseDatabaseSummary {
         try store().databaseSummary()
     }
@@ -128,7 +221,7 @@ final class BundledMoonPhaseService: MoonPhaseService {
 
 private struct MoonPhaseStore {
     private static let magic = Data([0x4D, 0x4F, 0x4F, 0x4E, 0x50, 0x30, 0x31, 0x00])
-    private static let currentVersion: UInt16 = 1
+    private static let currentVersion: UInt16 = 3
     private static let correctionByteCount = 3
 
     private let data: Data
@@ -137,15 +230,33 @@ private struct MoonPhaseStore {
     private let coverageEndUnix: Int64
     private let referenceUnix: Int64
     private let synodicMonthMicros: Int64
+    private let referenceApogeeUnix: Int64
+    private let anomalisticMonthMicros: Int64
+    private let referencePerigeeUnix: Int64
+    private let referenceAscendingNodeUnix: Int64
+    private let draconicMonthMicros: Int64
+    private let referenceDescendingNodeUnix: Int64
     private let firstNewIndex: Int
     private let newCount: Int
     private let firstFullIndex: Int
     private let fullCount: Int
+    private let firstApogeeIndex: Int
+    private let apogeeCount: Int
+    private let firstAscendingNodeIndex: Int
+    private let ascendingNodeCount: Int
+    private let firstPerigeeIndex: Int
+    private let perigeeCount: Int
+    private let firstDescendingNodeIndex: Int
+    private let descendingNodeCount: Int
     private let fullCorrectionsOffset: Int
+    private let apogeeCorrectionsOffset: Int
+    private let ascendingNodeCorrectionsOffset: Int
+    private let perigeeCorrectionsOffset: Int
+    private let descendingNodeCorrectionsOffset: Int
 
     init(bundle: Bundle) throws {
         data = try Self.loadData(named: "moon_phases", extension: "db", bundle: bundle)
-        guard data.count >= 56 else {
+        guard data.count >= 132 else {
             throw MoonPhaseServiceError.corruptBundledData("moon_phases.db is shorter than its header")
         }
         guard data.prefix(Self.magic.count) == Self.magic else {
@@ -165,16 +276,41 @@ private struct MoonPhaseStore {
         newCount = Int(readUInt16LE(from: data, at: 48))
         firstFullIndex = Int(readInt32LE(from: data, at: 50))
         fullCount = Int(readUInt16LE(from: data, at: 54))
+        referenceApogeeUnix = readInt64LE(from: data, at: 56)
+        anomalisticMonthMicros = readInt64LE(from: data, at: 64)
+        firstApogeeIndex = Int(readInt32LE(from: data, at: 72))
+        apogeeCount = Int(readUInt16LE(from: data, at: 76))
+        referenceAscendingNodeUnix = readInt64LE(from: data, at: 78)
+        draconicMonthMicros = readInt64LE(from: data, at: 86)
+        firstAscendingNodeIndex = Int(readInt32LE(from: data, at: 94))
+        ascendingNodeCount = Int(readUInt16LE(from: data, at: 98))
+        referencePerigeeUnix = readInt64LE(from: data, at: 100)
+        firstPerigeeIndex = Int(readInt32LE(from: data, at: 108))
+        perigeeCount = Int(readUInt16LE(from: data, at: 112))
+        referenceDescendingNodeUnix = readInt64LE(from: data, at: 114)
+        firstDescendingNodeIndex = Int(readInt32LE(from: data, at: 122))
+        descendingNodeCount = Int(readUInt16LE(from: data, at: 126))
         fullCorrectionsOffset = headerSize + newCount * Self.correctionByteCount
+        apogeeCorrectionsOffset = fullCorrectionsOffset + fullCount * Self.correctionByteCount
+        ascendingNodeCorrectionsOffset = apogeeCorrectionsOffset + apogeeCount * Self.correctionByteCount
+        perigeeCorrectionsOffset = ascendingNodeCorrectionsOffset + ascendingNodeCount * Self.correctionByteCount
+        descendingNodeCorrectionsOffset = perigeeCorrectionsOffset + perigeeCount * Self.correctionByteCount
 
-        guard headerSize >= 56 else {
+        guard headerSize >= 132 else {
             throw MoonPhaseServiceError.corruptBundledData("Header size \(headerSize) is too small")
         }
-        let expectedSize = headerSize + (newCount + fullCount) * Self.correctionByteCount
+        let expectedSize = headerSize + (newCount + fullCount + apogeeCount + ascendingNodeCount + perigeeCount + descendingNodeCount) * Self.correctionByteCount
         guard data.count == expectedSize else {
             throw MoonPhaseServiceError.corruptBundledData("Expected \(expectedSize) bytes, found \(data.count)")
         }
-        guard newCount >= 2, fullCount >= 2, coverageStartUnix < coverageEndUnix else {
+        guard newCount >= 2,
+              fullCount >= 2,
+              apogeeCount >= 2,
+              perigeeCount >= 2,
+              ascendingNodeCount >= 2,
+              descendingNodeCount >= 2,
+              coverageStartUnix < coverageEndUnix
+        else {
             throw MoonPhaseServiceError.corruptBundledData("Invalid event counts or coverage")
         }
     }
@@ -187,6 +323,14 @@ private struct MoonPhaseStore {
             synodicMonthSeconds: Double(synodicMonthMicros) / 1_000_000,
             newMoonCount: newCount,
             fullMoonCount: fullCount,
+            referenceApogee: Date(timeIntervalSince1970: TimeInterval(referenceApogeeUnix)),
+            anomalisticMonthSeconds: Double(anomalisticMonthMicros) / 1_000_000,
+            apogeeCount: apogeeCount,
+            perigeeCount: perigeeCount,
+            referenceAscendingNode: Date(timeIntervalSince1970: TimeInterval(referenceAscendingNodeUnix)),
+            draconicMonthSeconds: Double(draconicMonthMicros) / 1_000_000,
+            ascendingNodeCount: ascendingNodeCount,
+            descendingNodeCount: descendingNodeCount,
             byteCount: data.count
         )
     }
@@ -209,6 +353,12 @@ private struct MoonPhaseStore {
         let nearestEvent = abs(previousEvent.date.timeIntervalSince(date)) <= abs(nextEvent.date.timeIntervalSince(date))
             ? previousEvent
             : nextEvent
+        let synodicCycle = MoonCycleReading(
+            kind: .synodic,
+            normalizedPhase: age,
+            previousEvent: MoonCycleEvent(kind: .synodic, date: previousNew.date, cycleIndex: previousNew.lunationIndex),
+            nextEvent: MoonCycleEvent(kind: .synodic, date: nextNew.date, cycleIndex: nextNew.lunationIndex)
+        )
 
         return MoonPhaseReading(
             date: date,
@@ -219,8 +369,68 @@ private struct MoonPhaseStore {
             nextNewMoon: nextNew,
             previousEvent: previousEvent,
             nextEvent: nextEvent,
-            nearestEvent: nearestEvent
+            nearestEvent: nearestEvent,
+            synodicCycle: synodicCycle,
+            anomalisticCycle: try cycleReading(kind: .anomalistic, date: date, key: key),
+            draconicCycle: try cycleReading(kind: .draconic, date: date, key: key)
         )
+    }
+
+    func orbitalEvents(from startDate: Date, through endDate: Date) throws -> [MoonOrbitalEvent] {
+        guard startDate <= endDate else { return [] }
+
+        let startKey = Int64(startDate.timeIntervalSince1970.rounded())
+        let endKey = Int64(endDate.timeIntervalSince1970.rounded())
+        guard startKey >= coverageStartUnix, endKey < coverageEndUnix else {
+            throw MoonPhaseServiceError.dateOutOfRange(startKey < coverageStartUnix ? startDate : endDate)
+        }
+
+        var events: [MoonOrbitalEvent] = []
+        for kind in MoonOrbitalEventKind.allCases {
+            var index = orbitalLowerBound(kind: kind, key: startKey)
+            while index < orbitalEventCount(kind: kind) {
+                let unixTime = orbitalEventUnixUnchecked(kind: kind, storageIndex: index)
+                guard unixTime <= endKey else { break }
+                events.append(MoonOrbitalEvent(
+                    kind: kind,
+                    date: Date(timeIntervalSince1970: TimeInterval(unixTime)),
+                    cycleIndex: orbitalCycleIndex(kind: kind, storageIndex: index)
+                ))
+                index += 1
+            }
+        }
+
+        return events.sorted { $0.date < $1.date }
+    }
+
+    private func cycleReading(kind: MoonCycleKind, date: Date, key: Int64) throws -> MoonCycleReading {
+        let bracket = try cycleBracket(kind: kind, key: key)
+        let previous = try cycleEvent(kind: kind, storageIndex: bracket.previous)
+        let next = try cycleEvent(kind: kind, storageIndex: bracket.next)
+        let total = max(next.date.timeIntervalSince(previous.date), 1)
+        let phase = min(max(date.timeIntervalSince(previous.date) / total, 0), 1)
+        return MoonCycleReading(
+            kind: kind,
+            normalizedPhase: phase,
+            previousEvent: previous,
+            nextEvent: next
+        )
+    }
+
+    private func cycleBracket(kind: MoonCycleKind, key: Int64) throws -> (previous: Int, next: Int) {
+        let count = cycleEventCount(kind: kind)
+        let insertion = cycleLowerBound(kind: kind, key: key)
+        if insertion < count, try cycleEventUnix(kind: kind, storageIndex: insertion) == key {
+            guard insertion + 1 < count else {
+                throw MoonPhaseServiceError.corruptBundledData("Exact event at end of \(kind.eventName) table")
+            }
+            return (insertion, insertion + 1)
+        }
+
+        guard insertion > 0, insertion < count else {
+            throw MoonPhaseServiceError.corruptBundledData("Could not bracket \(key) in \(kind.eventName) table")
+        }
+        return (insertion - 1, insertion)
     }
 
     private func bracket(kind: MoonPhaseKind, key: Int64) throws -> (previous: Int, next: Int) {
@@ -286,6 +496,40 @@ private struct MoonPhaseStore {
         return low
     }
 
+    private func cycleLowerBound(kind: MoonCycleKind, key: Int64) -> Int {
+        if kind == .synodic {
+            return lowerBound(kind: .new, key: key)
+        }
+
+        var low = 0
+        var high = cycleEventCount(kind: kind)
+        while low < high {
+            let middle = (low + high) >> 1
+            let unixTime = cycleEventUnixUnchecked(kind: kind, storageIndex: middle)
+            if unixTime < key {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low
+    }
+
+    private func orbitalLowerBound(kind: MoonOrbitalEventKind, key: Int64) -> Int {
+        var low = 0
+        var high = orbitalEventCount(kind: kind)
+        while low < high {
+            let middle = (low + high) >> 1
+            let unixTime = orbitalEventUnixUnchecked(kind: kind, storageIndex: middle)
+            if unixTime < key {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low
+    }
+
     private func event(kind: MoonPhaseKind, storageIndex: Int) throws -> MoonPhaseEvent {
         let unixTime = try eventUnix(kind: kind, storageIndex: storageIndex)
         return MoonPhaseEvent(
@@ -308,11 +552,98 @@ private struct MoonPhaseStore {
         return predicted + Int64(correction(kind: kind, storageIndex: storageIndex))
     }
 
+    private func cycleEvent(kind: MoonCycleKind, storageIndex: Int) throws -> MoonCycleEvent {
+        if kind == .synodic {
+            let event = try event(kind: .new, storageIndex: storageIndex)
+            return MoonCycleEvent(kind: .synodic, date: event.date, cycleIndex: event.lunationIndex)
+        }
+
+        let unixTime = try cycleEventUnix(kind: kind, storageIndex: storageIndex)
+        return MoonCycleEvent(
+            kind: kind,
+            date: Date(timeIntervalSince1970: TimeInterval(unixTime)),
+            cycleIndex: cycleIndex(kind: kind, storageIndex: storageIndex)
+        )
+    }
+
+    private func cycleEventUnix(kind: MoonCycleKind, storageIndex: Int) throws -> Int64 {
+        if kind == .synodic {
+            return try eventUnix(kind: .new, storageIndex: storageIndex)
+        }
+
+        guard (0..<cycleEventCount(kind: kind)).contains(storageIndex) else {
+            throw MoonPhaseServiceError.corruptBundledData("\(kind.eventName) event index \(storageIndex) is out of range")
+        }
+        return cycleEventUnixUnchecked(kind: kind, storageIndex: storageIndex)
+    }
+
+    private func cycleEventUnixUnchecked(kind: MoonCycleKind, storageIndex: Int) -> Int64 {
+        if kind == .synodic {
+            return eventUnixUnchecked(kind: .new, storageIndex: storageIndex)
+        }
+
+        let cycleIndex = cycleIndex(kind: kind, storageIndex: storageIndex)
+        let predicted = predictedCycleSeconds(kind: kind, cycleIndex: cycleIndex)
+        return predicted + Int64(cycleCorrection(kind: kind, storageIndex: storageIndex))
+    }
+
+    private func orbitalEventUnixUnchecked(kind: MoonOrbitalEventKind, storageIndex: Int) -> Int64 {
+        let cycleIndex = orbitalCycleIndex(kind: kind, storageIndex: storageIndex)
+        let predicted = predictedOrbitalSeconds(kind: kind, cycleIndex: cycleIndex)
+        return predicted + Int64(orbitalCorrection(kind: kind, storageIndex: storageIndex))
+    }
+
     private func predictedSeconds(lunationIndex: Int, isFull: Bool) -> Int64 {
         var predictedMicros = referenceUnix * 1_000_000 + Int64(lunationIndex) * synodicMonthMicros
         if isFull {
             predictedMicros += synodicMonthMicros / 2
         }
+        return roundDiv(predictedMicros, by: 1_000_000)
+    }
+
+    private func predictedCycleSeconds(kind: MoonCycleKind, cycleIndex: Int) -> Int64 {
+        let reference: Int64
+        let periodMicros: Int64
+        switch kind {
+        case .synodic:
+            reference = referenceUnix
+            periodMicros = synodicMonthMicros
+        case .anomalistic:
+            reference = referenceApogeeUnix
+            periodMicros = anomalisticMonthMicros
+        case .draconic:
+            reference = referenceAscendingNodeUnix
+            periodMicros = draconicMonthMicros
+        }
+
+        let predictedMicros = reference * 1_000_000 + Int64(cycleIndex) * periodMicros
+        return roundDiv(predictedMicros, by: 1_000_000)
+    }
+
+    private func predictedOrbitalSeconds(kind: MoonOrbitalEventKind, cycleIndex: Int) -> Int64 {
+        let reference: Int64
+        let periodMicros: Int64
+        let offsetMicros: Int64
+        switch kind {
+        case .apogee:
+            reference = referenceApogeeUnix
+            periodMicros = anomalisticMonthMicros
+            offsetMicros = 0
+        case .perigee:
+            reference = referencePerigeeUnix
+            periodMicros = anomalisticMonthMicros
+            offsetMicros = 0
+        case .ascendingNode:
+            reference = referenceAscendingNodeUnix
+            periodMicros = draconicMonthMicros
+            offsetMicros = 0
+        case .descendingNode:
+            reference = referenceDescendingNodeUnix
+            periodMicros = draconicMonthMicros
+            offsetMicros = 0
+        }
+
+        let predictedMicros = reference * 1_000_000 + Int64(cycleIndex) * periodMicros + offsetMicros
         return roundDiv(predictedMicros, by: 1_000_000)
     }
 
@@ -327,6 +658,34 @@ private struct MoonPhaseStore {
         return readInt24LE(from: data, at: offset)
     }
 
+    private func cycleCorrection(kind: MoonCycleKind, storageIndex: Int) -> Int32 {
+        let offset: Int
+        switch kind {
+        case .synodic:
+            offset = headerSize + storageIndex * Self.correctionByteCount
+        case .anomalistic:
+            offset = apogeeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        case .draconic:
+            offset = ascendingNodeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        }
+        return readInt24LE(from: data, at: offset)
+    }
+
+    private func orbitalCorrection(kind: MoonOrbitalEventKind, storageIndex: Int) -> Int32 {
+        let offset: Int
+        switch kind {
+        case .apogee:
+            offset = apogeeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        case .perigee:
+            offset = perigeeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        case .ascendingNode:
+            offset = ascendingNodeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        case .descendingNode:
+            offset = descendingNodeCorrectionsOffset + storageIndex * Self.correctionByteCount
+        }
+        return readInt24LE(from: data, at: offset)
+    }
+
     private func lunationIndex(kind: MoonPhaseKind, storageIndex: Int) -> Int {
         switch kind {
         case .new:
@@ -336,12 +695,60 @@ private struct MoonPhaseStore {
         }
     }
 
+    private func cycleIndex(kind: MoonCycleKind, storageIndex: Int) -> Int {
+        switch kind {
+        case .synodic:
+            firstNewIndex + storageIndex
+        case .anomalistic:
+            firstApogeeIndex + storageIndex
+        case .draconic:
+            firstAscendingNodeIndex + storageIndex
+        }
+    }
+
+    private func orbitalCycleIndex(kind: MoonOrbitalEventKind, storageIndex: Int) -> Int {
+        switch kind {
+        case .apogee:
+            firstApogeeIndex + storageIndex
+        case .perigee:
+            firstPerigeeIndex + storageIndex
+        case .ascendingNode:
+            firstAscendingNodeIndex + storageIndex
+        case .descendingNode:
+            firstDescendingNodeIndex + storageIndex
+        }
+    }
+
     private func eventCount(kind: MoonPhaseKind) -> Int {
         switch kind {
         case .new:
             newCount
         case .full:
             fullCount
+        }
+    }
+
+    private func cycleEventCount(kind: MoonCycleKind) -> Int {
+        switch kind {
+        case .synodic:
+            newCount
+        case .anomalistic:
+            apogeeCount
+        case .draconic:
+            ascendingNodeCount
+        }
+    }
+
+    private func orbitalEventCount(kind: MoonOrbitalEventKind) -> Int {
+        switch kind {
+        case .apogee:
+            apogeeCount
+        case .perigee:
+            perigeeCount
+        case .ascendingNode:
+            ascendingNodeCount
+        case .descendingNode:
+            descendingNodeCount
         }
     }
 
@@ -378,22 +785,65 @@ private extension MoonPhaseKind {
 }
 
 enum MoonPhaseOctalCalculator {
+    private static let rarityDepth = 3
+
     static func reading(from phaseReading: MoonPhaseReading, date: Date, depth rawDepth: Int) throws -> MoonPhaseOctalReading {
-        let depth = JournalSettings.clampedHarmonicDepth(rawDepth)
-        let binCount = try octalBinCount(depth: depth)
-        let scaled = phaseReading.normalizedPhase * Double(binCount)
-        let binIndex = min(max(Int(floor(scaled)), 0), binCount - 1)
-        let octalAddress = String(binIndex, radix: 8).leftPadded(toLength: depth, withPad: "0")
+        let detailDepth = JournalSettings.clampedHarmonicDepth(rawDepth)
+        let detailBinCount = try octalBinCount(depth: detailDepth)
+        let components: [MoonCycleOctalComponent] = MoonCycleKind.allCases.map { kind in
+            let cycleReading = cycleReading(for: kind, phaseReading: phaseReading)
+            let digit = phaseDigit(for: cycleReading.normalizedPhase)
+            let detailBinIndex = phaseBinIndex(for: cycleReading.normalizedPhase, binCount: detailBinCount)
+            return MoonCycleOctalComponent(
+                kind: kind,
+                digit: digit,
+                detailBinCount: detailBinCount,
+                detailBinIndex: detailBinIndex,
+                detailOctalAddress: String(detailBinIndex, radix: 8).leftPadded(toLength: detailDepth, withPad: "0"),
+                cycleReading: cycleReading
+            )
+        }
+        let octalAddress = components.map { String($0.digit) }.joined()
+        let binIndex = Int(octalAddress, radix: 8) ?? 0
+        let synodicRarityBinCount = try octalBinCount(depth: Self.rarityDepth)
+        let synodicRarityBinIndex = phaseBinIndex(
+            for: phaseReading.synodicCycle.normalizedPhase,
+            binCount: synodicRarityBinCount
+        )
+        let synodicRarityAddress = String(synodicRarityBinIndex, radix: 8)
+            .leftPadded(toLength: Self.rarityDepth, withPad: "0")
 
         return MoonPhaseOctalReading(
             date: date,
             phaseReading: phaseReading,
-            depth: depth,
-            binCount: binCount,
+            depth: 3,
+            detailDepth: detailDepth,
+            binCount: 512,
             binIndex: binIndex,
             octalAddress: octalAddress,
-            rarity: rarity(forOctalAddress: octalAddress, depth: depth)
+            rarity: rarity(forOctalAddress: synodicRarityAddress, depth: Self.rarityDepth),
+            components: components
         )
+    }
+
+    private static func cycleReading(for kind: MoonCycleKind, phaseReading: MoonPhaseReading) -> MoonCycleReading {
+        switch kind {
+        case .synodic:
+            phaseReading.synodicCycle
+        case .anomalistic:
+            phaseReading.anomalisticCycle
+        case .draconic:
+            phaseReading.draconicCycle
+        }
+    }
+
+    private static func phaseDigit(for normalizedPhase: Double) -> Int {
+        phaseBinIndex(for: normalizedPhase, binCount: 8)
+    }
+
+    private static func phaseBinIndex(for normalizedPhase: Double, binCount: Int) -> Int {
+        let scaled = min(max(normalizedPhase, 0), 1) * Double(binCount)
+        return min(max(Int(floor(scaled)), 0), binCount - 1)
     }
 
     static func rarity(forOctalAddress octalAddress: String, depth rawDepth: Int) -> FlipRarity {
