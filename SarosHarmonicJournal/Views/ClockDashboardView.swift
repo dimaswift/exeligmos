@@ -16,8 +16,7 @@ struct ClockDashboardView: View {
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @State private var isAddingEntity = false
-    @State private var captureEntity: TrackedEntity?
-    @State private var captureStartedAt = Date()
+    @State private var captureRequest: ThreadCaptureRequest?
     @State private var selectedGroupFilter: ThreadGroupFilter = .all
 
     var body: some View {
@@ -44,9 +43,9 @@ struct ClockDashboardView: View {
                 EntityEditorView()
             }
         }
-        .sheet(item: $captureEntity) { entity in
+        .sheet(item: $captureRequest) { request in
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {}
+                CaptureView(entity: request.entity, harmonicDepth: harmonicDepth, recordStartedAt: request.startedAt) {}
             }
         }
     }
@@ -60,8 +59,7 @@ struct ClockDashboardView: View {
                         flip: closestFlip,
                         countdownText: countdownText(for: closestFlip.flipDate.timeIntervalSince(context.date))
                     ) {
-                        captureStartedAt = Date()
-                        captureEntity = closestFlip.entity
+                        captureRequest = ThreadCaptureRequest(entity: closestFlip.entity, startedAt: Date())
                     }
                 }
             }
@@ -307,6 +305,12 @@ private enum ThreadGroupFilter: Equatable {
             groups.first { $0.id == groupID }?.rarity.symbolName ?? "line.3.horizontal.decrease.circle"
         }
     }
+}
+
+private struct ThreadCaptureRequest: Identifiable {
+    let id = UUID()
+    let entity: TrackedEntity
+    let startedAt: Date
 }
 
 private struct DashboardFlipItem {
@@ -563,8 +567,7 @@ private struct EntityDetailView: View {
     @State private var selectedTab: ThreadDetailTab = .records
     @State private var selectedRecordRarity: FlipRarity?
     @State private var selectedRecord: JournalRecord?
-    @State private var isCapturing = false
-    @State private var captureStartedAt = Date()
+    @State private var captureRequest: ThreadCaptureRequest?
     @State private var isStartingLiveTracking = false
     @State private var liveTrackingError: String?
     @State private var customFlipDraft: CustomFlipDraft?
@@ -626,16 +629,15 @@ private struct EntityDetailView: View {
                 .accessibilityLabel("Thread actions")
 
                 Button {
-                    captureStartedAt = Date()
-                    isCapturing = true
+                    captureRequest = ThreadCaptureRequest(entity: entity, startedAt: Date())
                 } label: {
                     Label("Rec", systemImage: "record.circle")
                 }
             }
         }
-        .sheet(isPresented: $isCapturing) {
+        .sheet(item: $captureRequest) { request in
             NavigationStack {
-                CaptureView(entity: entity, harmonicDepth: harmonicDepth, recordStartedAt: captureStartedAt) {}
+                CaptureView(entity: request.entity, harmonicDepth: harmonicDepth, recordStartedAt: request.startedAt) {}
             }
         }
         .sheet(isPresented: $isEditingEntity) {

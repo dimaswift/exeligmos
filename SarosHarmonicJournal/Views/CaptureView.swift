@@ -248,6 +248,7 @@ struct CaptureView: View {
 
             let record = JournalRecord(
                 entityID: entity.id,
+                createdAt: recordStartedAt,
                 eventDate: recordStartedAt,
                 text: text.nilIfBlank,
                 emoji: emoji.nilIfBlank ?? JournalRecordMarkers.random(),

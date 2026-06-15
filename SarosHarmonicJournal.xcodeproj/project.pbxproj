@@ -48,6 +48,7 @@
 		7283A4D9A7650EC64088EB86 /* saros.db in Resources */ = {isa = PBXBuildFile; fileRef = 1AA405BE7C14E8DB1A80D2CF /* saros.db */; };
 		72B907EA1B9D614611951BE9 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C391FB837FAA81EF9A1D423F /* ExportService.swift */; };
 		7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 810C0A3E37210050EA9773EA /* CatalogView.swift */; };
+		80CA9D5E1A334E9D93B1C001 /* CatalogCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */; };
 		89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */; };
 		97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
@@ -139,6 +140,7 @@
 		7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NotificationScheduler.swift; path = SarosHarmonicJournal/Services/NotificationScheduler.swift; sourceTree = "<group>"; };
 		7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosClock.swift; path = SarosHarmonicJournal/Domain/SarosClock.swift; sourceTree = "<group>"; };
 		810C0A3E37210050EA9773EA /* CatalogView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogView.swift; path = SarosHarmonicJournal/Views/CatalogView.swift; sourceTree = "<group>"; };
+		80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogCardsView.swift; path = SarosHarmonicJournal/Views/CatalogCardsView.swift; sourceTree = "<group>"; };
 		82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioRecorder.swift; path = SarosHarmonicJournal/Services/AudioRecorder.swift; sourceTree = "<group>"; };
 		8BFEA87F6EA243E541D15FE7 /* AppServices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppServices.swift; path = SarosHarmonicJournal/App/AppServices.swift; sourceTree = "<group>"; };
 		9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseModels.swift; path = SarosHarmonicJournal/Domain/EclipseModels.swift; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 				F8072651E8AE5C7C39EC512D /* ArchiveView.swift */,
 				1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */,
 				1BCEE1F54899D79E29687187 /* CaptureView.swift */,
+				80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */,
 				810C0A3E37210050EA9773EA /* CatalogView.swift */,
 				FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */,
 				C0DE00000000000000000002 /* CubeMapView.swift */,
@@ -478,6 +481,7 @@
 				C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */,
 				1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */,
 				3A352A24CA6539B5AA096F11 /* CaptureView.swift in Sources */,
+				80CA9D5E1A334E9D93B1C001 /* CatalogCardsView.swift in Sources */,
 				7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */,
 				4C8CA36AA3A8BD095C43A3C3 /* ClockDashboardView.swift in Sources */,
 				C0DE00000000000000000001 /* CubeMapView.swift in Sources */,

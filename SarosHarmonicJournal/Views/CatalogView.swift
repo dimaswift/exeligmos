@@ -102,6 +102,12 @@ struct CatalogView: View {
                     searchText: $eclipseSearchText,
                     errorMessage: errorMessage
                 )
+            case .cards:
+                CatalogCardsView(
+                    eclipses: boundedEclipses,
+                    bounds: catalogBounds,
+                    errorMessage: errorMessage
+                )
             case .resonances:
                 CatalogResonanceView(
                     families: activeSarosFamilies,
@@ -244,6 +250,7 @@ struct CatalogView: View {
 private enum CatalogSection: String, CaseIterable, Identifiable {
     case saros
     case eclipses
+    case cards
     case resonances
 
     var id: String { rawValue }
@@ -252,6 +259,7 @@ private enum CatalogSection: String, CaseIterable, Identifiable {
         switch self {
         case .saros: "Saros"
         case .eclipses: "Eclipses"
+        case .cards: "Cards"
         case .resonances: "Resonance"
         }
     }
