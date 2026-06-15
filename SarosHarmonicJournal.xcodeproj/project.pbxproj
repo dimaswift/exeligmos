@@ -14,6 +14,7 @@
 		0C3B8821A71E4A6CB0F60125 /* SymbolicCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */; };
 		0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */; };
 		0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5F7A9148B640C49830214B /* ThreadGroup.swift */; };
+		0F1A2B3C4D5E6F708192A001 /* RecordDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */; };
 		1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */; };
 		1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */; };
 		1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */; };
@@ -103,6 +104,7 @@
 			0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
 			0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomFlipEvent.swift; path = SarosHarmonicJournal/Data/CustomFlipEvent.swift; sourceTree = "<group>"; };
 			0E5F7A9148B640C49830214B /* ThreadGroup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadGroup.swift; path = SarosHarmonicJournal/Data/ThreadGroup.swift; sourceTree = "<group>"; };
+			0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecordDraft.swift; path = SarosHarmonicJournal/Data/RecordDraft.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyResult.swift; path = SarosHarmonicJournal/Services/AnimacyResult.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScorer.swift; path = SarosHarmonicJournal/Services/AnimacyScorer.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScoreView.swift; path = SarosHarmonicJournal/Views/AnimacyScoreView.swift; sourceTree = "<group>"; };
@@ -224,9 +226,10 @@
 				5ED4F9AF52D61D654A5C63C7 /* RootView.swift */,
 				ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */,
 					710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
-					0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */,
-					0E5F7A9148B640C49830214B /* ThreadGroup.swift */,
-					5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
+				0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */,
+				0E5F7A9148B640C49830214B /* ThreadGroup.swift */,
+				5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
+				0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */,
 				59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */,
 				9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */,
 				C16E33843D12AFBD6A69B9FA /* Resonance.swift */,
@@ -454,9 +457,10 @@
 				350F03141DC5AF24A8E8C539 /* RootView.swift in Sources */,
 				2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */,
 					CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
-					0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */,
-					0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */,
-					97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
+				0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */,
+				0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */,
+				97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
+				0F1A2B3C4D5E6F708192A001 /* RecordDraft.swift in Sources */,
 				31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */,
 				AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */,
 				EF3054358820F684AD5D315E /* Resonance.swift in Sources */,

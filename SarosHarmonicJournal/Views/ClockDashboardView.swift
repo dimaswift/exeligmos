@@ -12,6 +12,7 @@ struct ClockDashboardView: View {
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
+    @Query(sort: \RecordDraft.updatedAt, order: .reverse) private var recordDrafts: [RecordDraft]
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
@@ -97,6 +98,7 @@ struct ClockDashboardView: View {
                                 reading: reading,
                                 countdown: countdown,
                                 latestRecord: latestRecord(for: entity),
+                                draft: draft(for: entity),
                                 group: group(for: entity)
                             )
                         }
@@ -230,6 +232,10 @@ struct ClockDashboardView: View {
 
     private func latestRecord(for entity: TrackedEntity) -> JournalRecord? {
         records.first { $0.entityID == entity.id }
+    }
+
+    private func draft(for entity: TrackedEntity) -> RecordDraft? {
+        recordDrafts.first { $0.entityID == entity.id }
     }
 
     private func group(for entity: TrackedEntity) -> ThreadGroup? {
@@ -429,6 +435,7 @@ private struct EntityCardView: View {
     let reading: SarosClockReading?
     let countdown: SarosFlipCountdown?
     let latestRecord: JournalRecord?
+    let draft: RecordDraft?
     let group: ThreadGroup?
 
     var body: some View {
@@ -446,6 +453,12 @@ private struct EntityCardView: View {
                     if let group {
                         ThreadGroupInlineBadge(group: group)
                     }
+                    if draft != nil {
+                        Label("Draft", systemImage: "square.and.pencil")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .labelStyle(.titleAndIcon)
+                    }
                 }
                 Text("Saros \(entity.saros) · \(reading?.octalAddress ?? "----")")
                     .font(.subheadline)
@@ -455,7 +468,12 @@ private struct EntityCardView: View {
                     EntityCardCountdownText(countdown: countdown)
                 }
 
-                if let latestRecord {
+                if let draft {
+                    Text("Draft · \(JournalFormatters.dateTime.string(from: draft.eventDate))")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(.orange)
+                } else if let latestRecord {
                     Text(latestRecord.text ?? latestRecord.emoji ?? latestRecord.triggerType.displayName)
                         .font(.caption)
                         .lineLimit(1)
@@ -560,6 +578,7 @@ private struct EntityDetailView: View {
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var allEntities: [TrackedEntity]
     @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.eventDate, order: .reverse) private var records: [JournalRecord]
+    @Query(sort: \RecordDraft.updatedAt, order: .reverse) private var recordDrafts: [RecordDraft]
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     let entity: TrackedEntity
@@ -629,7 +648,7 @@ private struct EntityDetailView: View {
                 .accessibilityLabel("Thread actions")
 
                 Button {
-                    captureRequest = ThreadCaptureRequest(entity: entity, startedAt: Date())
+                    captureRequest = ThreadCaptureRequest(entity: entity, startedAt: entityDraft?.createdAt ?? Date())
                 } label: {
                     Label("Rec", systemImage: "record.circle")
                 }
@@ -737,6 +756,10 @@ private struct EntityDetailView: View {
         customFlips.filter { $0.entityID == entity.id }
     }
 
+    private var entityDraft: RecordDraft? {
+        recordDrafts.first { $0.entityID == entity.id }
+    }
+
     private var selectedThreadGroup: ThreadGroup? {
         threadGroup(for: entity)
     }
@@ -797,6 +820,18 @@ private struct EntityDetailView: View {
     @ViewBuilder
     private var recordsTab: some View {
         Section("Records") {
+            if let entityDraft {
+                Button {
+                    captureRequest = ThreadCaptureRequest(entity: entity, startedAt: entityDraft.createdAt)
+                } label: {
+                    Label(
+                        "Resume draft · \(JournalFormatters.dateTime.string(from: entityDraft.eventDate))",
+                        systemImage: "square.and.pencil"
+                    )
+                    .foregroundStyle(.orange)
+                }
+            }
+
             if entityRecords.isEmpty {
                 Text("No records yet")
                     .foregroundStyle(.secondary)

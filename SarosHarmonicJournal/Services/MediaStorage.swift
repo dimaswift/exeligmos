@@ -72,6 +72,10 @@ enum MediaStorage {
         return relative.isEmpty ? "\(mediaDirectoryName)/\(UUID().uuidString)" : relative
     }
 
+    static func delete(_ item: JournalMediaItem) {
+        try? FileManager.default.removeItem(at: url(for: item))
+    }
+
     private static func documentsDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }

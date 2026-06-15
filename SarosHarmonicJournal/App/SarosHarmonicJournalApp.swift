@@ -13,6 +13,7 @@ struct SarosHarmonicJournalApp: App {
                 for: TrackedEntity.self,
                 ThreadGroup.self,
                 JournalRecord.self,
+                RecordDraft.self,
                 CustomFlipEvent.self
             )
         } catch {
