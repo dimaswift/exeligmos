@@ -139,7 +139,7 @@ extension SarosClockReading {
 
     func qualifiedFlipStride(forOrder rawOrder: Int) -> Int {
         let order = clampedFlipOrder(rawOrder)
-        return Self.octalPower(order)
+        return Self.octalPower(max(harmonicDepth - order, 0))
     }
 
     func nextQualifiedFlipBin(after index: Int, order: Int, exact: Bool = false) -> Int? {
@@ -151,6 +151,32 @@ extension SarosClockReading {
         }
 
         return firstExactFlipBin(startingAt: bin, order: order, stride: stride, direction: .forward)
+    }
+
+    func nextQualifiedFlipBin(after index: Int, rarity: FlipRarity, exact: Bool = true) -> Int? {
+        if rarity.isHeaderRarity {
+            return rarity.subrarities
+                .compactMap { nextQualifiedFlipBin(after: index, rarity: $0, exact: exact) }
+                .min()
+        }
+
+        guard let stride = rarity.binStride(harmonicDepth: harmonicDepth),
+              let offset = rarity.subeventOffset(harmonicDepth: harmonicDepth)
+        else { return nil }
+        var bin = index + 1
+        let remainder = Self.positiveModulo(bin - offset, stride)
+        if remainder != 0 {
+            bin += stride - remainder
+        }
+
+        while bin <= binCount {
+            if matches(rarity: rarity, binIndex: bin, exact: exact) {
+                return bin
+            }
+            bin += stride
+        }
+
+        return nil
     }
 
     func previousQualifiedFlipBin(atOrBefore index: Int, order: Int, exact: Bool = false) -> Int? {
@@ -165,6 +191,30 @@ extension SarosClockReading {
         return firstExactFlipBin(startingAt: bin, order: order, stride: stride, direction: .backward)
     }
 
+    func previousQualifiedFlipBin(atOrBefore index: Int, rarity: FlipRarity, exact: Bool = true) -> Int? {
+        if rarity.isHeaderRarity {
+            return rarity.subrarities
+                .compactMap { previousQualifiedFlipBin(atOrBefore: index, rarity: $0, exact: exact) }
+                .max()
+        }
+
+        guard let stride = rarity.binStride(harmonicDepth: harmonicDepth),
+              let offset = rarity.subeventOffset(harmonicDepth: harmonicDepth)
+        else { return nil }
+        var bin = min(max(index, 0), binCount)
+        let remainder = Self.positiveModulo(bin - offset, stride)
+        bin -= remainder
+
+        while bin >= 0 {
+            if matches(rarity: rarity, binIndex: bin, exact: exact) {
+                return bin
+            }
+            bin -= stride
+        }
+
+        return nil
+    }
+
     func countdown(order rawOrder: Int) -> SarosFlipCountdown? {
         countdown(
             order: rawOrder,
@@ -174,23 +224,39 @@ extension SarosClockReading {
 
     func countdown(order rawOrder: Int, now: Date) -> SarosFlipCountdown? {
         let order = clampedFlipOrder(rawOrder)
-        guard let targetBinIndex = nextQualifiedFlipBin(after: binIndex, order: order, exact: true) else {
+        guard let targetBinIndex = nextQualifiedFlipBin(after: binIndex, order: order, exact: order >= 3) else {
             return nil
         }
         return countdown(targetBinIndex: targetBinIndex, order: order, now: now)
     }
 
     func countdown(rarity: FlipRarity, now: Date) -> SarosFlipCountdown? {
-        if rarity.isSarosPattern {
-            return countdown(sarosPatternRarity: rarity, now: now)
+        if rarity.isHeaderRarity {
+            return rarity.subrarities
+                .compactMap { countdown(rarity: $0, now: now) }
+                .min { lhs, rhs in
+                    lhs.timeUntilFlip == rhs.timeUntilFlip
+                        ? lhs.rarity.rank > rhs.rarity.rank
+                        : lhs.timeUntilFlip < rhs.timeUntilFlip
+                }
         }
 
-        guard rarity.order <= min(harmonicDepth, 6) else { return nil }
-        return countdown(order: rarity.order, now: now)
+        guard rarity.order <= min(JournalSettings.canonicalHarmonicDepth, 6) else { return nil }
+        guard let targetBinIndex = nextQualifiedFlipBin(after: binIndex, rarity: rarity, exact: true) else {
+            return nil
+        }
+        let previousTargetBinIndex = previousQualifiedFlipBin(atOrBefore: targetBinIndex - 1, rarity: rarity, exact: true)
+        return countdown(
+            targetBinIndex: targetBinIndex,
+            order: rarity.order,
+            now: now,
+            explicitRarity: rarity,
+            periodStartBinIndex: previousTargetBinIndex
+        )
     }
 
     func rarityCountdowns(now: Date) -> [SarosFlipCountdown] {
-        FlipRarity.visibleRarities(for: harmonicDepth)
+        FlipRarity.eventRarities(for: harmonicDepth)
             .compactMap { countdown(rarity: $0, now: now) }
     }
 
@@ -206,33 +272,6 @@ extension SarosClockReading {
         )
     }
 
-    private func countdown(sarosPatternRarity rarity: FlipRarity, now: Date) -> SarosFlipCountdown? {
-        guard let targetAddress = rarity.sarosPatternAddress(depth: harmonicDepth),
-              let patternBinIndex = Int(targetAddress, radix: 8)
-        else {
-            return nil
-        }
-
-        let targetBinIndex: Int
-        if rarity == .saros7, binIndex >= patternBinIndex {
-            targetBinIndex = binCount
-        } else {
-            targetBinIndex = patternBinIndex
-        }
-
-        guard targetBinIndex > binIndex, targetBinIndex <= binCount else {
-            return nil
-        }
-
-        return countdown(
-            targetBinIndex: targetBinIndex,
-            order: harmonicDepth,
-            now: now,
-            explicitRarity: rarity,
-            periodStartBinIndex: 0
-        )
-    }
-
     private func countdown(
         targetBinIndex: Int,
         order rawOrder: Int,
@@ -241,14 +280,15 @@ extension SarosClockReading {
         periodStartBinIndex: Int? = nil
     ) -> SarosFlipCountdown {
         let order = clampedFlipOrder(rawOrder)
-        let targetOctalAddress = explicitRarity?.sarosPatternAddress(depth: harmonicDepth)
-            ?? octalAddress(forBinIndex: targetBinIndex)
+        let targetOctalAddress = octalAddress(forBinIndex: targetBinIndex)
         let rarity = explicitRarity ?? FlipRarity.rarity(
             forOctalAddress: targetOctalAddress,
             harmonicDepth: harmonicDepth,
             isEclipse: targetBinIndex >= binCount
         )
-        let defaultStride = targetBinIndex >= binCount ? binCount : qualifiedFlipStride(forOrder: order)
+        let defaultStride = targetBinIndex >= binCount
+            ? binCount
+            : (explicitRarity?.binStride(harmonicDepth: harmonicDepth) ?? qualifiedFlipStride(forOrder: order))
         let defaultPreviousTargetBin = targetBinIndex >= binCount
             ? 0
             : max(targetBinIndex - defaultStride, 0)
@@ -258,7 +298,7 @@ extension SarosClockReading {
         let flipDate = date(forBinIndex: targetBinIndex)
 
         return SarosFlipCountdown(
-            order: rarity.isSarosPattern ? max(order, 7) : order,
+            order: order,
             rarity: rarity,
             binStride: binStride,
             targetBinIndex: targetBinIndex,
@@ -299,6 +339,19 @@ extension SarosClockReading {
         return nil
     }
 
+    private func matches(rarity: FlipRarity, binIndex index: Int, exact: Bool) -> Bool {
+        if rarity.isHeaderRarity {
+            return rarity.subrarities.contains { matches(rarity: $0, binIndex: index, exact: exact) }
+        }
+
+        guard let stride = rarity.binStride(harmonicDepth: harmonicDepth),
+              let offset = rarity.subeventOffset(harmonicDepth: harmonicDepth)
+        else { return false }
+        guard Self.positiveModulo(index - offset, stride) == 0 else { return false }
+        guard exact else { return true }
+        return flipRarity(forBinIndex: index) == rarity
+    }
+
     private func clampedFlipOrder(_ order: Int) -> Int {
         min(max(order, 1), harmonicDepth)
     }
@@ -306,6 +359,12 @@ extension SarosClockReading {
     private static func roundUp(_ value: Int, toMultipleOf stride: Int) -> Int {
         guard stride > 1 else { return value }
         return ((value + stride - 1) / stride) * stride
+    }
+
+    private static func positiveModulo(_ value: Int, _ modulus: Int) -> Int {
+        guard modulus > 0 else { return 0 }
+        let remainder = value % modulus
+        return remainder >= 0 ? remainder : remainder + modulus
     }
 
     private static func octalPower(_ exponent: Int) -> Int {
@@ -347,5 +406,10 @@ extension String {
     func leftPadded(toLength length: Int, withPad character: Character) -> String {
         guard count < length else { return self }
         return String(repeating: String(character), count: length - count) + self
+    }
+
+    func rightPadded(toLength length: Int, withPad character: Character) -> String {
+        guard count < length else { return self }
+        return self + String(repeating: String(character), count: length - count)
     }
 }

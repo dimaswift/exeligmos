@@ -106,6 +106,7 @@ enum JournalSettings {
     static let cameraTimedVideoForwardEnabledKey = "camera.timedVideoForwardEnabled"
     static let cameraTimedVideoBackwardEnabledKey = "camera.timedVideoBackwardEnabled"
     static let defaultHarmonicDepth = 7
+    static let canonicalHarmonicDepth = 8
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21
     static let supportedHarmonicDepth = 3...8
@@ -114,6 +115,41 @@ enum JournalSettings {
 
     static func clampedHarmonicDepth(_ value: Int) -> Int {
         min(max(value, supportedHarmonicDepth.lowerBound), supportedHarmonicDepth.upperBound)
+    }
+
+    static func canonicalOctalAddress(_ value: String, storedDepth rawDepth: Int) -> String {
+        octalAddress(value, storedDepth: rawDepth, outputDepth: canonicalHarmonicDepth, rightPad: "0")
+    }
+
+    static func rarityOctalAddress(
+        _ value: String,
+        storedDepth rawDepth: Int,
+        rarity: FlipRarity,
+        outputDepth rawOutputDepth: Int = canonicalHarmonicDepth
+    ) -> String {
+        let pad = rarity.repeatedDigit > 0 ? Character(String(rarity.repeatedDigit)) : "0"
+        return octalAddress(value, storedDepth: rawDepth, outputDepth: rawOutputDepth, rightPad: pad)
+    }
+
+    private static func octalAddress(
+        _ value: String,
+        storedDepth rawDepth: Int,
+        outputDepth rawOutputDepth: Int,
+        rightPad pad: Character
+    ) -> String {
+        let depth = clampedHarmonicDepth(rawDepth)
+        let outputDepth = min(max(rawOutputDepth, supportedHarmonicDepth.lowerBound), canonicalHarmonicDepth)
+        let digits = String(value.filter { "01234567".contains($0) })
+        if digits.count >= outputDepth {
+            return String(digits.prefix(outputDepth))
+        }
+        let paddedToStoredDepth = digits.rightPadded(toLength: min(depth, outputDepth), withPad: pad)
+        return paddedToStoredDepth.rightPadded(toLength: outputDepth, withPad: pad)
+    }
+
+    static func displayOctalAddress(_ value: String, storedDepth: Int, displayDepth rawDisplayDepth: Int) -> String {
+        let displayDepth = clampedHarmonicDepth(rawDisplayDepth)
+        return String(canonicalOctalAddress(value, storedDepth: storedDepth).prefix(displayDepth))
     }
 
     static func clampedCatalogCentury(_ value: Int) -> Int {
@@ -137,34 +173,42 @@ enum JournalSettings {
     }
 }
 
+struct FlipRarityGroup: Identifiable, Hashable {
+    let header: FlipRarity
+    let subrarities: [FlipRarity]
+
+    var id: String { header.id }
+}
+
 enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawRepresentable, Sendable {
     case common
     case rare
+    case rareDigit(Int)
     case epic
+    case epicDigit(Int)
     case legendary
+    case legendaryDigit(Int)
     case mythic
-    case saros1
-    case saros2
-    case saros3
-    case saros4
-    case saros5
-    case saros6
-    case saros7
+    case mythicDigit(Int)
 
-    static let allCases: [FlipRarity] = [
+    static let baseRarities: [FlipRarity] = [
         .common,
         .rare,
         .epic,
         .legendary,
-        .mythic,
-        .saros1,
-        .saros2,
-        .saros3,
-        .saros4,
-        .saros5,
-        .saros6,
-        .saros7
+        .mythic
     ]
+
+    static let eventBaseRarities: [FlipRarity] = [
+        .rare,
+        .epic,
+        .legendary,
+        .mythic
+    ]
+
+    static let allCases: [FlipRarity] = [.common] + eventBaseRarities.flatMap { rarity in
+        [rarity] + rarity.subrarities
+    }
 
     var id: String { rawValue }
 
@@ -172,16 +216,13 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
         switch self {
         case .common: "common"
         case .rare: "rare"
+        case .rareDigit(let digit): "rare-\(Self.clampedDigit(digit))"
         case .epic: "epic"
+        case .epicDigit(let digit): "epic-\(Self.clampedDigit(digit))"
         case .legendary: "legendary"
+        case .legendaryDigit(let digit): "legendary-\(Self.clampedDigit(digit))"
         case .mythic: "mythic"
-        case .saros1: "saros1"
-        case .saros2: "saros2"
-        case .saros3: "saros3"
-        case .saros4: "saros4"
-        case .saros5: "saros5"
-        case .saros6: "saros6"
-        case .saros7: "saros7"
+        case .mythicDigit(let digit): "mythic-\(Self.clampedDigit(digit))"
         }
     }
 
@@ -192,14 +233,34 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
         case "epic": self = .epic
         case "legendary": self = .legendary
         case "mythic": self = .mythic
-        case "saros1": self = .saros1
-        case "saros2": self = .saros2
-        case "saros3": self = .saros3
-        case "saros4": self = .saros4
-        case "saros5": self = .saros5
-        case "saros6": self = .saros6
-        case "saros", "saros7": self = .saros7
-        default: return nil
+        case "saros": self = .mythicDigit(7)
+        case "saros0": self = .mythicDigit(7)
+        case "saros1": self = .mythicDigit(1)
+        case "saros2": self = .mythicDigit(2)
+        case "saros3": self = .mythicDigit(3)
+        case "saros4": self = .mythicDigit(4)
+        case "saros5": self = .mythicDigit(5)
+        case "saros6": self = .mythicDigit(6)
+        case "saros7": self = .mythicDigit(7)
+        default:
+            let parts = rawValue.split(separator: "-", maxSplits: 1).map(String.init)
+            guard parts.count == 2,
+                  let digit = Int(parts[1]),
+                  (1...7).contains(digit)
+            else {
+                return nil
+            }
+
+            switch parts[0] {
+            case "rare": self = .rareDigit(digit)
+            case "epic": self = .epicDigit(digit)
+            case "legendary": self = .legendaryDigit(digit)
+            case "mythic": self = .mythicDigit(digit)
+            case "saros":
+                self = .mythicDigit(digit)
+            default:
+                return nil
+            }
         }
     }
 
@@ -222,57 +283,40 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
 
     var order: Int {
         switch self {
-        case .common: 2
-        case .rare: 3
-        case .epic: 4
-        case .legendary: 5
-        case .mythic: 6
-        case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: 7
+        case .common: 0
+        case .rare, .rareDigit: 3
+        case .epic, .epicDigit: 4
+        case .legendary, .legendaryDigit: 5
+        case .mythic, .mythicDigit: 6
         }
     }
 
     var rank: Int {
-        switch self {
-        case .common: 2
-        case .rare: 3
-        case .epic: 4
-        case .legendary: 5
-        case .mythic: 6
-        case .saros1: 7
-        case .saros2: 8
-        case .saros3: 9
-        case .saros4: 10
-        case .saros5: 11
-        case .saros6: 12
-        case .saros7: 13
-        }
+        guard self != .common else { return 0 }
+        return order * 8 + repeatedDigit
     }
 
     var title: String {
         switch self {
         case .common: "Common"
-        case .rare: "Rare"
-        case .epic: "Epic"
-        case .legendary: "Legendary"
-        case .mythic: "Mythic"
-        case .saros1: "Saros 1"
-        case .saros2: "Saros 2"
-        case .saros3: "Saros 3"
-        case .saros4: "Saros 4"
-        case .saros5: "Saros 5"
-        case .saros6: "Saros 6"
-        case .saros7: "Saros 7"
+        case .rare: "Triplex"
+        case .rareDigit(let digit): "\(Self.digitPrefix(digit)) Triplex"
+        case .epic: "Duplex"
+        case .epicDigit(let digit): "\(Self.digitPrefix(digit)) Duplex"
+        case .legendary: "Simplex"
+        case .legendaryDigit(let digit): "\(Self.digitPrefix(digit)) Simplex"
+        case .mythic: "Nihil"
+        case .mythicDigit(let digit): "\(Self.digitPrefix(digit)) Nihil"
         }
     }
 
     var symbolName: String {
-        switch self {
-        case .common: "circle.fill"
+        switch baseRarity {
         case .rare: "diamond"
         case .epic: "sparkles"
         case .legendary: "crown"
         case .mythic: "flame"
-        case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: "leaf.fill"
+        default: "circle.fill"
         }
     }
 
@@ -281,80 +325,136 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
     }
 
     var primaryColor: Color {
-        switch self {
-        case .common: .gray
+        switch baseRarity {
+        case .common: .white
         case .rare: .blue
         case .epic: .purple
         case .legendary: .yellow
         case .mythic: .red
-        case .saros1: Self.rainbowRed
-        case .saros2: Self.rainbowOrange
-        case .saros3: Self.rainbowYellow
-        case .saros4: Self.rainbowGreen
-        case .saros5: Self.rainbowCyan
-        case .saros6: Self.rainbowBlue
-        case .saros7: Self.rainbowViolet
+        default: .blue
         }
     }
 
     var secondaryColor: Color {
-        switch self {
-        case .common, .rare, .epic, .legendary, .mythic:
-            primaryColor
-        case .saros1:
-            Self.rainbowOrange
-        case .saros2:
-            Self.rainbowYellow
-        case .saros3:
-            Self.rainbowGreen
-        case .saros4:
-            Self.rainbowCyan
-        case .saros5:
-            Self.rainbowBlue
-        case .saros6:
-            Self.rainbowViolet
-        case .saros7:
-            Self.rainbowRed
-        }
+        primaryColor
     }
 
     var notificationEligible: Bool {
-        self >= .rare
+        self != .common
     }
 
     var orderLabel: String {
-        if let sarosDigit {
-            return String(repeating: "\(sarosDigit)", count: JournalSettings.defaultHarmonicDepth)
-        }
-        return "Order \(order)"
+        title
     }
 
-    var isSarosPattern: Bool {
-        sarosDigit != nil
-    }
-
-    var sarosDigit: Int? {
+    var repeatedDigit: Int {
         switch self {
-        case .saros1: 1
-        case .saros2: 2
-        case .saros3: 3
-        case .saros4: 4
-        case .saros5: 5
-        case .saros6: 6
-        case .saros7: 7
-        default: nil
+        case .common, .rare, .epic, .legendary, .mythic:
+            return 0
+        case .rareDigit(let digit), .epicDigit(let digit), .legendaryDigit(let digit), .mythicDigit(let digit):
+            return Self.clampedDigit(digit)
         }
+    }
+
+    var baseRarity: FlipRarity {
+        switch self {
+        case .common: .common
+        case .rare, .rareDigit: .rare
+        case .epic, .epicDigit: .epic
+        case .legendary, .legendaryDigit: .legendary
+        case .mythic, .mythicDigit: .mythic
+        }
+    }
+
+    var isHeaderRarity: Bool {
+        self != .common && repeatedDigit == 0
+    }
+
+    var subrarities: [FlipRarity] {
+        guard self != .common else { return [] }
+        return (1...7).map { digit in
+            Self.rarity(order: order, repeatedDigit: digit)
+        }
+    }
+
+    var suffixPattern: String {
+        guard repeatedDigit > 0 else { return title }
+        return String(repeating: "\(repeatedDigit)", count: max(order, 1))
+    }
+
+    var wildcardPrefixCount: Int {
+        switch baseRarity {
+        case .common: JournalSettings.defaultHarmonicDepth
+        case .rare: 3
+        case .epic: 2
+        case .legendary: 1
+        case .mythic: 0
+        default: 3
+        }
+    }
+
+    var basePeriodDivisions: Int {
+        Self.octalPower(wildcardPrefixCount)
+    }
+
+    func supports(harmonicDepth rawDepth: Int) -> Bool {
+        guard self != .common else { return false }
+        return JournalSettings.clampedHarmonicDepth(rawDepth) > wildcardPrefixCount
+    }
+
+    func repeatedSuffixLength(harmonicDepth rawDepth: Int) -> Int {
+        max(JournalSettings.clampedHarmonicDepth(rawDepth) - wildcardPrefixCount, 0)
+    }
+
+    func repeatedSuffixPattern(harmonicDepth rawDepth: Int) -> String {
+        guard repeatedDigit > 0 else { return "" }
+        return String(repeating: "\(repeatedDigit)", count: repeatedSuffixLength(harmonicDepth: rawDepth))
+    }
+
+    func patternLabel(harmonicDepth rawDepth: Int) -> String {
+        guard self != .common else { return title }
+        guard repeatedDigit > 0 else { return title }
+        let depth = JournalSettings.clampedHarmonicDepth(rawDepth)
+        let wildcardCount = min(wildcardPrefixCount, depth)
+        return String(repeating: "X", count: wildcardCount) + repeatedSuffixPattern(harmonicDepth: depth)
+    }
+
+    func glyphAddress(harmonicDepth rawDepth: Int) -> String {
+        let depth = JournalSettings.clampedHarmonicDepth(rawDepth)
+        guard self != .common else {
+            return String(repeating: "0", count: depth)
+        }
+        let prefixCount = min(wildcardPrefixCount, depth)
+        let digit = repeatedDigit > 0 ? repeatedDigit : 7
+        let suffixLength = max(depth - prefixCount, 0)
+        return String(repeating: "0", count: prefixCount)
+            + String(repeating: "\(digit)", count: suffixLength)
+    }
+
+    func binStride(harmonicDepth rawDepth: Int) -> Int? {
+        guard self != .common else { return nil }
+        let suffixLength = repeatedSuffixLength(harmonicDepth: rawDepth)
+        guard suffixLength > 0 else { return nil }
+        return Self.octalPower(suffixLength)
+    }
+
+    func subeventOffset(harmonicDepth rawDepth: Int) -> Int? {
+        guard let stride = binStride(harmonicDepth: rawDepth) else { return nil }
+        guard repeatedDigit > 0 else { return 0 }
+        return repeatedDigit * ((max(stride, 1) - 1) / 7)
     }
 
     var glyphStyle: OctalGlyphStyle {
-        isSarosPattern
-            ? .split(primary: primaryColor, secondary: secondaryColor, splitAfterDigitCount: 3)
-            : .single(primaryColor)
+        .single(primaryColor)
     }
 
-    func sarosPatternAddress(depth: Int) -> String? {
-        guard let sarosDigit else { return nil }
-        return String(repeating: "\(sarosDigit)", count: JournalSettings.clampedHarmonicDepth(depth))
+    func patternAddress(depth: Int) -> String? {
+        let clampedDepth = JournalSettings.clampedHarmonicDepth(depth)
+        guard supports(harmonicDepth: clampedDepth) else { return nil }
+        let suffix = repeatedDigit > 0
+            ? repeatedSuffixPattern(harmonicDepth: clampedDepth)
+            : String(repeating: "0", count: repeatedSuffixLength(harmonicDepth: clampedDepth))
+        return String(repeating: "0", count: wildcardPrefixCount) + suffix
     }
 
     static func < (lhs: FlipRarity, rhs: FlipRarity) -> Bool {
@@ -362,83 +462,154 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
     }
 
     static func rarity(forOrder order: Int, isEclipse: Bool = false) -> FlipRarity {
-        if isEclipse || order >= 7 {
-            return .saros7
-        }
-
-        switch max(order, 1) {
-        case 1, 2: return .common
-        case 3: return .rare
-        case 4: return .epic
-        case 5: return .legendary
-        case 6: return .mythic
-        default: return .saros7
-        }
+        guard isEclipse else { return .common }
+        return rarity(order: 6, repeatedDigit: 7)
     }
 
     static func rarity(forOctalAddress octalAddress: String, harmonicDepth: Int, isEclipse: Bool = false) -> FlipRarity {
         if isEclipse {
-            return .saros7
+            return .mythicDigit(7)
         }
 
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        let padded = octalAddress.leftPadded(toLength: depth, withPad: "0")
-        if padded.count == depth,
-           let first = padded.first,
-           first != "0",
-           padded.allSatisfy({ $0 == first }),
-           let digit = Int(String(first)),
-           (1...7).contains(digit) {
-            return sarosPatternRarity(forDigit: digit) ?? .saros7
-        }
+        let pattern = repeatedSuffixPattern(for: octalAddress, harmonicDepth: depth)
+        guard pattern.digit > 0 else { return .common }
 
-        return rarity(
-            forOrder: order(forOctalAddress: padded, harmonicDepth: depth),
-            isEclipse: false
-        )
+        return rarity(order: pattern.order, repeatedDigit: pattern.digit)
     }
 
     static func order(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
-        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        let padded = octalAddress.leftPadded(toLength: depth, withPad: "0")
-        return min(padded.reversed().prefix { $0 == "0" }.count, depth)
+        let pattern = repeatedSuffixPattern(for: octalAddress, harmonicDepth: harmonicDepth)
+        return pattern.digit > 0 ? pattern.order : 0
     }
 
-    static func visibleRarities(for harmonicDepth: Int, includeSaros: Bool = true) -> [FlipRarity] {
-        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
-        let regular = allCases.filter { rarity in
-            !rarity.isSarosPattern && rarity.order <= min(depth, 6)
+    static func repeatedDigit(forOctalAddress octalAddress: String, harmonicDepth: Int) -> Int {
+        repeatedSuffixPattern(for: octalAddress, harmonicDepth: harmonicDepth).digit
+    }
+
+    static func visibleRarities(for harmonicDepth: Int, includeSubrarities: Bool = true) -> [FlipRarity] {
+        rarityGroups(for: harmonicDepth, includeSubrarities: includeSubrarities).flatMap { group in
+            [group.header] + group.subrarities
         }
-        guard includeSaros, depth >= 7 else { return regular }
-        return regular + sarosPatternRarities
+    }
+
+    static func eventRarities(for harmonicDepth: Int) -> [FlipRarity] {
+        rarityGroups(for: harmonicDepth).flatMap(\.subrarities)
+    }
+
+    static func rarityGroups(for harmonicDepth: Int, includeSubrarities: Bool = true) -> [FlipRarityGroup] {
+        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        return eventBaseRarities
+            .filter { $0.supports(harmonicDepth: depth) }
+            .map { header in
+                FlipRarityGroup(
+                    header: header,
+                    subrarities: includeSubrarities ? header.subrarities : []
+                )
+            }
+    }
+
+    static func subrarities(for rarity: FlipRarity) -> [FlipRarity] {
+        rarity.baseRarity.subrarities
     }
 
     static func notificationRarities(for harmonicDepth: Int) -> [FlipRarity] {
-        visibleRarities(for: harmonicDepth)
+        eventRarities(for: harmonicDepth)
             .filter(\.notificationEligible)
     }
 
-    static let sarosPatternRarities: [FlipRarity] = [
-        .saros1,
-        .saros2,
-        .saros3,
-        .saros4,
-        .saros5,
-        .saros6,
-        .saros7
-    ]
-
-    static func sarosPatternRarity(forDigit digit: Int) -> FlipRarity? {
-        switch digit {
-        case 1: .saros1
-        case 2: .saros2
-        case 3: .saros3
-        case 4: .saros4
-        case 5: .saros5
-        case 6: .saros6
-        case 7: .saros7
-        default: nil
+    static func rarity(order rawOrder: Int, repeatedDigit rawDigit: Int) -> FlipRarity {
+        let order = min(max(rawOrder, 3), 6)
+        let digit = clampedDigit(rawDigit)
+        switch order {
+        case 3: return digit == 0 ? .rare : .rareDigit(digit)
+        case 4: return digit == 0 ? .epic : .epicDigit(digit)
+        case 5: return digit == 0 ? .legendary : .legendaryDigit(digit)
+        default: return digit == 0 ? .mythic : .mythicDigit(digit)
         }
+    }
+
+    static func repeatedDigitValue(order rawOrder: Int, digit rawDigit: Int) -> Int {
+        let order = min(max(rawOrder, 1), JournalSettings.supportedHarmonicDepth.upperBound)
+        let digit = clampedDigit(rawDigit)
+        let placeSum = (0..<order).reduce(0) { value, _ in value * 8 + 1 }
+        return digit * placeSum
+    }
+
+    private static func repeatedSuffixPattern(for octalAddress: String, harmonicDepth: Int) -> (order: Int, digit: Int) {
+        let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        let digits = octalAddress.filter { "01234567".contains($0) }
+        let trimmed = String(digits.prefix(depth))
+        var padded = trimmed.leftPadded(toLength: depth, withPad: "0")
+        guard !padded.isEmpty else {
+            return (3, 0)
+        }
+
+        if (Int(padded, radix: 8) ?? 0) == 0 {
+            return (6, 7)
+        }
+
+        if padded.last == "0",
+           let value = Int(padded, radix: 8),
+           value > 0
+        {
+            padded = String(value - 1, radix: 8).leftPadded(toLength: depth, withPad: "0")
+        }
+
+        let characters = Array(padded)
+        guard let last = characters.last,
+              last != "0",
+              let digit = Int(String(last))
+        else {
+            return (3, 0)
+        }
+
+        let suffixLength = characters.reversed().prefix { $0 == last }.count
+        let wildcardPrefixCount = depth - suffixLength
+        let order = switch wildcardPrefixCount {
+        case ...0: 6
+        case 1: 5
+        case 2: 4
+        case 3: 3
+        default: 3
+        }
+        return (order, wildcardPrefixCount <= 3 ? digit : 0)
+    }
+
+    static func digitColor(_ digit: Int) -> Color {
+        switch clampedDigit(digit) {
+        case 0: .white
+        case 1: Self.rainbowRed
+        case 2: Self.rainbowOrange
+        case 3: Self.rainbowYellow
+        case 4: Self.rainbowGreen
+        case 5: Self.rainbowCyan
+        case 6: Self.rainbowBlue
+        case 7: Self.rainbowViolet
+        default: .white
+        }
+    }
+
+    private static func clampedDigit(_ digit: Int) -> Int {
+        min(max(digit, 0), 7)
+    }
+
+    private static func digitPrefix(_ digit: Int) -> String {
+        switch clampedDigit(digit) {
+        case 1: "Alpha"
+        case 2: "Beta"
+        case 3: "Gamma"
+        case 4: "Delta"
+        case 5: "Epsilon"
+        case 6: "Digamma"
+        case 7: "Omega"
+        default: ""
+        }
+    }
+
+    private static func octalPower(_ exponent: Int) -> Int {
+        guard exponent > 0 else { return 1 }
+        return (0..<exponent).reduce(1) { value, _ in value * 8 }
     }
 
     private static let rainbowRed = Color(red: 1.0, green: 0.23, blue: 0.19)
@@ -544,17 +715,16 @@ enum FlipNotificationPreferences {
     static func defaults(for harmonicDepth: Int) -> [FlipNotificationRarityPreference] {
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
         return FlipRarity.notificationRarities(for: depth).map { rarity in
-            let mode: FlipNotificationMode = switch rarity {
+            let mode: FlipNotificationMode = switch rarity.baseRarity {
             case .rare: .event
             case .epic: .live
-            case .legendary, .mythic, .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: .alarm
+            case .legendary, .mythic: .alarm
             default: .silent
             }
-            let advanceMinutes = switch rarity {
+            let advanceMinutes = switch rarity.baseRarity {
             case .epic: 30
             case .legendary: 60
             case .mythic: 120
-            case .saros1, .saros2, .saros3, .saros4, .saros5, .saros6, .saros7: 240
             default: 10
             }
             return FlipNotificationRarityPreference(
@@ -701,7 +871,7 @@ struct OctalGlyph: View {
             } else {
                 ForEach(0..<geometry.digitCount, id: \.self) { socketIndex in
                     OctalGlyphArmSegmentShape(value: value, depth: depth, socketIndex: socketIndex)
-                        .fill(style.primary)
+                        .fill(style.color(forDigitIndex: geometry.digitIndex(forSocketIndex: socketIndex)))
                 }
             }
         }
@@ -713,15 +883,22 @@ struct OctalGlyph: View {
 }
 
 struct FlipRarityBadge: View {
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+
     let rarity: FlipRarity
     var compact = false
 
     var body: some View {
         Group {
-            if compact {
-                Image(systemName: rarity.symbolName)
+            if rarity == .common {
+                EmptyView()
+            } else if compact {
+                FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 18)
             } else {
-                Label(rarity.title, systemImage: rarity.symbolName)
+                HStack(spacing: 5) {
+                    FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 18)
+                    Text(rarity.title)
+                }
             }
         }
         .font(.caption2.weight(.semibold))
@@ -736,6 +913,26 @@ struct FlipRarityBadge: View {
                 .stroke(rarity.color.opacity(0.28), lineWidth: 1)
         }
         .accessibilityLabel(rarity.title)
+    }
+}
+
+struct FlipRarityGlyphIcon: View {
+    let rarity: FlipRarity
+    let harmonicDepth: Int
+    var size: CGFloat = 18
+
+    var body: some View {
+        if rarity == .common {
+            EmptyView()
+        } else {
+            OctalGlyph(
+                value: rarity.glyphAddress(harmonicDepth: harmonicDepth),
+                depth: JournalSettings.clampedHarmonicDepth(harmonicDepth),
+                style: rarity.glyphStyle
+            )
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+        }
     }
 }
 

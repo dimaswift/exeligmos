@@ -13,20 +13,25 @@ const OCTAL_GLYPH_BUNDLE =
   process.env.OCTAL_GLYPH_BUNDLE ||
   '/Users/dimas/projects/octal-glyph-gen/octal-glyph.js';
 const ANIMACY_RARITIES = ['common', 'rare', 'epic', 'legendary', 'mythic'];
-const RARITY_DEFINITIONS = {
-  common: { key: 'common', title: 'Common', rank: 2, color: '#8f98a3' },
-  rare: { key: 'rare', title: 'Rare', rank: 3, color: '#2f9bff' },
-  epic: { key: 'epic', title: 'Epic', rank: 4, color: '#b45cff' },
-  legendary: { key: 'legendary', title: 'Legendary', rank: 5, color: '#f4c542' },
-  mythic: { key: 'mythic', title: 'Mythic', rank: 6, color: '#ef4136' },
-  saros1: { key: 'saros1', title: 'Saros 1', rank: 7, color: '#ff3b30' },
-  saros2: { key: 'saros2', title: 'Saros 2', rank: 8, color: '#ff9500' },
-  saros3: { key: 'saros3', title: 'Saros 3', rank: 9, color: '#ffd60a' },
-  saros4: { key: 'saros4', title: 'Saros 4', rank: 10, color: '#30d158' },
-  saros5: { key: 'saros5', title: 'Saros 5', rank: 11, color: '#40c8e0' },
-  saros6: { key: 'saros6', title: 'Saros 6', rank: 12, color: '#0a84ff' },
-  saros7: { key: 'saros7', title: 'Saros 7', rank: 13, color: '#bf5af2' }
+const DEFAULT_HARMONIC_DEPTH = 7;
+const MIN_HARMONIC_DEPTH = 3;
+const MAX_HARMONIC_DEPTH = 8;
+const RARITY_DIGIT_PREFIXES = {
+  1: 'Alpha',
+  2: 'Beta',
+  3: 'Gamma',
+  4: 'Delta',
+  5: 'Epsilon',
+  6: 'Digamma',
+  7: 'Omega'
 };
+const RARITY_BASES = {
+  rare: { key: 'rare', title: 'Triplex', order: 3, wildcardPrefixCount: 3, color: '#2f9bff' },
+  epic: { key: 'epic', title: 'Duplex', order: 4, wildcardPrefixCount: 2, color: '#b45cff' },
+  legendary: { key: 'legendary', title: 'Simplex', order: 5, wildcardPrefixCount: 1, color: '#f4c542' },
+  mythic: { key: 'mythic', title: 'Nihil', order: 6, wildcardPrefixCount: 0, color: '#ef4136' }
+};
+const RARITY_DEFINITIONS = makeRarityDefinitions();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -646,7 +651,13 @@ function recordsView(payload) {
     id: record.rarity.key,
     name: record.rarity.title,
     rank: record.rarity.rank,
-    color: record.rarity.color
+    color: record.rarity.color,
+    baseKey: record.rarity.baseKey,
+    repeatedDigit: record.rarity.repeatedDigit,
+    hasBadge: record.rarity.hasBadge,
+    isCommon: record.rarity.isCommon,
+    glyphAddress: record.rarity.glyphAddress,
+    patternLabel: record.rarity.patternLabel
   })).sort((a, b) => a.rank - b.rank);
 
   return {
@@ -677,33 +688,157 @@ function groupedFilterOptions(records, key, mapper) {
 }
 
 function rarityForRecord(record) {
-  const depth = Math.max(1, Math.min(Number(record.harmonicDepth) || 7, 8));
-  const address = String(record.octalAddress || '').padStart(depth, '0').slice(-depth);
-  const repeated = repeatedSarosDigit(address);
-  if (repeated) {
-    return rarityDefinition(`saros${repeated}`);
-  }
-
-  const trailingZeroes = [...address].reverse().findIndex((digit) => digit !== '0');
-  const order = trailingZeroes === -1 ? depth : trailingZeroes;
-
-  if (order >= 7) return rarityDefinition('saros7');
-  if (order >= 6) return rarityDefinition('mythic');
-  if (order >= 5) return rarityDefinition('legendary');
-  if (order >= 4) return rarityDefinition('epic');
-  if (order >= 3) return rarityDefinition('rare');
-  return rarityDefinition('common');
-}
-
-function repeatedSarosDigit(address) {
-  if (!address || address.length < 7) return null;
-  const first = address[0];
-  if (first === '0' || first === '8' || first === '9') return null;
-  return address.split('').every((digit) => digit === first) ? first : null;
+  const depth = clampedHarmonicDepth(record.harmonicDepth);
+  const pattern = repeatedSuffixPattern(record.octalAddress, depth);
+  if (pattern.digit <= 0) return rarityDefinition('common');
+  return rarityDefinitionForPattern(pattern.order, pattern.digit, depth);
 }
 
 function rarityDefinition(key) {
-  return RARITY_DEFINITIONS[key] ?? RARITY_DEFINITIONS.common;
+  return RARITY_DEFINITIONS[canonicalRarityKey(key)] ?? RARITY_DEFINITIONS.common;
+}
+
+function rarityDefinitionForPattern(order, digit, depth = DEFAULT_HARMONIC_DEPTH) {
+  const baseKey = rarityBaseKeyForOrder(order);
+  const definition = rarityDefinition(`${baseKey}-${clampedRarityDigit(digit)}`);
+  return {
+    ...definition,
+    glyphAddress: rarityGlyphAddress(definition, depth),
+    patternLabel: rarityPatternLabel(definition, depth)
+  };
+}
+
+function makeRarityDefinitions() {
+  const definitions = {
+    common: {
+      key: 'common',
+      title: 'Common',
+      rank: 0,
+      color: '#f3f5f7',
+      baseKey: 'common',
+      order: 0,
+      wildcardPrefixCount: DEFAULT_HARMONIC_DEPTH,
+      repeatedDigit: 0,
+      hasBadge: false,
+      isCommon: true,
+      glyphAddress: '0'.repeat(DEFAULT_HARMONIC_DEPTH),
+      patternLabel: 'Common'
+    }
+  };
+
+  for (const base of Object.values(RARITY_BASES)) {
+    definitions[base.key] = {
+      ...base,
+      rank: base.order * 8,
+      repeatedDigit: 0,
+      baseKey: base.key,
+      hasBadge: true,
+      isCommon: false,
+      isHeader: true,
+      glyphAddress: rarityGlyphAddress({ ...base, repeatedDigit: 7 }, DEFAULT_HARMONIC_DEPTH),
+      patternLabel: base.title
+    };
+
+    for (let digit = 1; digit <= 7; digit += 1) {
+      const title = `${RARITY_DIGIT_PREFIXES[digit]} ${base.title}`;
+      const definition = {
+        ...base,
+        key: `${base.key}-${digit}`,
+        title,
+        rank: base.order * 8 + digit,
+        repeatedDigit: digit,
+        baseKey: base.key,
+        hasBadge: true,
+        isCommon: false,
+        isHeader: false
+      };
+      definitions[definition.key] = {
+        ...definition,
+        glyphAddress: rarityGlyphAddress(definition, DEFAULT_HARMONIC_DEPTH),
+        patternLabel: rarityPatternLabel(definition, DEFAULT_HARMONIC_DEPTH)
+      };
+    }
+  }
+
+  return definitions;
+}
+
+function canonicalRarityKey(key) {
+  const value = String(key || '').toLowerCase();
+  if (value === 'saros' || value === 'saros0') return 'mythic-7';
+  if (/^saros[1-7]$/.test(value)) return `mythic-${value.at(-1)}`;
+  return value;
+}
+
+function rarityBaseKeyForOrder(order) {
+  const clampedOrder = Math.min(Math.max(Number(order) || 3, 3), 6);
+  return Object.values(RARITY_BASES).find((base) => base.order === clampedOrder)?.key ?? 'rare';
+}
+
+function repeatedSuffixPattern(octalAddress, rawDepth) {
+  const depth = clampedHarmonicDepth(rawDepth);
+  const digits = String(octalAddress || '').replace(/[^0-7]/g, '');
+  const trimmed = digits.slice(0, depth);
+  let padded = (trimmed || '0').padStart(depth, '0');
+  const numericValue = Number.parseInt(padded, 8) || 0;
+
+  if (numericValue === 0) {
+    return { order: 6, digit: 7 };
+  }
+
+  if (padded.endsWith('0')) {
+    padded = (numericValue - 1).toString(8).padStart(depth, '0');
+  }
+
+  const characters = [...padded];
+  const last = characters.at(-1);
+  const digit = Number(last);
+  if (!last || last === '0' || !Number.isInteger(digit)) {
+    return { order: 3, digit: 0 };
+  }
+
+  const suffixLength = [...characters].reverse().findIndex((character) => character !== last);
+  const repeatedLength = suffixLength === -1 ? characters.length : suffixLength;
+  const wildcardPrefixCount = depth - repeatedLength;
+  const order =
+    wildcardPrefixCount <= 0 ? 6 :
+    wildcardPrefixCount === 1 ? 5 :
+    wildcardPrefixCount === 2 ? 4 :
+    wildcardPrefixCount === 3 ? 3 :
+    3;
+
+  return {
+    order,
+    digit: wildcardPrefixCount <= 3 ? digit : 0
+  };
+}
+
+function rarityGlyphAddress(rarity, rawDepth = DEFAULT_HARMONIC_DEPTH) {
+  const depth = clampedHarmonicDepth(rawDepth);
+  if (!rarity || rarity.key === 'common') return '0'.repeat(depth);
+
+  const prefixCount = Math.min(Number(rarity.wildcardPrefixCount) || 0, depth);
+  const digit = Number(rarity.repeatedDigit) > 0 ? clampedRarityDigit(rarity.repeatedDigit) : 7;
+  const suffixLength = Math.max(depth - prefixCount, 0);
+  return '0'.repeat(prefixCount) + String(digit).repeat(suffixLength);
+}
+
+function rarityPatternLabel(rarity, rawDepth = DEFAULT_HARMONIC_DEPTH) {
+  const depth = clampedHarmonicDepth(rawDepth);
+  if (!rarity || rarity.key === 'common') return 'Common';
+  if (!(Number(rarity.repeatedDigit) > 0)) return rarity.title;
+
+  const prefixCount = Math.min(Number(rarity.wildcardPrefixCount) || 0, depth);
+  const suffixLength = Math.max(depth - prefixCount, 0);
+  return 'X'.repeat(prefixCount) + String(clampedRarityDigit(rarity.repeatedDigit)).repeat(suffixLength);
+}
+
+function clampedRarityDigit(digit) {
+  return Math.min(Math.max(Number(digit) || 0, 0), 7);
+}
+
+function clampedHarmonicDepth(value) {
+  return Math.min(Math.max(Number(value) || DEFAULT_HARMONIC_DEPTH, MIN_HARMONIC_DEPTH), MAX_HARMONIC_DEPTH);
 }
 
 async function writeAnimacyCapture(payload) {
@@ -957,6 +1092,9 @@ function pageHTML() {
     nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
     .filters { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) minmax(150px, 220px); margin-bottom: 18px; }
     .rarity-filter { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    .rarity-filter button { display: inline-flex; align-items: center; gap: 7px; }
+    .rarity-filter .rarity-glyph { width: 22px; height: 22px; flex: 0 0 22px; }
+    .rarity-filter button.active .rarity-glyph { color: #071018; }
     button, select { color: #f3f5f7; background: #121820; border: 1px solid #2b3541; border-radius: 8px; font: inherit; font-size: 13px; }
     button { padding: 8px 10px; cursor: pointer; white-space: nowrap; }
     button.active { background: var(--rarity-color, #e8edf3); border-color: var(--rarity-color, #e8edf3); color: #071018; }
@@ -969,7 +1107,7 @@ function pageHTML() {
     .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2d3946; border-radius: 999px; padding: 4px 8px; color: #c8d0d9; font-size: 12px; }
     .rarity { border-color: color-mix(in srgb, var(--rarity-color), transparent 45%); color: var(--rarity-color); background: color-mix(in srgb, var(--rarity-color), transparent 88%); }
     .record-side { display: grid; gap: 8px; justify-items: center; align-content: start; }
-    .glyph { width: 76px; height: 76px; display: grid; place-items: center; color: var(--rarity-color, #8f98a3); }
+    .glyph { width: 76px; height: 76px; display: grid; place-items: center; color: var(--rarity-color, #f3f5f7); }
     .glyph svg { width: 100%; height: 100%; display: block; overflow: visible; }
     .glyph path, .glyph polygon, .glyph circle { fill: currentColor; }
     .glyph-fallback { width: 72px; height: 72px; }
@@ -1083,7 +1221,12 @@ function pageHTML() {
       for (const rarity of rarities) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = \`\${rarity.name} \${rarity.count}\`;
+        if (rarity.hasBadge) {
+          button.appendChild(renderRarityGlyph(rarity));
+        }
+        button.appendChild(document.createTextNode(\`\${rarity.name} \${rarity.count}\`));
+        if (rarity.isCommon) button.dataset.common = 'true';
+        button.title = rarity.patternLabel || rarity.name;
         button.style.setProperty('--rarity-color', rarity.color || '#e8edf3');
         button.className = state.rarity === rarity.id ? 'active' : '';
         button.addEventListener('click', () => { state.rarity = rarity.id; renderPage(); });
@@ -1131,16 +1274,19 @@ function pageHTML() {
       const body = document.createElement('div');
       const side = document.createElement('div');
       side.className = 'record-side';
-      side.appendChild(renderOctalGlyph(record.octalAddress, record.harmonicDepth || 7, record.rarity?.color || '#8f98a3'));
+      side.appendChild(renderOctalGlyph(record.octalAddress, record.harmonicDepth || 7, record.rarity?.color || '#f3f5f7'));
       const emoji = document.createElement('div');
       emoji.className = 'emoji';
       emoji.textContent = record.emoji || '✦';
       side.appendChild(emoji);
 
+      const rarityBadge = record.rarity?.hasBadge
+        ? \`<span class="badge rarity" title="\${escapeHTML(record.rarity.patternLabel || '')}" style="--rarity-color: \${escapeHTML(record.rarity.color || '#f3f5f7')}">\${escapeHTML(record.rarity.title)}</span>\`
+        : '';
       body.innerHTML = \`
         <div class="record-head">
           <div class="title">\${escapeHTML(record.entityTitle)}</div>
-          <span class="badge rarity" style="--rarity-color: \${escapeHTML(record.rarity?.color || '#8f98a3')}">\${escapeHTML(record.rarity?.title || 'Common')}</span>
+          \${rarityBadge}
           <span class="badge">\${escapeHTML(record.groupEmoji || '○')} \${escapeHTML(record.groupName || 'Common')}</span>
         </div>
         <div class="sub">\${new Date(record.eventDate).toLocaleString()} · Saros \${record.saros} · \${record.octalAddress}</div>
@@ -1196,10 +1342,18 @@ function pageHTML() {
       return wrap;
     }
 
+    function renderRarityGlyph(rarity) {
+      const address = rarity.glyphAddress || '0';
+      const glyph = renderOctalGlyph(address, address.length || 7, rarity.color || '#f3f5f7');
+      glyph.classList.add('rarity-glyph');
+      glyph.title = rarity.patternLabel || rarity.name || address;
+      return glyph;
+    }
+
     function renderOctalGlyph(value, depth, color) {
       const glyph = document.createElement('div');
       glyph.className = 'glyph';
-      glyph.style.setProperty('--rarity-color', color || '#8f98a3');
+      glyph.style.setProperty('--rarity-color', color || '#f3f5f7');
       glyph.title = normalizeOctalGlyphValue(value, depth);
       const size = Math.max(3, Math.min(Number(depth) || 7, 8));
       glyph.dataset.digitOrder = counterclockwiseDigitOrder(size).join(',');

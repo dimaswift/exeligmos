@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import WidgetKit
 import UserNotifications
 
@@ -26,10 +27,10 @@ enum ThreadLiveActivityService {
     static func snapshot(
         entity: TrackedEntity,
         reading: SarosClockReading,
-        trackingRarity: FlipRarity = .common
+        trackingRarity: FlipRarity = .rare
     ) -> ThreadTrackingSnapshot {
         let currentPayload = trackingPayload(for: trackingRarity, reading: reading)
-            ?? trackingPayload(for: .common, reading: reading)
+            ?? trackingPayload(for: .rare, reading: reading)
             ?? flipPayload(for: reading.binCount, reading: reading)
         let nextPayload = nextTrackingPayload(
             after: currentPayload.targetBinIndex,
@@ -127,14 +128,11 @@ enum ThreadLiveActivityService {
     ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date) {
         let glyph = reading.octalAddress(forBinIndex: targetBinIndex)
         let rarity = reading.flipRarity(forBinIndex: targetBinIndex)
-        let order = targetBinIndex >= reading.binCount
-            ? max(7, reading.harmonicDepth)
-            : max(1, FlipRarity.order(forOctalAddress: glyph, harmonicDepth: reading.harmonicDepth))
         return (
             targetBinIndex: targetBinIndex,
             glyph: glyph,
             rarity: rarity,
-            orderLabel: rarity.orderLabel,
+            orderLabel: rarity.patternLabel(harmonicDepth: reading.harmonicDepth),
             flipDate: reading.date(forBinIndex: targetBinIndex)
         )
     }
@@ -152,8 +150,7 @@ enum ThreadLiveActivityService {
         trackingRarity rarity: FlipRarity,
         reading: SarosClockReading
     ) -> (targetBinIndex: Int, glyph: String, rarity: FlipRarity, orderLabel: String, flipDate: Date)? {
-        guard !rarity.isSarosPattern,
-              let nextBinIndex = reading.nextQualifiedFlipBin(after: targetBinIndex, order: rarity.order, exact: true)
+        guard let nextBinIndex = reading.nextQualifiedFlipBin(after: targetBinIndex, rarity: rarity, exact: true)
         else {
             return nil
         }
@@ -161,41 +158,11 @@ enum ThreadLiveActivityService {
     }
 
     private static func trackingPrimaryColorHex(for rarity: FlipRarity) -> String {
-        switch rarity {
-        case .common: "#8E8E93"
-        case .rare: "#3D9BFF"
-        case .epic: "#BF5AF2"
-        case .legendary: "#FFD60A"
-        case .mythic: "#FF453A"
-        case .saros1: "#FF3B30"
-        case .saros2: "#FF9500"
-        case .saros3: "#FFD60A"
-        case .saros4: "#32D74B"
-        case .saros5: "#40C8FF"
-        case .saros6: "#4080FF"
-        case .saros7: "#AB57FF"
-        }
+        rarity.primaryColor.hexRGBString
     }
 
     private static func trackingSecondaryColorHex(for rarity: FlipRarity) -> String {
-        switch rarity {
-        case .common, .rare, .epic, .legendary, .mythic:
-            trackingPrimaryColorHex(for: rarity)
-        case .saros1:
-            "#FF9500"
-        case .saros2:
-            "#FFD60A"
-        case .saros3:
-            "#32D74B"
-        case .saros4:
-            "#40C8FF"
-        case .saros5:
-            "#4080FF"
-        case .saros6:
-            "#AB57FF"
-        case .saros7:
-            "#FF3B30"
-        }
+        rarity.secondaryColor.hexRGBString
     }
 
     private static func scheduleFlipAlarm(for snapshot: ThreadTrackingSnapshot) async {

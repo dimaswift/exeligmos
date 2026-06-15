@@ -107,8 +107,9 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             }
         }
 
-        let customPreference = preferencesByRarity[.saros7]
-            ?? defaultPreferences.first { $0.rarity == .saros7 }
+        let customFallbackRarity = FlipRarity.mythicDigit(7)
+        let customPreference = preferencesByRarity[customFallbackRarity]
+            ?? defaultPreferences.first { $0.rarity == customFallbackRarity }
         if let customPreference, customPreference.mode != .silent {
             for customFlip in customFlips {
                 guard
@@ -173,6 +174,11 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         timeUntilFlip: TimeInterval,
         harmonicDepth: Int
     ) async {
+        let displayOctalAddress = JournalSettings.rarityOctalAddress(
+            countdown.targetOctalAddress,
+            storedDepth: harmonicDepth,
+            rarity: countdown.rarity
+        )
         let content = UNMutableNotificationContent()
         content.title = notificationTitle(
             entity: entity,
@@ -180,12 +186,12 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             mode: mode,
             timeUntilFlip: timeUntilFlip
         )
-        content.subtitle = "Saros \(entity.saros) · \(countdown.targetOctalAddress)"
-        content.body = "\(countdown.rarity.title) \(countdown.rarity.orderLabel) flip to \(countdown.targetOctalAddress) at \(JournalFormatters.dateTime.string(from: countdown.flipDate))."
+        content.subtitle = "Saros \(entity.saros) · \(displayOctalAddress)"
+        content.body = "\(countdown.rarity.title) flip to \(displayOctalAddress) at \(JournalFormatters.dateTime.string(from: countdown.flipDate))."
         content.sound = notificationSound(for: mode)
         content.interruptionLevel = interruptionLevel(for: mode)
         content.threadIdentifier = "saros-\(entity.saros)-\(countdown.rarity.id)"
-        content.relevanceScore = min(Double(countdown.rarity.rank) / Double(FlipRarity.saros7.rank), 1.0)
+        content.relevanceScore = min(Double(countdown.rarity.rank) / Double(FlipRarity.mythicDigit(7).rank), 1.0)
         content.userInfo = [
             "entityID": entity.id.uuidString,
             "trigger": JournalTriggerType.binFlip.rawValue,

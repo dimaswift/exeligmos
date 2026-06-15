@@ -105,8 +105,12 @@ private struct TrackedThreadWidgetView: View {
                             .frame(width: 54, height: 54)
                             .offset(x: 3, y: 3)
                         Spacer(minLength: 0)
-                        Image(systemName: payload.raritySymbolName)
-                            .foregroundStyle(color)
+                        WidgetRarityGlyphIcon(
+                            rawValue: payload.rarityRawValue,
+                            harmonicDepth: snapshot.harmonicDepth,
+                            color: color,
+                            size: 20
+                        )
                             .offset(x: -2, y: 2)
                     }
                     Spacer(minLength: 0)
@@ -125,7 +129,12 @@ private struct TrackedThreadWidgetView: View {
 
     private func rarityIndicator(payload: TrackingDisplayPayload, color: Color) -> some View {
         HStack(spacing: 5) {
-            Image(systemName: payload.raritySymbolName)
+            WidgetRarityGlyphIcon(
+                rawValue: payload.rarityRawValue,
+                harmonicDepth: entry.snapshot?.harmonicDepth ?? 7,
+                color: color,
+                size: 15
+            )
             Text(payload.rarityTitle)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -157,18 +166,18 @@ extension ThreadTrackingSnapshot {
         saros: 145,
         harmonicDepth: 7,
         glyph: "7210230",
-        rarityRawValue: "rare",
-        rarityTitle: "Rare",
-        rarityOrderLabel: "Order 3",
+        rarityRawValue: "rare-7",
+        rarityTitle: "Omega Triplex",
+        rarityOrderLabel: "XXX7777",
         raritySymbolName: "diamond",
         rarityColorHex: "#3D9BFF",
         raritySecondaryColorHex: "#3D9BFF",
         flipDate: Date.now.addingTimeInterval(2 * 60 * 60 + 17 * 60),
         createdAt: .now,
         nextGlyph: "7210231",
-        nextRarityRawValue: "common",
-        nextRarityTitle: "Common",
-        nextRarityOrderLabel: "Order 2",
+        nextRarityRawValue: "rare-1",
+        nextRarityTitle: "Alpha Triplex",
+        nextRarityOrderLabel: "XXX1111",
         nextRaritySymbolName: "circle.fill",
         nextRarityColorHex: "#8E8E93",
         nextRaritySecondaryColorHex: "#8E8E93",

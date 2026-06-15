@@ -6,6 +6,7 @@ import ActivityKit
 
 struct TrackingDisplayPayload {
     let glyph: String
+    let rarityRawValue: String
     let rarityTitle: String
     let rarityOrderLabel: String
     let raritySymbolName: String
@@ -68,6 +69,7 @@ extension ThreadTrackingSnapshot {
            let nextFlipDate {
             return TrackingDisplayPayload(
                 glyph: nextGlyph,
+                rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
                 rarityOrderLabel: nextRarityOrderLabel,
                 raritySymbolName: nextRaritySymbolName,
@@ -80,6 +82,7 @@ extension ThreadTrackingSnapshot {
 
         return TrackingDisplayPayload(
             glyph: glyph,
+            rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
             rarityOrderLabel: rarityOrderLabel,
             raritySymbolName: raritySymbolName,
@@ -105,6 +108,7 @@ extension ThreadTrackingAttributes.ContentState {
            let nextFlipDate {
             return TrackingDisplayPayload(
                 glyph: nextGlyph,
+                rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
                 rarityOrderLabel: nextRarityOrderLabel,
                 raritySymbolName: nextRaritySymbolName,
@@ -117,6 +121,7 @@ extension ThreadTrackingAttributes.ContentState {
 
         return TrackingDisplayPayload(
             glyph: glyph,
+            rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
             rarityOrderLabel: rarityOrderLabel,
             raritySymbolName: raritySymbolName,
@@ -128,6 +133,62 @@ extension ThreadTrackingAttributes.ContentState {
     }
 }
 #endif
+
+struct WidgetRarityGlyphIcon: View {
+    let rawValue: String
+    let harmonicDepth: Int
+    let color: Color
+    var size: CGFloat = 18
+
+    var body: some View {
+        if rawValue == "common" {
+            EmptyView()
+        } else {
+            WidgetOctalGlyph(
+                value: Self.glyphAddress(rawValue: rawValue, harmonicDepth: harmonicDepth),
+                depth: harmonicDepth,
+                color: color
+            )
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private static func glyphAddress(rawValue: String, harmonicDepth: Int) -> String {
+        let depth = min(max(harmonicDepth, 1), 8)
+        let pattern = rarityPattern(rawValue: rawValue)
+        let prefixCount = min(pattern.wildcardPrefixCount, depth)
+        let suffixLength = max(depth - prefixCount, 0)
+        return String(repeating: "0", count: prefixCount)
+            + String(repeating: "\(pattern.digit)", count: suffixLength)
+    }
+
+    private static func rarityPattern(rawValue: String) -> (wildcardPrefixCount: Int, digit: Int) {
+        let parts = rawValue.split(separator: "-", maxSplits: 1).map(String.init)
+        let base = parts.first ?? rawValue
+        let digit = parts.dropFirst().first.flatMap(Int.init).map { min(max($0, 1), 7) } ?? 7
+
+        switch base {
+        case "common":
+            return (8, 7)
+        case "rare":
+            return (3, digit)
+        case "epic":
+            return (2, digit)
+        case "legendary":
+            return (1, digit)
+        case "mythic", "saros":
+            return (0, digit)
+        default:
+            if base.hasPrefix("saros"),
+               let suffix = Int(base.dropFirst(5))
+            {
+                return (0, suffix == 0 ? 7 : min(max(suffix, 1), 7))
+            }
+            return (3, 7)
+        }
+    }
+}
 
 struct WidgetOctalGlyph: View {
     let value: String

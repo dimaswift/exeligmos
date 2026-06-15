@@ -165,7 +165,11 @@ struct ClockDashboardView: View {
             Button {
                 selectedGroupFilter = .common
             } label: {
-                Label(ThreadGroup.commonName, systemImage: selectedGroupFilter == .common ? "checkmark" : ThreadGroup.commonRarity.symbolName)
+                groupMenuItem(
+                    title: ThreadGroup.commonName,
+                    rarity: ThreadGroup.commonRarity,
+                    isSelected: selectedGroupFilter == .common
+                )
             }
 
             if !threadGroups.isEmpty {
@@ -174,12 +178,16 @@ struct ClockDashboardView: View {
                     Button {
                         selectedGroupFilter = .group(group.id)
                     } label: {
-                        Label("\(group.displayEmoji) \(group.displayName)", systemImage: selectedGroupFilter == .group(group.id) ? "checkmark" : group.rarity.symbolName)
+                        groupMenuItem(
+                            title: "\(group.displayEmoji) \(group.displayName)",
+                            rarity: group.rarity,
+                            isSelected: selectedGroupFilter == .group(group.id)
+                        )
                     }
                 }
             }
         } label: {
-            Image(systemName: selectedGroupFilter.symbolName(groups: threadGroups))
+            groupFilterLabel
         }
         .accessibilityLabel("Filter threads by group")
         .onChange(of: threadGroups.map(\.id)) { _, groupIDs in
@@ -190,16 +198,37 @@ struct ClockDashboardView: View {
         }
     }
 
+    @ViewBuilder
+    private var groupFilterLabel: some View {
+        if let rarity = selectedGroupFilter.rarity(groups: threadGroups),
+           rarity != .common
+        {
+            FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 22)
+        } else {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    private func groupMenuItem(title: String, rarity: FlipRarity, isSelected: Bool) -> some View {
+        HStack(spacing: 8) {
+            if isSelected {
+                Image(systemName: "checkmark")
+            }
+            FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 18)
+            Text(title)
+        }
+    }
+
     private func currentRarityCountdown(for reading: SarosClockReading, at date: Date) -> SarosFlipCountdown? {
         reading.rarityCountdowns(now: date)
             .filter { countdown in
                 countdown.timeUntilFlip >= 0 && countdown.timeUntilFlip <= Self.currentRarityWindow
             }
             .sorted {
-                if $0.rarity != $1.rarity {
-                    return $0.rarity > $1.rarity
+                if $0.timeUntilFlip != $1.timeUntilFlip {
+                    return $0.timeUntilFlip < $1.timeUntilFlip
                 }
-                return $0.timeUntilFlip < $1.timeUntilFlip
+                return $0.rarity > $1.rarity
             }
             .first
     }
@@ -214,10 +243,10 @@ struct ClockDashboardView: View {
         _ lhs: DashboardFlipItem,
         _ rhs: DashboardFlipItem
     ) -> Bool {
-        if lhs.priorityRank != rhs.priorityRank {
-            return lhs.priorityRank > rhs.priorityRank
+        if lhs.timeUntilFlip != rhs.timeUntilFlip {
+            return lhs.timeUntilFlip < rhs.timeUntilFlip
         }
-        return lhs.timeUntilFlip < rhs.timeUntilFlip
+        return lhs.priorityRank > rhs.priorityRank
     }
 
     private static let currentRarityWindow: TimeInterval = 24 * 60 * 60
@@ -301,14 +330,14 @@ private enum ThreadGroupFilter: Equatable {
         }
     }
 
-    func symbolName(groups: [ThreadGroup]) -> String {
+    func rarity(groups: [ThreadGroup]) -> FlipRarity? {
         switch self {
         case .all:
-            "line.3.horizontal.decrease.circle"
+            nil
         case .common:
-            ThreadGroup.commonRarity.symbolName
+            ThreadGroup.commonRarity
         case .group(let groupID):
-            groups.first { $0.id == groupID }?.rarity.symbolName ?? "line.3.horizontal.decrease.circle"
+            groups.first { $0.id == groupID }?.rarity
         }
     }
 }
@@ -354,7 +383,7 @@ private struct DashboardFlipItem {
     }
 
     var orderLabel: String {
-        customFlip == nil ? countdown?.rarity.orderLabel ?? "" : "Custom"
+        customFlip == nil ? countdown?.rarity.patternLabel(harmonicDepth: reading.harmonicDepth) ?? "" : "Custom"
     }
 
     var octalAddress: String {
@@ -625,13 +654,37 @@ private struct EntityDetailView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
                     Menu {
-                        ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
-                            Button {
-                                startLiveTracking(rarity: rarity)
+                        ForEach(FlipRarity.rarityGroups(for: harmonicDepth)) { group in
+                            Menu {
+                                Button {
+                                    startLiveTracking(rarity: group.header)
+                                } label: {
+                                    HStack {
+                                        FlipRarityGlyphIcon(rarity: group.header, harmonicDepth: harmonicDepth, size: 18)
+                                        Text("Track \(group.header.title)")
+                                    }
+                                }
+                                .disabled(isStartingLiveTracking)
+
+                                Divider()
+
+                                ForEach(group.subrarities) { rarity in
+                                    Button {
+                                        startLiveTracking(rarity: rarity)
+                                    } label: {
+                                        HStack {
+                                            FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 18)
+                                            Text("Track \(rarity.patternLabel(harmonicDepth: harmonicDepth))")
+                                        }
+                                    }
+                                    .disabled(isStartingLiveTracking)
+                                }
                             } label: {
-                                Label("Track \(rarity.title)", systemImage: rarity.symbolName)
+                                HStack {
+                                    FlipRarityGlyphIcon(rarity: group.header, harmonicDepth: harmonicDepth, size: 18)
+                                    Text(group.header.title)
+                                }
                             }
-                            .disabled(isStartingLiveTracking)
                         }
                     } label: {
                         Label("Track", systemImage: "dot.radiowaves.left.and.right")
@@ -749,7 +802,7 @@ private struct EntityDetailView: View {
 
     private var filteredEntityRecords: [JournalRecord] {
         guard let selectedRecordRarity else { return entityRecords }
-        return entityRecords.filter { recordRarity(for: $0) == selectedRecordRarity }
+        return entityRecords.filter { recordRarity(for: $0).baseRarity == selectedRecordRarity.baseRarity }
     }
 
     private var entityCustomFlips: [CustomFlipEvent] {
@@ -785,10 +838,10 @@ private struct EntityDetailView: View {
         reading.rarityCountdowns(now: date)
             .filter { $0.timeUntilFlip >= 0 && $0.timeUntilFlip <= 24 * 60 * 60 }
             .sorted {
-                if $0.rarity != $1.rarity {
-                    return $0.rarity > $1.rarity
+                if $0.timeUntilFlip != $1.timeUntilFlip {
+                    return $0.timeUntilFlip < $1.timeUntilFlip
                 }
-                return $0.timeUntilFlip < $1.timeUntilFlip
+                return $0.rarity > $1.rarity
             }
             .first
     }
@@ -838,9 +891,8 @@ private struct EntityDetailView: View {
             } else {
                 Picker("Rarity", selection: $selectedRecordRarity) {
                     Text("All").tag(nil as FlipRarity?)
-                    ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
-                        Label(rarity.title, systemImage: rarity.symbolName)
-                            .tag(Optional(rarity))
+                    ForEach(FlipRarity.baseRarities) { rarity in
+                        Text(rarity.title).tag(Optional(rarity))
                     }
                 }
                 .pickerStyle(.menu)
@@ -896,7 +948,10 @@ private struct EntityDetailView: View {
                     Button {
                         assignThreadGroup(nil)
                     } label: {
-                        Label(ThreadGroup.commonName, systemImage: ThreadGroup.commonRarity.symbolName)
+                        groupSelectionMenuItem(
+                            title: ThreadGroup.commonName,
+                            rarity: ThreadGroup.commonRarity
+                        )
                     }
 
                     if !threadGroups.isEmpty {
@@ -905,7 +960,10 @@ private struct EntityDetailView: View {
                             Button {
                                 assignThreadGroup(group)
                             } label: {
-                                Label("\(group.displayEmoji) \(group.displayName)", systemImage: group.rarity.symbolName)
+                                groupSelectionMenuItem(
+                                    title: "\(group.displayEmoji) \(group.displayName)",
+                                    rarity: group.rarity
+                                )
                             }
                         }
                     }
@@ -922,6 +980,13 @@ private struct EntityDetailView: View {
                 }
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    private func groupSelectionMenuItem(title: String, rarity: FlipRarity) -> some View {
+        HStack(spacing: 8) {
+            FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 18)
+            Text(title)
         }
     }
 
@@ -1324,10 +1389,12 @@ private struct ThreadHeaderCountdownText: View {
         reading.rarityCountdowns(now: date)
             .filter { $0.flipDate.timeIntervalSince(date) >= 0 && $0.flipDate.timeIntervalSince(date) <= 24 * 60 * 60 }
             .sorted {
-                if $0.rarity != $1.rarity {
-                    return $0.rarity > $1.rarity
+                let lhsDelta = $0.flipDate.timeIntervalSince(date)
+                let rhsDelta = $1.flipDate.timeIntervalSince(date)
+                if lhsDelta != rhsDelta {
+                    return lhsDelta < rhsDelta
                 }
-                return $0.flipDate.timeIntervalSince(date) < $1.flipDate.timeIntervalSince(date)
+                return $0.rarity > $1.rarity
             }
             .first
     }
@@ -1344,7 +1411,7 @@ private struct RarityCountdownSection: View {
 
     var body: some View {
         Section("Rarity countdowns") {
-            ForEach(reading.rarityCountdowns(now: now), id: \.rarity) { countdown in
+            ForEach(sortedCountdowns, id: \.rarity) { countdown in
                 RarityCountdownRow(
                     countdown: countdown,
                     depth: depth,
@@ -1352,6 +1419,17 @@ private struct RarityCountdownSection: View {
                 )
             }
         }
+    }
+
+    private var sortedCountdowns: [SarosFlipCountdown] {
+        reading.rarityCountdowns(now: now)
+            .filter { $0.timeUntilFlip >= 0 }
+            .sorted {
+                if $0.timeUntilFlip != $1.timeUntilFlip {
+                    return $0.timeUntilFlip < $1.timeUntilFlip
+                }
+                return $0.rarity > $1.rarity
+            }
     }
 }
 
@@ -1410,9 +1488,8 @@ struct ThreadGroupEditorView: View {
                     .autocorrectionDisabled()
 
                 Picker("Rarity", selection: $rarity) {
-                    ForEach(FlipRarity.allCases) { rarity in
-                        Label(rarity.title, systemImage: rarity.symbolName)
-                            .tag(rarity)
+                    ForEach(FlipRarity.baseRarities) { rarity in
+                        Text(rarity.title).tag(rarity)
                     }
                 }
             }
@@ -1511,10 +1588,10 @@ private struct AnchorEclipseMetrics {
     }
 
     var inverseRarity: FlipRarity {
-        let commonPeriod = periodDuration(order: FlipRarity.common.order)
-        let rarePeriod = periodDuration(order: FlipRarity.rare.order)
-        let epicPeriod = periodDuration(order: FlipRarity.epic.order)
-        let legendaryPeriod = periodDuration(order: FlipRarity.legendary.order)
+        let rarePeriod = periodDuration(for: .rare)
+        let commonPeriod = rarePeriod / 7
+        let epicPeriod = periodDuration(for: .epic)
+        let legendaryPeriod = periodDuration(for: .legendary)
 
         if rarityDistance <= commonPeriod {
             return .mythic
@@ -1528,13 +1605,11 @@ private struct AnchorEclipseMetrics {
         if rarityDistance <= legendaryPeriod {
             return .rare
         }
-        return .common
+        return .rare
     }
 
-    private func periodDuration(order: Int) -> TimeInterval {
-        let clampedDepth = JournalSettings.clampedHarmonicDepth(depth)
-        let exponent = max(clampedDepth - order, 0)
-        return max(referenceCycleDuration, 1) / pow(8, Double(exponent))
+    private func periodDuration(for rarity: FlipRarity) -> TimeInterval {
+        max(referenceCycleDuration, 1) / Double(max(rarity.basePeriodDivisions, 1))
     }
 }
 
@@ -1706,6 +1781,14 @@ private struct RarityCountdownRow: View {
     let depth: Int
     let now: Date
 
+    private var canonicalAddress: String {
+        JournalSettings.rarityOctalAddress(
+            countdown.targetOctalAddress,
+            storedDepth: depth,
+            rarity: countdown.rarity
+        )
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             OctalGlyph(value: countdown.targetOctalAddress, depth: depth, style: countdown.rarity.glyphStyle)
@@ -1717,7 +1800,7 @@ private struct RarityCountdownRow: View {
                 Text(countdown.rarity.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(countdown.rarity.color)
-                Text("\(countdown.rarity.orderLabel) · \(countdown.targetOctalAddress)")
+                Text(canonicalAddress)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
@@ -1795,20 +1878,20 @@ private struct ThreadFlipTimeline {
         var events: [ThreadFlipEvent] = []
         var seenIDs: Set<String> = []
 
-        for rarity in FlipRarity.visibleRarities(for: reading.harmonicDepth, includeSaros: false) where rarity >= .rare {
+        for rarity in FlipRarity.eventRarities(for: reading.harmonicDepth) where rarity >= .epic {
             let firstBin: Int?
             switch direction {
             case .forward:
-                firstBin = reading.nextQualifiedFlipBin(after: reading.binIndex, order: rarity.order, exact: true)
+                firstBin = reading.nextQualifiedFlipBin(after: reading.binIndex, rarity: rarity, exact: true)
             case .backward:
-                firstBin = reading.previousQualifiedFlipBin(atOrBefore: reading.binIndex, order: rarity.order, exact: true)
+                firstBin = reading.previousQualifiedFlipBin(atOrBefore: reading.binIndex, rarity: rarity, exact: true)
             }
 
             var bin = firstBin
             var count = 0
             let limit = 24
             while let currentBin = bin, currentBin > 0, currentBin < reading.binCount, count < limit {
-                let event = event(for: currentBin, reading: reading, now: now)
+                let event = event(for: currentBin, rarity: rarity, reading: reading, now: now)
                 if seenIDs.insert(event.id).inserted {
                     events.append(event)
                     count += 1
@@ -1816,19 +1899,11 @@ private struct ThreadFlipTimeline {
 
                 switch direction {
                 case .forward:
-                    bin = reading.nextQualifiedFlipBin(after: currentBin, order: rarity.order, exact: true)
+                    bin = reading.nextQualifiedFlipBin(after: currentBin, rarity: rarity, exact: true)
                 case .backward:
-                    bin = reading.previousQualifiedFlipBin(atOrBefore: currentBin - 1, order: rarity.order, exact: true)
+                    bin = reading.previousQualifiedFlipBin(atOrBefore: currentBin - 1, rarity: rarity, exact: true)
                 }
             }
-        }
-
-        for rarity in FlipRarity.sarosPatternRarities {
-            guard let event = sarosPatternEvent(for: rarity, reading: reading, now: now, direction: direction),
-                  seenIDs.insert(event.id).inserted else {
-                continue
-            }
-            events.append(event)
         }
 
         for customFlip in customFlips {
@@ -1850,56 +1925,27 @@ private struct ThreadFlipTimeline {
         }
     }
 
-    private static func event(for binIndex: Int, reading: SarosClockReading, now: Date) -> ThreadFlipEvent {
+    private static func event(for binIndex: Int, rarity: FlipRarity, reading: SarosClockReading, now: Date) -> ThreadFlipEvent {
         let date = reading.date(forBinIndex: binIndex)
         let isEclipse = binIndex <= 0 || binIndex >= reading.binCount
         let octalAddress = reading.octalAddress(forBinIndex: binIndex)
         let baseOrder = reading.flipOrder(forBinIndex: binIndex)
-        let rarity = FlipRarity.rarity(
-            forOctalAddress: octalAddress,
-            harmonicDepth: reading.harmonicDepth,
-            isEclipse: isEclipse
-        )
-        let order = rarity.isSarosPattern ? max(7, baseOrder) : baseOrder
-        let periodDuration = rarity.isSarosPattern
-            ? date.timeIntervalSince(reading.previousEclipse.date)
-            : Double(reading.qualifiedFlipStride(forOrder: max(1, min(order, 6)))) * reading.binDuration
+        let eventRarity = isEclipse ? .mythicDigit(7) : rarity
+        let order = max(eventRarity.order, baseOrder)
+        let stride = eventRarity.binStride(harmonicDepth: reading.harmonicDepth) ?? reading.binCount
+        let periodDuration = Double(stride) * reading.binDuration
         return ThreadFlipEvent(
-            id: "flip-\(binIndex)-\(rarity.id)",
-            title: rarity.isSarosPattern ? "Saros" : "Flip",
+            id: "flip-\(binIndex)-\(eventRarity.id)",
+            title: "Flip",
             date: date,
             octalAddress: octalAddress,
             order: order,
-            rarity: rarity,
+            rarity: eventRarity,
             customColorHex: nil,
             isCustom: false,
             isFuture: date >= now,
             periodDuration: periodDuration
         )
-    }
-
-    private static func sarosPatternEvent(
-        for rarity: FlipRarity,
-        reading: SarosClockReading,
-        now: Date,
-        direction: ThreadFlipBinCollection.Direction
-    ) -> ThreadFlipEvent? {
-        guard let address = rarity.sarosPatternAddress(depth: reading.harmonicDepth),
-              let binIndex = Int(address, radix: 8),
-              binIndex > 0,
-              binIndex < reading.binCount
-        else {
-            return nil
-        }
-
-        switch direction {
-        case .forward:
-            guard binIndex > reading.binIndex else { return nil }
-        case .backward:
-            guard binIndex <= reading.binIndex else { return nil }
-        }
-
-        return event(for: binIndex, reading: reading, now: now)
     }
 
     static func event(for customFlip: CustomFlipEvent, now: Date) -> ThreadFlipEvent {
@@ -1909,7 +1955,7 @@ private struct ThreadFlipTimeline {
             date: customFlip.date,
             octalAddress: customFlip.octalAddress,
             order: 8,
-            rarity: .saros7,
+            rarity: .mythicDigit(7),
             customColorHex: customFlip.colorHex,
             isCustom: true,
             isFuture: customFlip.date >= now,
@@ -2158,12 +2204,15 @@ private enum ThreadFlipResonanceCalculator {
                 let id = "\(reading.previousEclipse.id)-\(bin)"
                 guard seenCandidates.insert(id).inserted else { return nil }
                 let isEclipse = bin <= 0 || bin >= reading.binCount
-                let order = reading.flipOrder(forBinIndex: bin)
                 return ThreadFlipCandidate(
                     title: reference.title,
                     date: reading.date(forBinIndex: bin),
                     octalAddress: reading.octalAddress(forBinIndex: bin),
-                    rarity: FlipRarity.rarity(forOrder: order, isEclipse: isEclipse),
+                    rarity: FlipRarity.rarity(
+                        forOctalAddress: reading.octalAddress(forBinIndex: bin),
+                        harmonicDepth: reading.harmonicDepth,
+                        isEclipse: isEclipse
+                    ),
                     customColorHex: nil,
                     isCustom: false
                 )
@@ -2177,7 +2226,7 @@ private enum ThreadFlipResonanceCalculator {
                     title: customFlip.displayName,
                     date: customFlip.date,
                     octalAddress: customFlip.octalAddress,
-                    rarity: .saros7,
+                    rarity: .mythicDigit(7),
                     customColorHex: customFlip.colorHex,
                     isCustom: true
                 )
@@ -2216,10 +2265,10 @@ private enum ThreadFlipResonanceCalculator {
     private static func candidateBins(for reading: SarosClockReading) -> [Int] {
         var bins: [Int] = [0, reading.binCount]
 
-        for rarity in FlipRarity.visibleRarities(for: reading.harmonicDepth, includeSaros: false) where rarity >= .rare {
+        for rarity in FlipRarity.eventRarities(for: reading.harmonicDepth) where rarity >= .epic {
             bins.append(contentsOf: [
-                reading.previousQualifiedFlipBin(atOrBefore: reading.binIndex, order: rarity.order, exact: true),
-                reading.nextQualifiedFlipBin(after: reading.binIndex, order: rarity.order, exact: true)
+                reading.previousQualifiedFlipBin(atOrBefore: reading.binIndex, rarity: rarity, exact: true),
+                reading.nextQualifiedFlipBin(after: reading.binIndex, rarity: rarity, exact: true)
             ].compactMap { $0 })
         }
 
@@ -2653,29 +2702,45 @@ private struct GlyphRarityProximityBar: View {
     }
 
     private func octalScore(for rarity: FlipRarity) -> String {
-        let stride = Double(reading.qualifiedFlipStride(forOrder: rarity.order))
+        guard let strideValue = rarity.binStride(harmonicDepth: reading.harmonicDepth) else {
+            return "000"
+        }
+        let stride = Double(strideValue)
         guard stride > 0 else { return "000" }
 
         let rawPhase = date.timeIntervalSince(reading.previousEclipse.date) / max(reading.intervalDuration, 1)
         let continuousBin = min(max(rawPhase * Double(reading.binCount), 0), Double(reading.binCount))
-        let nearestFlipBin = (continuousBin / stride).rounded() * stride
-        let distance = abs(continuousBin - nearestFlipBin)
+        let offsets = rarity.isHeaderRarity
+            ? rarity.subrarities.compactMap { $0.subeventOffset(harmonicDepth: reading.harmonicDepth) }
+            : [rarity.subeventOffset(harmonicDepth: reading.harmonicDepth)].compactMap { $0 }
+        let distance = offsets
+            .map { offset in Self.wrappedDistance(from: continuousBin, to: Double(offset), period: stride) }
+            .min() ?? 0
         let halfPeriod = stride / 2
         let proximity = 1 - min(max(distance / halfPeriod, 0), 1)
         let scaled = min(max(Int((proximity * 511).rounded()), 0), 511)
         return String(scaled, radix: 8).leftPadded(toLength: 3, withPad: "0")
     }
+
+    private static func wrappedDistance(from value: Double, to offset: Double, period: Double) -> Double {
+        guard period > 0 else { return 0 }
+        var delta = (value - offset).truncatingRemainder(dividingBy: period)
+        if delta < 0 {
+            delta += period
+        }
+        return min(delta, period - delta)
+    }
 }
 
 private struct GlyphRarityProximityCell: View {
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+
     let rarity: FlipRarity
     let octalScore: String
 
     var body: some View {
         VStack(spacing: 5) {
-            Image(systemName: rarity.symbolName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(rarity.color)
+            FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 22)
             OctalGlyph(value: octalScore, depth: 3, color: rarity.color)
                 .frame(width: 34, height: 34)
                 .padding(4)

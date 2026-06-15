@@ -71,7 +71,12 @@ private struct ThreadTrackingLockScreenView: View {
                     .font(.headline)
                     .lineLimit(1)
                 HStack(spacing: 5) {
-                    Image(systemName: payload.raritySymbolName)
+                    WidgetRarityGlyphIcon(
+                        rawValue: payload.rarityRawValue,
+                        harmonicDepth: context.attributes.harmonicDepth,
+                        color: color,
+                        size: 16
+                    )
                     Text(payload.rarityTitle)
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -130,7 +135,12 @@ private struct LiveTrackingCenterView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 5) {
-                    Image(systemName: payload.raritySymbolName)
+                    WidgetRarityGlyphIcon(
+                        rawValue: payload.rarityRawValue,
+                        harmonicDepth: context.attributes.harmonicDepth,
+                        color: color,
+                        size: 14
+                    )
                     Text(payload.rarityTitle)
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -150,9 +160,12 @@ private struct LiveTrackingRarityIconView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
-            Image(systemName: payload.raritySymbolName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color(hexString: payload.rarityColorHex))
+            WidgetRarityGlyphIcon(
+                rawValue: payload.rarityRawValue,
+                harmonicDepth: context.attributes.harmonicDepth,
+                color: Color(hexString: payload.rarityColorHex),
+                size: 18
+            )
                 .offset(x: -4, y: 3)
         }
     }

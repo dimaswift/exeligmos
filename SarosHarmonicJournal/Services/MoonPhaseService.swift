@@ -864,7 +864,7 @@ enum MoonPhaseOctalCalculator {
         case 1:
             return .rare
         default:
-            return .common
+            return .rare
         }
     }
 

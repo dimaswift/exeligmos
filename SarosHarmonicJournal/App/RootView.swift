@@ -153,7 +153,7 @@ private struct FeedView: View {
 
     private var filteredRecords: [JournalRecord] {
         records.filter { record in
-            let matchesRarity = selectedRarity.map { recordRarity(for: record) == $0 } ?? true
+            let matchesRarity = selectedRarity.map { recordRarity(for: record).baseRarity == $0.baseRarity } ?? true
             let matchesDate = switch dateFilterMode {
             case .all:
                 true
@@ -248,9 +248,8 @@ private struct FeedView: View {
         Section("Filters") {
             Picker("Rarity", selection: $selectedRarity) {
                 Text("All rarities").tag(nil as FlipRarity?)
-                ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
-                    Label(rarity.title, systemImage: rarity.symbolName)
-                        .tag(Optional(rarity))
+                ForEach(FlipRarity.baseRarities) { rarity in
+                    Text(rarity.title).tag(Optional(rarity))
                 }
             }
             .pickerStyle(.menu)
@@ -274,7 +273,8 @@ private struct FeedView: View {
 
     private func recordRarity(for record: JournalRecord) -> FlipRarity {
         FlipRarity.rarity(
-            forOrder: FlipRarity.order(forOctalAddress: record.octalAddress, harmonicDepth: record.harmonicDepth),
+            forOctalAddress: record.octalAddress,
+            harmonicDepth: record.harmonicDepth,
             isEclipse: record.triggerType == .eclipse
         )
     }
@@ -585,7 +585,7 @@ private struct MoonTimelineLunarEvent: Identifiable {
         default: break
         }
 
-        switch rarity {
+        switch rarity.baseRarity {
         case .legendary: return 126
         case .epic: return 92
         case .rare: return 52
@@ -606,7 +606,7 @@ private struct MoonTimelineLunarEvent: Identifiable {
     }
 
     var opacity: Double {
-        kind == .phaseSubdivision && rarity == .rare ? 0.55 : 0.9
+        kind == .phaseSubdivision && rarity.baseRarity == .rare ? 0.55 : 0.9
     }
 
     var isMajor: Bool {
@@ -632,7 +632,7 @@ private struct MoonTimelineSarosEvent: Identifiable {
     let octalAddress: String
 
     var markLength: CGFloat {
-        switch rarity {
+        switch rarity.baseRarity {
         case .mythic: return 118
         case .legendary: return 96
         case .epic: return 74
@@ -737,7 +737,7 @@ private enum MoonTimelineModelBuilder {
                 let isNew = event.kind == .new
                 events.append(MoonTimelineLunarEvent(
                     date: event.date,
-                    rarity: isNew ? .legendary : .rare,
+                    rarity: isNew ? .mythicDigit(7) : .legendaryDigit(7),
                     label: isNew ? "New" : "Full",
                     kind: isNew ? .newMoon : .fullMoon
                 ))
@@ -749,7 +749,7 @@ private enum MoonTimelineModelBuilder {
             events.append(contentsOf: orbitalEvents.map { event in
                 MoonTimelineLunarEvent(
                     date: event.date,
-                    rarity: .rare,
+                    rarity: .epicDigit(7),
                     label: moonOrbitalTimelineLabel(for: event.kind),
                     kind: moonTimelineKind(for: event.kind)
                 )
@@ -770,7 +770,9 @@ private enum MoonTimelineModelBuilder {
         let binCount = 512
 
         for boundaryIndex in stride(from: 8, through: binCount - 8, by: 8) {
-            guard let rarity = lunarTimelineRarity(forBoundaryIndex: boundaryIndex, binCount: binCount) else {
+            guard let rarity = lunarTimelineRarity(forBoundaryIndex: boundaryIndex, depth: 3),
+                  rarity >= .epic
+            else {
                 continue
             }
 
@@ -804,19 +806,10 @@ private enum MoonTimelineModelBuilder {
         }
     }
 
-    private static func lunarTimelineRarity(forBoundaryIndex index: Int, binCount: Int) -> FlipRarity? {
-        guard index > 0 && index < binCount else { return .legendary }
-
-        if index.isMultiple(of: 64) {
-            let octave = index / 64
-            return (1...7).contains(octave) ? .epic : nil
-        }
-
-        if index.isMultiple(of: 8) {
-            return .rare
-        }
-
-        return nil
+    private static func lunarTimelineRarity(forBoundaryIndex index: Int, depth: Int) -> FlipRarity? {
+        let address = String(index, radix: 8).leftPadded(toLength: depth, withPad: "0")
+        let rarity = FlipRarity.rarity(forOctalAddress: address, harmonicDepth: depth)
+        return rarity.isHeaderRarity ? nil : rarity
     }
 
     private static func makeSarosEvents(
@@ -828,7 +821,7 @@ private enum MoonTimelineModelBuilder {
     ) -> [MoonTimelineSarosEvent] {
         var eventsByKey: [String: MoonTimelineSarosEvent] = [:]
         let regularRarities = FlipRarity
-            .visibleRarities(for: harmonicDepth, includeSaros: false)
+            .eventRarities(for: harmonicDepth)
             .filter { $0 >= .epic }
 
         let sarosFamilies = Array(Set(entities.map(\.saros))).sorted()
@@ -843,14 +836,14 @@ private enum MoonTimelineModelBuilder {
             }
 
             for rarity in regularRarities {
-                var nextBin = reading.nextQualifiedFlipBin(after: reading.binIndex, order: rarity.order, exact: true)
+                var nextBin = reading.nextQualifiedFlipBin(after: reading.binIndex, rarity: rarity, exact: true)
                 while let binIndex = nextBin {
                     let date = reading.date(forBinIndex: binIndex)
                     guard date <= endDate else { break }
                     if date >= startDate {
                         let actualRarity = reading.flipRarity(forBinIndex: binIndex)
                         guard actualRarity >= .epic else {
-                            nextBin = reading.nextQualifiedFlipBin(after: binIndex, order: rarity.order, exact: true)
+                            nextBin = reading.nextQualifiedFlipBin(after: binIndex, rarity: rarity, exact: true)
                             continue
                         }
                         let key = "\(saros)-\(binIndex)"
@@ -868,7 +861,7 @@ private enum MoonTimelineModelBuilder {
                             eventsByKey[key] = event
                         }
                     }
-                    nextBin = reading.nextQualifiedFlipBin(after: binIndex, order: rarity.order, exact: true)
+                    nextBin = reading.nextQualifiedFlipBin(after: binIndex, rarity: rarity, exact: true)
                 }
             }
         }
@@ -1035,7 +1028,7 @@ private struct LiveTrackingRolloverObserver: View {
                 date: date,
                 harmonicDepth: snapshot.harmonicDepth
             )
-            let trackingRarity = FlipRarity(rawValue: snapshot.rarityRawValue) ?? .common
+            let trackingRarity = FlipRarity(rawValue: snapshot.rarityRawValue) ?? .rare
             let nextSnapshot = ThreadLiveActivityService.snapshot(
                 entity: entity,
                 reading: reading,

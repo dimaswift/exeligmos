@@ -672,14 +672,20 @@ private struct RarityPeriodsSettingsView: View {
             Section {
                 MetadataRow(title: "Glyph depth", value: "\(JournalSettings.clampedHarmonicDepth(harmonicDepth))")
                 MetadataRow(title: "Average Saros", value: Self.durationFormatter.string(from: JournalSettings.averageSarosPeriod) ?? JournalSettings.averageSarosPeriod.compactDuration)
-                Text("Periods use the average Saros interval and the configured glyph depth.")
+                Text("Periods use repeated suffix patterns over the average Saros interval, so rarity spacing stays stable as glyph depth changes.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Section("Average periods") {
-                ForEach(FlipRarity.visibleRarities(for: harmonicDepth)) { rarity in
-                    RarityPeriodRow(rarity: rarity, harmonicDepth: harmonicDepth)
+                ForEach(FlipRarity.rarityGroups(for: harmonicDepth)) { group in
+                    DisclosureGroup {
+                        ForEach(group.subrarities) { rarity in
+                            RarityPeriodRow(rarity: rarity, harmonicDepth: harmonicDepth)
+                        }
+                    } label: {
+                        RarityPeriodRow(rarity: group.header, harmonicDepth: harmonicDepth)
+                    }
                 }
             }
         }
@@ -700,41 +706,33 @@ private struct RarityPeriodRow: View {
     let rarity: FlipRarity
     let harmonicDepth: Int
 
-    private var depth: Int {
-        JournalSettings.clampedHarmonicDepth(harmonicDepth)
-    }
-
-    private var binCount: Int {
-        (0..<depth).reduce(1) { value, _ in value * 8 }
-    }
-
-    private var stride: Int {
-        if rarity.isSarosPattern,
-           let address = rarity.sarosPatternAddress(depth: depth),
-           let binIndex = Int(address, radix: 8) {
-            return max(binIndex, 1)
-        }
-        return (0..<rarity.order).reduce(1) { value, _ in value * 8 }
+    private var divisions: Int {
+        rarity.basePeriodDivisions
     }
 
     private var periodDuration: TimeInterval {
-        JournalSettings.averageSarosPeriod / Double(binCount) * Double(stride)
+        let basePeriod = JournalSettings.averageSarosPeriod / Double(divisions)
+        guard !rarity.isHeaderRarity else { return basePeriod }
+        return basePeriod * Double(max(rarity.repeatedDigit, 1)) / 7
     }
 
-    private var stepOctalLabel: String {
-        if let address = rarity.sarosPatternAddress(depth: depth) {
-            return address
+    private var detailText: String {
+        if rarity.isHeaderRarity {
+            return "\(String(divisions, radix: 8)) divisions"
         }
-        return String(stride, radix: 8).leftPadded(toLength: rarity.order + 1, withPad: "0")
+        return "\(rarity.repeatedDigit)/7 into \(rarity.baseRarity.title.lowercased()) range"
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Label(rarity.title, systemImage: rarity.symbolName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(rarity.color)
-                Text("\(rarity.orderLabel) · step \(stepOctalLabel)")
+                HStack(spacing: 8) {
+                    FlipRarityGlyphIcon(rarity: rarity, harmonicDepth: harmonicDepth, size: 24)
+                    Text(rarity.title)
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(rarity.color)
+                Text(detailText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -771,11 +769,25 @@ private struct FlipNotificationSettingsView: View {
     var body: some View {
         Form {
             Section {
-                ForEach($preferences) { $preference in
-                    RarityPreferenceRow(preference: $preference)
+                ForEach(FlipRarity.rarityGroups(for: harmonicDepth)) { group in
+                    if let index = preferenceIndex(for: group.header) {
+                        RarityPreferenceRow(preference: $preferences[index])
+                    }
+
+                    DisclosureGroup {
+                        ForEach(group.subrarities) { rarity in
+                            if let index = preferenceIndex(for: rarity) {
+                                RarityPreferenceRow(preference: $preferences[index])
+                            }
+                        }
+                    } label: {
+                        Label("Sub-rarities", systemImage: "square.stack.3d.up")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(group.header.color)
+                    }
                 }
             } footer: {
-                Text("Notifications are scheduled for Rare and above. Order N is the number of trailing zeroes; Saros-pattern events use repeated octal addresses.")
+                Text("Notifications use repeated suffixes. The visible row is the trailing-zero header; expand it to tune trailing 1...7 sub-rarities.")
             }
 
             Section {
@@ -823,17 +835,25 @@ private struct FlipNotificationSettingsView: View {
     private func resetDefaults() {
         preferences = FlipNotificationPreferences.defaults(for: harmonicDepth)
     }
+
+    private func preferenceIndex(for rarity: FlipRarity) -> Int? {
+        preferences.firstIndex { $0.rarity == rarity }
+    }
 }
 
 private struct RarityPreferenceRow: View {
     @Binding var preference: FlipNotificationRarityPreference
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(preference.rarity.title, systemImage: preference.rarity.symbolName)
-                    .font(.headline)
-                    .foregroundStyle(preference.rarity.color)
+                HStack(spacing: 8) {
+                    FlipRarityGlyphIcon(rarity: preference.rarity, harmonicDepth: harmonicDepth, size: 26)
+                    Text(preference.rarity.title)
+                        .font(.headline)
+                }
+                .foregroundStyle(preference.rarity.color)
                 Spacer()
                 Picker("Mode", selection: $preference.mode) {
                     ForEach(FlipNotificationMode.allCases) { mode in
@@ -857,7 +877,7 @@ private struct RarityPreferenceRow: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text(preference.rarity.orderLabel)
+            Text(preference.rarity.patternLabel(harmonicDepth: harmonicDepth))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

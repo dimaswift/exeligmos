@@ -319,7 +319,7 @@ private struct CatalogResonanceView: View {
     @State private var hasEditedRaritySelection = false
 
     private var selectableRarities: [FlipRarity] {
-        FlipRarity.visibleRarities(for: harmonicDepth, includeSaros: false).filter { $0 >= .rare }
+        FlipRarity.visibleRarities(for: harmonicDepth, includeSubrarities: false).filter { $0 >= .rare }
     }
 
     private var referenceFamily: CatalogActiveSarosFamily? {
@@ -566,8 +566,7 @@ private struct CatalogResonanceView: View {
                 return nil
             }
 
-            let interval = FlipRarity.visibleRarities(for: harmonicDepth, includeSaros: false)
-                .filter { $0 > .common }
+            let interval = FlipRarity.visibleRarities(for: harmonicDepth, includeSubrarities: false)
                 .compactMap { reading.countdown(rarity: $0, now: now)?.timeUntilFlip }
                 .filter { $0 >= 0 }
                 .min()
@@ -587,10 +586,7 @@ private struct CatalogResonanceView: View {
     }
 
     private func waveFrequency(for rarity: FlipRarity, reading: SarosClockReading) -> Double {
-        if rarity.isSarosPattern {
-            return 1
-        }
-        let stride = reading.qualifiedFlipStride(forOrder: rarity.order)
+        let stride = rarity.binStride(harmonicDepth: reading.harmonicDepth) ?? reading.binCount
         return max(Double(reading.binCount) / Double(max(stride, 1)), 1)
     }
 
@@ -677,17 +673,22 @@ private struct CatalogResonanceCubeMapView: View {
 }
 
 private struct CatalogResonanceRarityChip: View {
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+
     let rarity: FlipRarity
     let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: rarity.symbolName)
-                .font(.headline.weight(.semibold))
+            OctalGlyph(
+                value: rarity.glyphAddress(harmonicDepth: harmonicDepth),
+                depth: JournalSettings.clampedHarmonicDepth(harmonicDepth),
+                color: foregroundColor
+            )
+                .frame(width: 26, height: 26)
                 .frame(maxWidth: .infinity)
                 .frame(height: 42)
-                .foregroundStyle(foregroundColor)
                 .background(backgroundColor, in: Capsule())
                 .overlay {
                     Capsule()

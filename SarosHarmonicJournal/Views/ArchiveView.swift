@@ -7,6 +7,7 @@ import UIKit
 
 struct JournalRecordRow: View {
     @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     let record: JournalRecord
     let entityTitle: String
@@ -24,12 +25,24 @@ struct JournalRecordRow: View {
         try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 3)
     }
 
+    private var displayDepth: Int {
+        JournalSettings.clampedHarmonicDepth(harmonicDepth)
+    }
+
+    private var displayOctalAddress: String {
+        JournalSettings.displayOctalAddress(
+            record.octalAddress,
+            storedDepth: record.harmonicDepth,
+            displayDepth: displayDepth
+        )
+    }
+
     var body: some View {
         let rowRarity = resolvedRarity
         let moonReading = moonReading
 
         HStack(alignment: .top, spacing: 12) {
-            OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rowRarity.glyphStyle)
+            OctalGlyph(value: displayOctalAddress, depth: displayDepth, style: rowRarity.glyphStyle)
                 .frame(width: 52, height: 52)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -64,6 +77,8 @@ struct JournalRecordRow: View {
             }
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -71,6 +86,7 @@ struct JournalRecordDetailView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     let record: JournalRecord
     let entityTitle: String
@@ -102,6 +118,18 @@ struct JournalRecordDetailView: View {
         )
     }
 
+    private var displayDepth: Int {
+        JournalSettings.clampedHarmonicDepth(harmonicDepth)
+    }
+
+    private var displayOctalAddress: String {
+        JournalSettings.displayOctalAddress(
+            record.octalAddress,
+            storedDepth: record.harmonicDepth,
+            displayDepth: displayDepth
+        )
+    }
+
     private var moonReading: MoonPhaseOctalReading? {
         try? services.moonPhaseService.octalReading(for: record.eventDate, depth: 3)
     }
@@ -122,7 +150,7 @@ struct JournalRecordDetailView: View {
             Section {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .top, spacing: 16) {
-                        OctalGlyph(value: record.octalAddress, depth: record.harmonicDepth, style: rarity.glyphStyle)
+                        OctalGlyph(value: displayOctalAddress, depth: displayDepth, style: rarity.glyphStyle)
                             .frame(width: 88, height: 88)
                             .padding(10)
                             .background(rarity.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))

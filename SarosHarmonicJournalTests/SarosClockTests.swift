@@ -134,9 +134,9 @@ final class SarosClockTests: XCTestCase {
         XCTAssertEqual(rare.component(.synodic)?.detailOctalAddress, "010")
         XCTAssertEqual(rare.rarity, .rare)
 
-        let common = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 64.1), depth: 3)
-        XCTAssertEqual(common.component(.synodic)?.detailOctalAddress, "100")
-        XCTAssertEqual(common.rarity, .common)
+        let floor = try service.octalReading(for: newMoonDate.addingTimeInterval(binDuration * 64.1), depth: 3)
+        XCTAssertEqual(floor.component(.synodic)?.detailOctalAddress, "100")
+        XCTAssertEqual(floor.rarity, .rare)
 
         let nextNewMoonEdge = try service.octalReading(for: phase.nextNewMoon.date.addingTimeInterval(-1), depth: 3)
         XCTAssertEqual(nextNewMoonEdge.octalAddress, "700")
@@ -298,10 +298,10 @@ final class SarosClockTests: XCTestCase {
         let countdown = try XCTUnwrap(reading.countdown(order: 1, now: now))
 
         XCTAssertEqual(reading.binIndex, 9)
-        XCTAssertEqual(countdown.targetBinIndex, 16)
-        XCTAssertEqual(countdown.targetOctalAddress, "020")
+        XCTAssertEqual(countdown.targetBinIndex, 64)
+        XCTAssertEqual(countdown.targetOctalAddress, "100")
         XCTAssertEqual(countdown.order, 1)
-        XCTAssertEqual(countdown.rarity, .common)
+        XCTAssertEqual(countdown.rarity, .legendaryDigit(7))
     }
 
     func testOctalAddressDateMapping() throws {
@@ -325,7 +325,7 @@ final class SarosClockTests: XCTestCase {
         XCTAssertEqual(reading.octalAddress(forBinIndex: index), "10")
     }
 
-    func testQualifiedFlipStrideUsesOrderLogic() throws {
+    func testQualifiedFlipStrideUsesRepeatedSuffixLogic() throws {
         let now = Fixtures.previous.date.addingTimeInterval(Fixtures.interval * 0.2)
         let reading = try SarosClockCalculator.reading(
             saros: 141,
@@ -335,9 +335,12 @@ final class SarosClockTests: XCTestCase {
             harmonicDepth: 7
         )
 
-        XCTAssertEqual(reading.qualifiedFlipStride(forOrder: 3), 512)
-        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, order: 3, exact: true), 512)
-        XCTAssertEqual(reading.previousQualifiedFlipBin(atOrBefore: 1_100, order: 3, exact: true), 1_024)
+        XCTAssertEqual(reading.qualifiedFlipStride(forOrder: 3), 4_096)
+        XCTAssertEqual(FlipRarity.rareDigit(1).binStride(harmonicDepth: 7), 4_096)
+        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, rarity: .rareDigit(1), exact: true), 585)
+        XCTAssertEqual(reading.previousQualifiedFlipBin(atOrBefore: 1_100, rarity: .rareDigit(1), exact: true), 585)
+        XCTAssertEqual(FlipRarity.epicDigit(1).binStride(harmonicDepth: 7), 32_768)
+        XCTAssertEqual(reading.nextQualifiedFlipBin(after: 9, rarity: .epicDigit(1), exact: true), 4_681)
     }
 
     func testInvalidDepthThrows() {
@@ -390,37 +393,122 @@ final class ResonanceDetectorTests: XCTestCase {
 }
 
 final class FlipNotificationOrderTests: XCTestCase {
-    func testOrderMatchesTrailingZeroExamples() {
+    func testSubrarityTitlesUseGreekPrefixes() {
+        XCTAssertEqual(FlipRarity.rareDigit(1).title, "Alpha Triplex")
+        XCTAssertEqual(FlipRarity.epicDigit(2).title, "Beta Duplex")
+        XCTAssertEqual(FlipRarity.mythicDigit(4).title, "Delta Nihil")
+        XCTAssertEqual(FlipRarity.legendaryDigit(6).title, "Digamma Simplex")
+        XCTAssertEqual(FlipRarity.mythicDigit(7).title, "Omega Nihil")
+    }
+
+    func testRarityGlyphAddressesConveySuffixType() {
+        XCTAssertEqual(FlipRarity.rare.glyphAddress(harmonicDepth: 7), "0007777")
+        XCTAssertEqual(FlipRarity.epicDigit(2).glyphAddress(harmonicDepth: 7), "0022222")
+        XCTAssertEqual(FlipRarity.legendaryDigit(6).glyphAddress(harmonicDepth: 7), "0666666")
+        XCTAssertEqual(FlipRarity.mythicDigit(4).glyphAddress(harmonicDepth: 7), "4444444")
+    }
+
+    func testEightDigitRarityDisplayPadsWithRepeatedDigit() {
         XCTAssertEqual(
-            FlipNotificationPreferences.order(forOctalAddress: "7210222", harmonicDepth: 7),
-            0
+            JournalSettings.rarityOctalAddress("32111", storedDepth: 5, rarity: .epicDigit(1)),
+            "32111111"
         )
         XCTAssertEqual(
-            FlipNotificationPreferences.order(forOctalAddress: "7210230", harmonicDepth: 7),
-            1
-        )
-        XCTAssertEqual(
-            FlipNotificationPreferences.order(forOctalAddress: "7000000", harmonicDepth: 7),
-            6
-        )
-        XCTAssertEqual(
-            FlipNotificationPreferences.rarity(forOctalAddress: "0000000", harmonicDepth: 7, isEclipse: true),
-            .saros7
+            JournalSettings.rarityOctalAddress("142222", storedDepth: 6, rarity: .epicDigit(2)),
+            "14222222"
         )
     }
 
-    func testRepeatedDigitAddressesBecomeSarosPatternRarities() {
+    func testOrderMatchesRepeatedSuffixExamples() {
+        XCTAssertEqual(
+            FlipNotificationPreferences.order(forOctalAddress: "123456", harmonicDepth: 6),
+            0
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "123456", harmonicDepth: 6),
+            .common
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.order(forOctalAddress: "123111", harmonicDepth: 6),
+            3
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "123111", harmonicDepth: 6),
+            .rareDigit(1)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "123222", harmonicDepth: 6),
+            .rareDigit(2)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "121111", harmonicDepth: 6),
+            .epicDigit(1)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "211111", harmonicDepth: 6),
+            .legendaryDigit(1)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "111111", harmonicDepth: 6),
+            .mythicDigit(1)
+        )
+    }
+
+    func testRepeatedSuffixExamplesAcrossDepths() {
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1231111", harmonicDepth: 7),
+            .rareDigit(1)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1422222", harmonicDepth: 7),
+            .epicDigit(2)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1333333", harmonicDepth: 7),
+            .legendaryDigit(3)
+        )
         XCTAssertEqual(
             FlipNotificationPreferences.rarity(forOctalAddress: "1111111", harmonicDepth: 7),
-            .saros1
+            .mythicDigit(1)
         )
         XCTAssertEqual(
-            FlipNotificationPreferences.rarity(forOctalAddress: "4444444", harmonicDepth: 7),
-            .saros4
+            FlipNotificationPreferences.rarity(forOctalAddress: "12311", harmonicDepth: 5),
+            .rareDigit(1)
         )
         XCTAssertEqual(
-            FlipNotificationPreferences.rarity(forOctalAddress: "7777777", harmonicDepth: 7),
-            .saros7
+            FlipNotificationPreferences.rarity(forOctalAddress: "14222", harmonicDepth: 5),
+            .epicDigit(2)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "13333", harmonicDepth: 5),
+            .legendaryDigit(3)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "33333", harmonicDepth: 5),
+            .mythicDigit(3)
+        )
+    }
+
+    func testZeroBoundariesResolveToPreviousSevenSuffix() {
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1230000", harmonicDepth: 7),
+            .rareDigit(7)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1227777", harmonicDepth: 7),
+            .rareDigit(7)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1200000", harmonicDepth: 7),
+            .epicDigit(7)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "1000000", harmonicDepth: 7),
+            .legendaryDigit(7)
+        )
+        XCTAssertEqual(
+            FlipNotificationPreferences.rarity(forOctalAddress: "0000000", harmonicDepth: 7, isEclipse: true),
+            .mythicDigit(7)
         )
     }
 }
