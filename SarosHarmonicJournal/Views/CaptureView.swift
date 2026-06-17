@@ -35,6 +35,7 @@ struct CaptureView: View {
     @State private var errorMessage: String?
     @State private var phaseEditError: String?
     @State private var isSaving = false
+    @State private var draftPersistenceTask: Task<Void, Never>?
 
     init(
         entity: TrackedEntity,
@@ -82,9 +83,83 @@ struct CaptureView: View {
                 }
             }
 
+            Section("Record") {
+                TextField("Emoji marker", text: $emoji)
+                    .textContentType(.none)
+
+                DraftNoteEditor(buffer: noteBuffer, initialText: noteText) {
+                    commitNoteText()
+                }
+                .id(noteEditorID)
+
+                if isLoadingPhoto {
+                    HStack {
+                        ProgressView()
+                        Text("Loading photo")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !draftMediaItems.isEmpty {
+                    PendingMediaGroup(title: "Draft media") {
+                        ForEach(draftMediaItems) { item in
+                            DraftMediaRow(item: item) {
+                                removeDraftMedia(item)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        isCameraPresented = true
+                    } label: {
+                        RecordActionIcon(systemName: "camera.viewfinder")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Capture photo")
+
+                    PhotosPicker(selection: $photoItems, matching: .images) {
+                        RecordActionIcon(systemName: "photo.on.rectangle")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add from library")
+                    .onChange(of: photoItems) { _, newItems in
+                        Task {
+                            await loadPhotos(from: newItems)
+                        }
+                    }
+
+                    Button {
+                        do {
+                            try audioRecorder.toggleRecording(mode: .reflected)
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                    } label: {
+                        RecordActionIcon(
+                            systemName: audioRecorder.isRecording && audioRecorder.recordingMode == .reflected
+                                ? "stop.circle.fill"
+                                : "mic.circle.fill",
+                            tint: audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? .red : .accentColor
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .reflected)
+                    .accessibilityLabel(audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "Stop audio" : "Record audio")
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+
             Section("Timing") {
                 DatePicker("Record date", selection: $eventDate)
                     .datePickerStyle(.compact)
+
+                Button {
+                    setRecordDateToNow()
+                } label: {
+                    Label("Now", systemImage: "clock.arrow.circlepath")
+                }
 
                 HStack {
                     TextField(String(repeating: "0", count: harmonicDepth), text: $octalAddressInput)
@@ -127,77 +202,6 @@ struct CaptureView: View {
                 }
             }
 
-            Section("Record") {
-                TextField("Emoji marker", text: $emoji)
-                    .textContentType(.none)
-
-                DraftNoteEditor(buffer: noteBuffer, initialText: noteText) {
-                    commitNoteText()
-                }
-                .id(noteEditorID)
-
-                Button {
-                    isCameraPresented = true
-                } label: {
-                    Label("Capture photo", systemImage: "camera.viewfinder")
-                }
-
-                PhotosPicker(selection: $photoItems, matching: .images) {
-                    Label("Add from library", systemImage: "photo")
-                }
-                .onChange(of: photoItems) { _, newItems in
-                    Task {
-                        await loadPhotos(from: newItems)
-                    }
-                }
-
-                if isLoadingPhoto {
-                    HStack {
-                        ProgressView()
-                        Text("Loading photo")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if !draftMediaItems.isEmpty {
-                    PendingMediaGroup(title: "Draft media") {
-                        ForEach(draftMediaItems) { item in
-                            DraftMediaRow(item: item) {
-                                removeDraftMedia(item)
-                            }
-                        }
-                    }
-                }
-
-                Button {
-                    do {
-                        try audioRecorder.toggleRecording(mode: .reflected)
-                    } catch {
-                        errorMessage = error.localizedDescription
-                    }
-                } label: {
-                    Label(
-                        audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "Stop audio" : "Record audio",
-                        systemImage: audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "stop.circle" : "mic.circle"
-                    )
-                }
-                .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .reflected)
-
-                Button {
-                    do {
-                        try audioRecorder.toggleRecording(mode: .convolution)
-                    } catch {
-                        errorMessage = error.localizedDescription
-                    }
-                } label: {
-                    Label(
-                        audioRecorder.isRecording && audioRecorder.recordingMode == .convolution ? "Stop convolution" : "Record convolution",
-                        systemImage: audioRecorder.isRecording && audioRecorder.recordingMode == .convolution ? "stop.circle" : "waveform.path.ecg"
-                    )
-                }
-                .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .convolution)
-            }
-
             Section {
                 Button {
                     Task { await saveRecord() }
@@ -224,7 +228,7 @@ struct CaptureView: View {
             locationProvider.prepare()
             prepareDraft()
         }
-        .onChange(of: emoji) { _, _ in persistDraft() }
+        .onChange(of: emoji) { _, _ in scheduleDraftPersistence(updateReading: false) }
         .onChange(of: eventDate) { _, _ in
             syncOctalAddressFromEventDate()
             persistDraft()
@@ -238,7 +242,7 @@ struct CaptureView: View {
             draftMediaItems.append(item)
             _ = audioRecorder.consumeLastItem()
         }
-        .onChange(of: locationProvider.coordinateDescription) { _, _ in persistDraft() }
+        .onChange(of: locationProvider.coordinateDescription) { _, _ in scheduleDraftPersistence(updateReading: false) }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase != .active else { return }
             commitNoteText()
@@ -292,6 +296,7 @@ struct CaptureView: View {
     @MainActor
     private func saveRecord() async {
         commitNoteText(persist: false)
+        flushDraftPersistence()
         isSaving = true
         defer { isSaving = false }
 
@@ -397,7 +402,7 @@ struct CaptureView: View {
     }
 
     @MainActor
-    private func persistDraft() {
+    private func persistDraft(updateReading: Bool = true) {
         guard isDraftPrepared, let activeDraft else { return }
 
         do {
@@ -411,16 +416,36 @@ struct CaptureView: View {
             activeDraft.latitude = coordinate?.latitude ?? activeDraft.latitude
             activeDraft.longitude = coordinate?.longitude ?? activeDraft.longitude
 
-            let reading = try services.clockService.reading(
-                saros: entity.saros,
-                date: eventDate,
-                harmonicDepth: harmonicDepth
-            )
-            activeDraft.apply(reading: reading)
+            if updateReading {
+                let reading = try services.clockService.reading(
+                    saros: entity.saros,
+                    date: eventDate,
+                    harmonicDepth: harmonicDepth
+                )
+                activeDraft.apply(reading: reading)
+            }
             try modelContext.save()
         } catch {
             phaseEditError = error.localizedDescription
         }
+    }
+
+    @MainActor
+    private func scheduleDraftPersistence(updateReading: Bool = true) {
+        draftPersistenceTask?.cancel()
+        draftPersistenceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            persistDraft(updateReading: updateReading)
+            draftPersistenceTask = nil
+        }
+    }
+
+    @MainActor
+    private func flushDraftPersistence(updateReading: Bool = true) {
+        draftPersistenceTask?.cancel()
+        draftPersistenceTask = nil
+        persistDraft(updateReading: updateReading)
     }
 
     @MainActor
@@ -462,6 +487,13 @@ struct CaptureView: View {
     }
 
     @MainActor
+    private func setRecordDateToNow() {
+        eventDate = Date()
+        syncOctalAddressFromEventDate()
+        persistDraft()
+    }
+
+    @MainActor
     private func sanitizeOctalAddressInput(_ value: String) {
         let sanitized = sanitizedOctalAddress(value)
         if sanitized != value {
@@ -477,7 +509,7 @@ struct CaptureView: View {
     private func commitNoteText(persist: Bool = true) {
         noteText = noteBuffer.text
         if persist {
-            persistDraft()
+            flushDraftPersistence()
         }
     }
 
@@ -503,6 +535,23 @@ struct CaptureView: View {
 
 private final class DraftNoteBuffer {
     var text = ""
+}
+
+private struct RecordActionIcon: View {
+    let systemName: String
+    var tint: Color = .accentColor
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(tint)
+            .frame(width: 64, height: 64)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(tint.opacity(0.28), lineWidth: 1)
+            }
+    }
 }
 
 private struct DraftNoteEditor: View {

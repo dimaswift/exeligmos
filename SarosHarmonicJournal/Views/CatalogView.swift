@@ -9,10 +9,10 @@ struct CatalogView: View {
     @State private var selectedSection: CatalogSection = .saros
     @State private var eclipses: [Eclipse] = []
     @State private var eclipseSearchText = ""
-    @State private var resonanceRarity: FlipRarity = .epic
+    @State private var resonanceRarity: FlipRarity = .epicDigit(7)
     @State private var resonanceDisplayMode: CatalogResonanceDisplayMode = .phase
     @State private var resonanceSelectedFamilyIDs: Set<Int> = []
-    @State private var resonanceSelectedRarities: Set<FlipRarity> = [.epic, .legendary, .mythic]
+    @State private var resonanceSelectedRarities: Set<FlipRarity> = [.epicDigit(7), .legendaryDigit(7), .mythicDigit(7)]
     @State private var resonanceTimelineCycles = 1.0
     @State private var resonanceTimelineZoom = 2.0
     @State private var resonanceWaveSampleDensity = 8.0
@@ -315,11 +315,12 @@ private struct CatalogResonanceView: View {
     @Binding var mapLongitudeOffset: Double
     @Binding var mapRollOffset: Double
     @State private var mapDisplayMode: CubeMapDisplayMode = .singleFace
+    @State private var selectorBaseRarity: FlipRarity = .epic
     @State private var hasEditedFamilySelection = false
     @State private var hasEditedRaritySelection = false
 
     private var selectableRarities: [FlipRarity] {
-        FlipRarity.visibleRarities(for: harmonicDepth, includeSubrarities: false).filter { $0 >= .rare }
+        FlipRarity.rarityGroups(for: harmonicDepth).flatMap(\.subrarities)
     }
 
     private var referenceFamily: CatalogActiveSarosFamily? {
@@ -351,7 +352,8 @@ private struct CatalogResonanceView: View {
         let bands = selectableRarities.map { option in
             CatalogResonanceBand(
                 rarity: option,
-                frequency: waveFrequency(for: option, reading: referenceReading)
+                frequency: waveFrequency(for: option, reading: referenceReading),
+                phaseOffset: wavePhaseOffset(for: option, reading: referenceReading)
             )
         }
         let series = families.compactMap { family -> CatalogResonanceSeries? in
@@ -392,15 +394,13 @@ private struct CatalogResonanceView: View {
                 if families.isEmpty {
                     ContentUnavailableView("No active Saros families", systemImage: "dot.radiowaves.left.and.right")
                 } else {
-                    HStack(spacing: 8) {
-                        ForEach(selectableRarities) { option in
-                            CatalogResonanceRarityChip(
-                                rarity: option,
-                                isSelected: selectedRarities.contains(option)
-                            ) {
-                                toggleRarity(option)
-                            }
-                        }
+                    FlipRarityEventSelector(
+                        harmonicDepth: harmonicDepth,
+                        baseRarity: $selectorBaseRarity,
+                        selectedRarity: $rarity,
+                        selectedRarities: selectedRarities
+                    ) { option in
+                        toggleRarity(option)
                     }
 
                     Picker("Mode", selection: $displayMode) {
@@ -490,6 +490,7 @@ private struct CatalogResonanceView: View {
             }
         }
         .onAppear {
+            selectorBaseRarity = rarity.baseRarity
             normalizeSelection()
         }
         .onChange(of: families) { _, _ in
@@ -538,7 +539,7 @@ private struct CatalogResonanceView: View {
     }
 
     private func normalizeRaritySelection(_ rarities: [FlipRarity]) {
-        let rarityIDs = Set(rarities.filter { $0 != .rare })
+        let rarityIDs = Set(rarities.filter { $0.baseRarity != .rare })
         if hasEditedRaritySelection {
             selectedRarities.formIntersection(Set(rarities))
         } else {
@@ -552,6 +553,7 @@ private struct CatalogResonanceView: View {
         if !selectedRarities.isEmpty, !selectedRarities.contains(rarity) {
             rarity = selectedRarities.sorted().last ?? rarity
         }
+        selectorBaseRarity = rarity.baseRarity
     }
 
     private func defaultSelectedFamilyIDs() -> Set<Int> {
@@ -566,7 +568,7 @@ private struct CatalogResonanceView: View {
                 return nil
             }
 
-            let interval = FlipRarity.visibleRarities(for: harmonicDepth, includeSubrarities: false)
+            let interval = selectableRarities
                 .compactMap { reading.countdown(rarity: $0, now: now)?.timeUntilFlip }
                 .filter { $0 >= 0 }
                 .min()
@@ -588,6 +590,12 @@ private struct CatalogResonanceView: View {
     private func waveFrequency(for rarity: FlipRarity, reading: SarosClockReading) -> Double {
         let stride = rarity.binStride(harmonicDepth: reading.harmonicDepth) ?? reading.binCount
         return max(Double(reading.binCount) / Double(max(stride, 1)), 1)
+    }
+
+    private func wavePhaseOffset(for rarity: FlipRarity, reading: SarosClockReading) -> Double {
+        let stride = rarity.binStride(harmonicDepth: reading.harmonicDepth) ?? reading.binCount
+        let offset = rarity.subeventOffset(harmonicDepth: reading.harmonicDepth) ?? 0
+        return Double(offset) / Double(max(stride, 1))
     }
 
     private func normalizedPhase(_ phase: Double) -> Double {
@@ -1592,7 +1600,7 @@ private struct CatalogResonanceCanvas: View {
         let amplitude = phasorAmplitude(for: band.rarity)
         let elapsed = duration * progress
         let familyPhase = series.phaseOffset + elapsed / max(series.cycleDuration, 1)
-        let angle = 2 * .pi * band.frequency * familyPhase
+        let angle = 2 * .pi * (band.frequency * familyPhase - band.phaseOffset)
         return CGVector(dx: cos(angle) * amplitude, dy: sin(angle) * amplitude)
     }
 
@@ -1711,7 +1719,7 @@ private struct CatalogResonanceCanvas: View {
     ) -> Double {
         let elapsed = duration * progress
         let familyPhase = series.phaseOffset + elapsed / series.cycleDuration
-        return cos(2 * .pi * band.frequency * familyPhase)
+        return cos(2 * .pi * (band.frequency * familyPhase - band.phaseOffset))
     }
 
     private func waveColor(for series: CatalogResonanceSeries, band: CatalogResonanceBand) -> Color {
@@ -2921,6 +2929,7 @@ private struct CatalogResonanceModel {
 private struct CatalogResonanceBand: Identifiable {
     let rarity: FlipRarity
     let frequency: Double
+    let phaseOffset: Double
 
     var id: String { rarity.id }
 }

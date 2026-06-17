@@ -936,6 +936,91 @@ struct FlipRarityGlyphIcon: View {
     }
 }
 
+struct FlipRarityEventSelector: View {
+    let harmonicDepth: Int
+    @Binding var baseRarity: FlipRarity
+    @Binding var selectedRarity: FlipRarity
+    var selectedRarities: Set<FlipRarity> = []
+    var onSelect: (FlipRarity) -> Void
+
+    private var depth: Int {
+        JournalSettings.clampedHarmonicDepth(harmonicDepth)
+    }
+
+    private var baseOptions: [FlipRarity] {
+        FlipRarity.eventBaseRarities.filter { $0.supports(harmonicDepth: depth) }
+    }
+
+    private var activeBase: FlipRarity {
+        let base = baseRarity.baseRarity
+        return baseOptions.contains(base) ? base : baseOptions.first ?? .rare
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(baseOptions) { option in
+                    Button {
+                        selectBase(option)
+                    } label: {
+                        rarityGlyph(option, isSelected: activeBase == option)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.title)
+                }
+            }
+
+            HStack(spacing: 7) {
+                ForEach(activeBase.subrarities) { option in
+                    Button {
+                        selectedRarity = option
+                        onSelect(option)
+                    } label: {
+                        rarityGlyph(option, isSelected: isSelected(option))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.title)
+                }
+            }
+        }
+    }
+
+    private func selectBase(_ option: FlipRarity) {
+        baseRarity = option
+        let digit = selectedRarity.repeatedDigit > 0 ? selectedRarity.repeatedDigit : 7
+        selectedRarity = FlipRarity.rarity(order: option.order, repeatedDigit: digit)
+    }
+
+    private func isSelected(_ option: FlipRarity) -> Bool {
+        selectedRarities.isEmpty ? selectedRarity == option : selectedRarities.contains(option)
+    }
+
+    private func rarityGlyph(_ rarity: FlipRarity, isSelected: Bool) -> some View {
+        let foreground: Color = if isSelected {
+            rarity.baseRarity == .legendary ? .black : .white
+        } else {
+            rarity.color
+        }
+
+        return OctalGlyph(
+            value: rarity.glyphAddress(harmonicDepth: depth),
+            depth: depth,
+            color: foreground
+        )
+        .frame(width: 24, height: 24)
+        .frame(maxWidth: .infinity)
+        .frame(height: 38)
+        .background(
+            (isSelected ? rarity.color.opacity(0.88) : rarity.color.opacity(0.12)),
+            in: Capsule()
+        )
+        .overlay {
+            Capsule()
+                .stroke(rarity.color.opacity(isSelected ? 0 : 0.36), lineWidth: 1)
+        }
+    }
+}
+
 struct MoonPhaseGlyph: View {
     let reading: MoonPhaseOctalReading
 

@@ -55,7 +55,7 @@ struct ClockDashboardView: View {
     private var closestFlipSection: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
             if let closestFlip = closestFlip(at: context.date) {
-                Section("Next flip") {
+                Section {
                     ClosestFlipCard(
                         flip: closestFlip,
                         countdownText: countdownText(for: closestFlip.flipDate.timeIntervalSince(context.date))
@@ -382,10 +382,6 @@ private struct DashboardFlipItem {
         customFlip?.displayName ?? countdown?.rarity.title ?? "Flip"
     }
 
-    var orderLabel: String {
-        customFlip == nil ? countdown?.rarity.patternLabel(harmonicDepth: reading.harmonicDepth) ?? "" : "Custom"
-    }
-
     var octalAddress: String {
         customFlip?.octalAddress ?? countdown?.targetOctalAddress ?? reading.octalAddress
     }
@@ -414,7 +410,7 @@ private struct ClosestFlipCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(flip.entity.displayTitle)
                         .font(.headline)
-                    Text("Saros \(flip.reading.saros) · \(flip.title) · \(flip.orderLabel)")
+                    Text("Saros \(flip.reading.saros) · \(flip.title)")
                         .font(.subheadline)
                         .foregroundStyle(rarityColor)
                     Text(countdownText)
@@ -427,7 +423,7 @@ private struct ClosestFlipCard: View {
             }
 
             HStack {
-                Text("Flip \(JournalFormatters.dateTime.string(from: flip.flipDate))")
+                Text(JournalFormatters.dateTime.string(from: flip.flipDate))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -445,17 +441,10 @@ private struct ClosestFlipCard: View {
 
     @ViewBuilder
     private func glyph(color: Color) -> some View {
-        if let countdown = flip.countdown {
-            DynamicFlipGlyph(reading: flip.reading, countdown: countdown, color: color)
-                .frame(width: 74, height: 74)
-                .padding(8)
-                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-        } else {
-            OctalGlyph(value: flip.octalAddress, depth: flip.reading.harmonicDepth, color: color)
-                .frame(width: 74, height: 74)
-                .padding(8)
-                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-        }
+        OctalGlyph(value: flip.octalAddress, depth: flip.reading.harmonicDepth, color: color)
+            .frame(width: 74, height: 74)
+            .padding(8)
+            .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -513,7 +502,7 @@ private struct EntityCardView: View {
             Spacer()
 
             if let reading, let countdown {
-                DynamicFlipGlyph(reading: reading, countdown: countdown, color: countdown.rarity.color)
+                OctalGlyph(value: countdown.targetOctalAddress, depth: reading.harmonicDepth, color: countdown.rarity.color)
                     .frame(width: 42, height: 42)
             }
         }
@@ -771,8 +760,6 @@ private struct EntityDetailView: View {
                         Text(reading.octalAddress)
                             .font(.system(.title, design: .monospaced))
                             .contentTransition(.numericText())
-                        Text("Next flip \(JournalFormatters.dateTime.string(from: reading.nextFlipDate))")
-                            .foregroundStyle(.secondary)
                         ThreadHeaderCountdownText(reading: reading)
                     }
                 }
@@ -1377,17 +1364,21 @@ private struct ThreadHeaderCountdownText: View {
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
             if let countdown = activeCountdown(at: context.date) {
-                Text("\(countdown.rarity.title) in \(timeLeft(for: countdown, at: context.date).compactDuration)")
-                    .font(.caption)
-                    .foregroundStyle(countdown.rarity.color)
-                    .contentTransition(.numericText())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(countdown.rarity.title) \(JournalFormatters.dateTime.string(from: countdown.flipDate))")
+                        .font(.caption)
+                    Text(timeLeft(for: countdown, at: context.date).compactDuration)
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .contentTransition(.numericText())
+                }
+                .foregroundStyle(countdown.rarity.color)
             }
         }
     }
 
     private func activeCountdown(at date: Date) -> SarosFlipCountdown? {
         reading.rarityCountdowns(now: date)
-            .filter { $0.flipDate.timeIntervalSince(date) >= 0 && $0.flipDate.timeIntervalSince(date) <= 24 * 60 * 60 }
+            .filter { $0.flipDate.timeIntervalSince(date) >= 0 }
             .sorted {
                 let lhsDelta = $0.flipDate.timeIntervalSince(date)
                 let rhsDelta = $1.flipDate.timeIntervalSince(date)
