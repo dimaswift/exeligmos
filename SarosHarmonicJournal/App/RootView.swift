@@ -4,6 +4,7 @@ import SwiftUI
 enum AppTab: String, CaseIterable, Identifiable {
     case feed
     case clock
+    case saros
     case catalog
     case camera
     case settings
@@ -14,6 +15,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .feed: "Feed"
         case .clock: "Threads"
+        case .saros: "Saros"
         case .catalog: "Catalog"
         case .camera: "Camera"
         case .settings: "Settings"
@@ -24,6 +26,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .feed: "rectangle.stack"
         case .clock: "moonphase.new.moon"
+        case .saros: "circle.grid.3x3"
         case .catalog: "globe.americas"
         case .camera: "camera.viewfinder"
         case .settings: "gearshape"
@@ -32,6 +35,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var services: AppServices
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
@@ -72,6 +76,10 @@ struct RootView: View {
         }
         .task {
             consumePendingRecordCapture()
+            prewarmSarosFlipDistribution()
+        }
+        .onChange(of: harmonicDepth) { _, _ in
+            prewarmSarosFlipDistribution()
         }
         .onChange(of: entities.map(\.id)) { _, _ in
             consumePendingRecordCapture()
@@ -85,6 +93,8 @@ struct RootView: View {
             FeedView()
         case .clock:
             ClockDashboardView()
+        case .saros:
+            SarosGridView()
         case .catalog:
             CatalogView()
         case .camera:
@@ -126,6 +136,16 @@ struct RootView: View {
     private func consumePendingRecordCapture() {
         guard let entityID = AppDeepLinkStore.consumePendingRecordCapture() else { return }
         openRecordCapture(for: entityID)
+    }
+
+    private func prewarmSarosFlipDistribution() {
+        Task {
+            await services.sarosFlipDistributionStore.prewarm(
+                around: Date(),
+                harmonicDepth: harmonicDepth,
+                eclipseService: services.eclipseService
+            )
+        }
     }
 }
 

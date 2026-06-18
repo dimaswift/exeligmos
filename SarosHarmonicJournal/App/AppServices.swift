@@ -9,6 +9,7 @@ final class AppServices: ObservableObject {
     let exportService: ExportService
     let syncService: SyncService
     let animacyDatasetQueue: AnimacyDatasetQueueStore
+    let sarosFlipDistributionStore: SarosFlipDistributionStore
 
     init(
         eclipseService: any EclipseService = CPlusPlusEclipseService(),
@@ -21,5 +22,6 @@ final class AppServices: ObservableObject {
         self.exportService = ExportService()
         self.syncService = SyncService()
         self.animacyDatasetQueue = AnimacyDatasetQueueStore()
+        self.sarosFlipDistributionStore = SarosFlipDistributionStore()
     }
 }
