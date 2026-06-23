@@ -328,13 +328,85 @@ private struct SarosSpikeWaveState: Hashable {
 }
 
 private struct SarosSpikeWaveComponent: Hashable {
-    let eventID: String
+    let id: String
+    let sourceEventID: String
     let period: SarosSpikePeriod
+    let sequenceKey: String
+    let leftBoundary: Date
+    let rightBoundary: Date
     let peakHeight: Double
-    let sigma: TimeInterval
 
     func width(for offset: TimeInterval) -> TimeInterval {
-        max(sigma, 1)
+        offset < 0
+            ? max(period.spike.date.timeIntervalSince(leftBoundary), 1)
+            : max(rightBoundary.timeIntervalSince(period.spike.date), 1)
+    }
+}
+
+private struct SarosSpikeWaveSample: Hashable {
+    let position: Double
+    let energy: Double
+}
+
+private struct SarosSpikeWaveSamples {
+    static let empty = SarosSpikeWaveSamples(
+        interval: DateInterval(start: .distantPast, duration: 1),
+        points: [],
+        maxEnergy: 1,
+        eventEnergyByID: [:]
+    )
+
+    let interval: DateInterval
+    let points: [SarosSpikeWaveSample]
+    let maxEnergy: Double
+    let eventEnergyByID: [String: Double]
+
+    func energy(for event: SarosGlobalFlipEvent) -> Double {
+        eventEnergyByID[event.id] ?? 0
+    }
+}
+
+private struct SarosSpikeWaveCacheKey: Hashable {
+    let harmonicDepth: Int
+    let displayStart: Int
+    let displayEnd: Int
+    let loadStart: Int
+    let loadEnd: Int
+    let sampleCount: Int
+    let minimumRarityID: String
+}
+
+private struct SarosSpikeWaveCacheEntry {
+    let events: [SarosGlobalFlipEvent]
+    let field: SarosSpikeWaveField
+    let samples: SarosSpikeWaveSamples
+}
+
+@MainActor
+private enum SarosSpikeWaveTimelineCache {
+    private static let maxEntryCount = 6
+    private static var entries: [SarosSpikeWaveCacheKey: SarosSpikeWaveCacheEntry] = [:]
+    private static var accessOrder: [SarosSpikeWaveCacheKey] = []
+
+    static func entry(for key: SarosSpikeWaveCacheKey) -> SarosSpikeWaveCacheEntry? {
+        guard let entry = entries[key] else { return nil }
+        markRecentlyUsed(key)
+        return entry
+    }
+
+    static func store(_ entry: SarosSpikeWaveCacheEntry, for key: SarosSpikeWaveCacheKey) {
+        entries[key] = entry
+        markRecentlyUsed(key)
+
+        while accessOrder.count > maxEntryCount, let oldest = accessOrder.first {
+            accessOrder.removeFirst()
+            entries.removeValue(forKey: oldest)
+        }
+    }
+
+    private static func markRecentlyUsed(_ key: SarosSpikeWaveCacheKey) {
+        accessOrder.removeAll { $0 == key }
+        accessOrder.append(key)
     }
 }
 
@@ -349,7 +421,10 @@ private struct SarosSpikeWaveField {
     init(components: [SarosSpikeWaveComponent]) {
         self.components = components
         self.maxPeakHeight = components.map(\.peakHeight).max() ?? 0
-        self.componentsByEventID = Dictionary(uniqueKeysWithValues: components.map { ($0.eventID, $0) })
+        self.componentsByEventID = components.reduce(into: [:]) { lookup, component in
+            guard component.sourceEventID == component.period.spike.id else { return }
+            lookup[component.sourceEventID] = component
+        }
     }
 
     func sample(at date: Date) -> SarosSpikeWaveState? {
@@ -412,11 +487,71 @@ private struct SarosSpikeWaveField {
         componentsByEventID[event.id]
     }
 
+    func energy(at date: Date) -> Double {
+        energy(at: date, in: components)
+    }
+
+    func samples(
+        in interval: DateInterval,
+        sampleCount: Int,
+        events: [SarosGlobalFlipEvent]
+    ) -> SarosSpikeWaveSamples {
+        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
+        guard !visibleComponents.isEmpty, sampleCount > 1 else {
+            return SarosSpikeWaveSamples(
+                interval: interval,
+                points: [],
+                maxEnergy: max(maxPeakHeight, 0.000_000_001),
+                eventEnergyByID: [:]
+            )
+        }
+
+        var maxEnergy = 0.0
+        let points = (0...sampleCount).map { index in
+            let position = Double(index) / Double(sampleCount)
+            let date = interval.start.addingTimeInterval(interval.duration * position)
+            let energy = energy(at: date, in: visibleComponents)
+            maxEnergy = max(maxEnergy, energy)
+
+            return SarosSpikeWaveSample(position: position, energy: energy)
+        }
+
+        let eventEnergyByID = Dictionary(uniqueKeysWithValues: events.map { event in
+            (event.id, energy(at: event.date, in: visibleComponents))
+        })
+
+        return SarosSpikeWaveSamples(
+            interval: interval,
+            points: points,
+            maxEnergy: max(maxEnergy, maxPeakHeight, 0.000_000_001),
+            eventEnergyByID: eventEnergyByID
+        )
+    }
+
+    private func energy(at date: Date, in candidateComponents: [SarosSpikeWaveComponent]) -> Double {
+        candidateComponents.reduce(0) { total, component in
+            guard component.contains(date) else { return total }
+            return total + component.energy(at: date)
+        }
+    }
+
     func maxEnergy(in interval: DateInterval) -> Double {
-        let visiblePeak = components
-            .filter { interval.intersects($0.periodInterval) }
-            .map(\.peakHeight)
-            .max() ?? maxPeakHeight
+        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
+        guard !visibleComponents.isEmpty else {
+            return max(maxPeakHeight, 0.000_000_001)
+        }
+
+        let sampleCount = 960
+        let visiblePeak = (0...sampleCount).reduce(0.0) { currentMax, index in
+            let ratio = Double(index) / Double(sampleCount)
+            let date = interval.start.addingTimeInterval(interval.duration * ratio)
+            let energy = visibleComponents.reduce(0.0) { total, component in
+                guard component.contains(date) else { return total }
+                return total + component.energy(at: date)
+            }
+
+            return max(currentMax, energy)
+        }
 
         return max(visiblePeak, maxPeakHeight, 0.000_000_001)
     }
@@ -431,7 +566,7 @@ private enum SarosSpikeWaveCalculator {
             return lhs.rarity > rhs.rarity
         }
 
-        let components = spikes.indices.map { index in
+        let components = spikes.indices.compactMap { index -> SarosSpikeWaveComponent? in
             let spike = spikes[index]
             let previous = previousDistinctEvent(in: spikes, before: index)
             let next = nextDistinctEvent(in: spikes, after: index)
@@ -441,19 +576,14 @@ private enum SarosSpikeWaveCalculator {
                 ?? spike.date.addingTimeInterval(-leftGap / 2)
             let rightBoundary = next.map { midpoint(spike.date, $0.date) }
                 ?? spike.date.addingTimeInterval(rightGap / 2)
-            let periodDuration = max(rightBoundary.timeIntervalSince(leftBoundary), 1)
 
-            return SarosSpikeWaveComponent(
-                eventID: spike.id,
-                period: SarosSpikePeriod(
-                    previousSpike: previous ?? spike,
-                    spike: spike,
-                    nextSpike: next ?? spike,
-                    leftBoundary: leftBoundary,
-                    rightBoundary: rightBoundary
-                ),
-                peakHeight: peakHeight(for: spike.rarity),
-                sigma: gaussianSigma(periodDuration: periodDuration)
+            return component(
+                source: spike,
+                previous: previous,
+                next: next,
+                leftBoundary: leftBoundary,
+                rightBoundary: rightBoundary,
+                index: index
             )
         }
 
@@ -482,8 +612,32 @@ private enum SarosSpikeWaveCalculator {
         }
     }
 
-    private static func gaussianSigma(periodDuration: TimeInterval) -> TimeInterval {
-        max(periodDuration / 6, 30 * 60)
+    private static func component(
+        source: SarosGlobalFlipEvent,
+        previous: SarosGlobalFlipEvent?,
+        next: SarosGlobalFlipEvent?,
+        leftBoundary: Date,
+        rightBoundary: Date,
+        index: Int
+    ) -> SarosSpikeWaveComponent? {
+        let duration = rightBoundary.timeIntervalSince(leftBoundary)
+        guard duration > 1 else { return nil }
+
+        return SarosSpikeWaveComponent(
+            id: "\(source.id)-gaussian-\(index)",
+            sourceEventID: source.id,
+            period: SarosSpikePeriod(
+                previousSpike: previous ?? source,
+                spike: source,
+                nextSpike: next ?? source,
+                leftBoundary: leftBoundary,
+                rightBoundary: rightBoundary
+            ),
+            sequenceKey: "\(source.saros)-\(source.rarity.baseRarity.id)",
+            leftBoundary: leftBoundary,
+            rightBoundary: rightBoundary,
+            peakHeight: peakHeight(for: source.rarity)
+        )
     }
 
     private static func midpoint(_ lhs: Date, _ rhs: Date) -> Date {
@@ -525,28 +679,42 @@ private enum SarosSpikeWaveCalculator {
 }
 
 private extension SarosSpikeWaveComponent {
+    static let gaussianExtent = 3.2
+
     var periodInterval: DateInterval {
-        DateInterval(start: period.leftBoundary, end: period.rightBoundary)
+        DateInterval(start: leftBoundary, end: rightBoundary)
     }
 
     func contains(_ date: Date) -> Bool {
-        date >= period.leftBoundary && date <= period.rightBoundary
+        date >= leftBoundary && date <= rightBoundary
     }
 
     func energy(at date: Date) -> Double {
-        let offsetDays = date.timeIntervalSince(period.spike.date) / 86_400
-        let sigmaDays = max(sigma / 86_400, 0.000_001)
-        return peakHeight * exp(-0.5 * pow(offsetDays / sigmaDays, 2))
+        guard contains(date) else { return 0 }
+
+        let x = gaussianCoordinate(at: date)
+        let boundaryValue = exp(-0.5 * Self.gaussianExtent * Self.gaussianExtent)
+        let raw = exp(-0.5 * x * x)
+        let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
+
+        return peakHeight * normalized
     }
 
     func derivative(at date: Date) -> Double {
         guard contains(date) else { return 0 }
+        let step = min(max(width(for: date.timeIntervalSince(period.spike.date)) / 600, 60), 1_800)
+        let before = max(leftBoundary, date.addingTimeInterval(-step))
+        let after = min(rightBoundary, date.addingTimeInterval(step))
+        let duration = max(after.timeIntervalSince(before), 1)
 
-        let offsetDays = date.timeIntervalSince(period.spike.date) / 86_400
-        let sigmaDays = max(sigma / 86_400, 0.000_001)
-        let gaussian = exp(-0.5 * pow(offsetDays / sigmaDays, 2))
+        return (energy(at: after) - energy(at: before)) / duration
+    }
 
-        return peakHeight * (-(offsetDays) / (sigmaDays * sigmaDays)) * gaussian / 86_400
+    private func gaussianCoordinate(at date: Date) -> Double {
+        let offset = date.timeIntervalSince(period.spike.date)
+        let span = max(width(for: offset), 1)
+        let normalized = min(max(offset / span, -1), 1)
+        return normalized * Self.gaussianExtent
     }
 }
 
@@ -561,6 +729,11 @@ private enum SarosSpikeWaveError: LocalizedError {
     }
 }
 
+private struct SarosSpikeCalendarReference: Identifiable, Hashable {
+    let id = UUID()
+    let date: Date
+}
+
 private struct SarosSpikeWaveTimelineView: View {
     @EnvironmentObject private var services: AppServices
 
@@ -568,6 +741,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
     @State private var events: [SarosGlobalFlipEvent] = []
     @State private var waveField = SarosSpikeWaveField.empty
+    @State private var waveSamples = SarosSpikeWaveSamples.empty
     @State private var currentState: SarosSpikeWaveState?
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -578,6 +752,8 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var scrollAnchorDate: Date?
     @State private var scrollAnchorID: String?
     @State private var zoomAnchorDate: Date?
+    @State private var selectedCalendarReference: SarosSpikeCalendarReference?
+    @State private var probeDate: Date?
 
     private var month: SarosGlobalTimelineMonth {
         SarosGlobalTimelineMonth.containing(flip.observedAt)
@@ -618,7 +794,7 @@ private struct SarosSpikeWaveTimelineView: View {
                     Button {
                         scrollToPresent(proxy: scrollProxy)
                     } label: {
-                        SarosSpikeWaveStatePanel(state: currentState)
+                        SarosSpikeWaveStatePanel(state: displayedWaveState ?? currentState)
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal)
@@ -629,21 +805,24 @@ private struct SarosSpikeWaveTimelineView: View {
                     let contentWidth = max(geometry.size.width * effectiveZoom, geometry.size.width)
                     let height = max(geometry.size.height, 320)
                     let axisTicks = axisTicks()
+                    let hourTicks = axisHourTicks(showLabels: effectiveZoom >= 80)
+                    let dayLabels = axisDayLabels()
                     let markerEvents = visibleEvents
-                    let waveMaxEnergy = waveField.maxEnergy(in: displayInterval)
+                    let waveMaxEnergy = waveSamples.maxEnergy
+                    let displayedState = displayedWaveState
                     let dotMarkers = eventDotMarkers(
                         events: markerEvents,
                         contentWidth: contentWidth,
                         height: height,
                         maxEnergy: waveMaxEnergy
                     )
-                    let markerDate = currentState?.date ?? presentDate
+                    let markerDate = probeDate ?? displayedState?.date ?? presentDate
 
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
                             SarosSpikeWaveCanvas(
-                                field: waveField,
-                                currentState: currentState,
+                                samples: waveSamples,
+                                currentState: displayedState,
                                 displayInterval: displayInterval,
                                 maxEnergy: waveMaxEnergy
                             )
@@ -666,12 +845,12 @@ private struct SarosSpikeWaveTimelineView: View {
                                     .id(Self.referenceScrollID)
 
                                 SarosSpikeCurrentMarker(
-                                    state: currentState,
-                                    color: currentState?.period.spike.rarity.color ?? flip.rarity.color
+                                    state: displayedState,
+                                    color: displayedState?.period.spike.rarity.color ?? flip.rarity.color
                                 )
                                 .position(
                                     x: xPosition(for: markerDate, width: contentWidth),
-                                    y: currentState.map { yPosition(for: $0, height: height, maxEnergy: waveMaxEnergy) } ?? height / 2
+                                    y: displayedState.map { yPosition(for: $0, height: height, maxEnergy: waveMaxEnergy) } ?? height / 2
                                 )
                             }
 
@@ -692,6 +871,39 @@ private struct SarosSpikeWaveTimelineView: View {
                                         x: xPosition(for: tick.date, width: contentWidth),
                                         y: height - 24
                                     )
+                            }
+
+                            ForEach(hourTicks) { tick in
+                                SarosSpikeWaveHourTickView(tick: tick)
+                                    .position(
+                                        x: xPosition(for: tick.date, width: contentWidth),
+                                        y: height - 48
+                                    )
+                            }
+
+                            ForEach(dayLabels) { label in
+                                SarosSpikeWaveDayLabelView(label: label)
+                                    .position(
+                                        x: xPosition(for: label.date, width: contentWidth),
+                                        y: height - 66
+                                    )
+                            }
+
+                            if displayInterval.contains(markerDate) {
+                                let markerX = xPosition(for: markerDate, width: contentWidth)
+                                SarosSpikeWaveProbeHandle(
+                                    date: markerDate,
+                                    state: displayedState,
+                                    color: displayedState?.period.spike.rarity.color ?? flip.rarity.color,
+                                    x: markerX,
+                                    onDrag: { x in
+                                        moveProbe(toX: x, contentWidth: contentWidth)
+                                    }
+                                )
+                                .position(
+                                    x: markerX,
+                                    y: displayedState.map { yPosition(for: $0, height: height, maxEnergy: waveMaxEnergy) } ?? height / 2
+                                )
                             }
                         }
                         .frame(width: contentWidth, height: height)
@@ -731,6 +943,7 @@ private struct SarosSpikeWaveTimelineView: View {
                     }
                     .coordinateSpace(name: Self.scrollCoordinateSpace)
                     .onPreferenceChange(SarosSpikeContentMinXPreferenceKey.self) { value in
+                        guard abs(contentMinX - value) > Self.scrollOffsetUpdateThreshold else { return }
                         contentMinX = value
                     }
                     .onAppear {
@@ -750,18 +963,47 @@ private struct SarosSpikeWaveTimelineView: View {
             }
             .navigationTitle("Saros \(flip.saros) wave")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        selectedCalendarReference = SarosSpikeCalendarReference(date: Date())
+                    } label: {
+                        Image(systemName: "calendar")
+                    }
+                    .accessibilityLabel("Open Saros calendar")
+                }
+            }
             .task {
                 loadEvents()
             }
+        }
+        .navigationDestination(item: $selectedCalendarReference) { reference in
+            SarosGlobalFlipTimelineView(
+                referenceDate: reference.date,
+                referenceEvent: nil
+            )
         }
     }
 
     private static let loadPaddingDuration: TimeInterval = 180 * 86_400
     private static let minimumZoom: CGFloat = 8
-    private static let initialZoom: CGFloat = 72
+    private static let initialZoom: CGFloat = 220
     private static let maximumZoom: CGFloat = 420
+    private static let waveSampleCount = 65_536
+    private static let minimumWaveRarity = FlipRarity.epic
+    private static let scrollOffsetUpdateThreshold: CGFloat = 28
     private static let referenceScrollID = "saros-spike-reference"
     private static let scrollCoordinateSpace = "saros-spike-scroll"
+
+    private var displayedWaveState: SarosSpikeWaveState? {
+        if let probeDate,
+           let state = waveField.sample(at: probeDate)
+        {
+            return state
+        }
+
+        return currentState
+    }
 
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -781,19 +1023,47 @@ private struct SarosSpikeWaveTimelineView: View {
         return formatter
     }()
 
+    private static let centerDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM, EEEE"
+        return formatter
+    }()
+
+    @MainActor
     private func loadEvents() {
         guard events.isEmpty else { return }
-        isLoading = true
-        errorMessage = nil
 
         let eclipseService = services.eclipseService
         let harmonicDepth = flip.harmonicDepth
         let loadInterval = loadInterval
+        let displayInterval = displayInterval
+        let waveSampleCount = Self.waveSampleCount
+        let minimumRarity = Self.minimumWaveRarity
         let presentDate = Date()
         self.presentDate = presentDate
+        let cacheKey = Self.cacheKey(
+            harmonicDepth: harmonicDepth,
+            displayInterval: displayInterval,
+            loadInterval: loadInterval,
+            sampleCount: waveSampleCount,
+            minimumRarity: minimumRarity
+        )
+
+        if let cached = SarosSpikeWaveTimelineCache.entry(for: cacheKey) {
+            events = cached.events
+            waveField = cached.field
+            waveSamples = cached.samples
+            currentState = cached.field.sample(at: presentDate)
+            isLoading = false
+            errorMessage = nil
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
 
         Task.detached(priority: .userInitiated) {
-            let result: Result<(events: [SarosGlobalFlipEvent], field: SarosSpikeWaveField, currentState: SarosSpikeWaveState?), Error> = Result {
+            let result: Result<(events: [SarosGlobalFlipEvent], field: SarosSpikeWaveField, samples: SarosSpikeWaveSamples, currentState: SarosSpikeWaveState?), Error> = Result {
                 let summaries = try eclipseService.allSarosSeries()
 
                 let loadedEvents = SarosGlobalTimelineBuilder.events(
@@ -801,13 +1071,19 @@ private struct SarosSpikeWaveTimelineView: View {
                     summaries: summaries,
                     eclipseService: eclipseService,
                     harmonicDepth: harmonicDepth,
-                    minimumRarity: .epic
+                    minimumRarity: minimumRarity
                 )
                 let field = SarosSpikeWaveCalculator.field(events: loadedEvents)
+                let samples = field.samples(
+                    in: displayInterval,
+                    sampleCount: waveSampleCount,
+                    events: loadedEvents
+                )
 
                 return (
                     events: loadedEvents,
                     field: field,
+                    samples: samples,
                     currentState: field.sample(at: presentDate)
                 )
             }
@@ -818,16 +1094,44 @@ private struct SarosSpikeWaveTimelineView: View {
                 case .success(let loaded):
                     events = loaded.events
                     waveField = loaded.field
+                    waveSamples = loaded.samples
                     currentState = loaded.currentState
+                    SarosSpikeWaveTimelineCache.store(
+                        SarosSpikeWaveCacheEntry(
+                            events: loaded.events,
+                            field: loaded.field,
+                            samples: loaded.samples
+                        ),
+                        for: cacheKey
+                    )
                     errorMessage = nil
                 case .failure(let error):
                     events = []
                     waveField = .empty
+                    waveSamples = .empty
                     currentState = nil
                     errorMessage = error.localizedDescription
                 }
             }
         }
+    }
+
+    private static func cacheKey(
+        harmonicDepth: Int,
+        displayInterval: DateInterval,
+        loadInterval: DateInterval,
+        sampleCount: Int,
+        minimumRarity: FlipRarity
+    ) -> SarosSpikeWaveCacheKey {
+        SarosSpikeWaveCacheKey(
+            harmonicDepth: harmonicDepth,
+            displayStart: Int(displayInterval.start.timeIntervalSince1970),
+            displayEnd: Int(displayInterval.end.timeIntervalSince1970),
+            loadStart: Int(loadInterval.start.timeIntervalSince1970),
+            loadEnd: Int(loadInterval.end.timeIntervalSince1970),
+            sampleCount: sampleCount,
+            minimumRarityID: minimumRarity.id
+        )
     }
 
     private func axisTicks() -> [SarosSpikeAxisTick] {
@@ -857,6 +1161,62 @@ private struct SarosSpikeWaveTimelineView: View {
         return ticks
     }
 
+    private func axisHourTicks(showLabels: Bool) -> [SarosSpikeHourTick] {
+        var ticks: [SarosSpikeHourTick] = []
+        var cursor = Self.calendar.startOfDay(for: displayInterval.start)
+
+        while cursor < displayInterval.end {
+            for hour in [6, 12, 18] {
+                guard let date = Self.calendar.date(byAdding: .hour, value: hour, to: cursor),
+                      displayInterval.contains(date)
+                else {
+                    continue
+                }
+
+                ticks.append(
+                    SarosSpikeHourTick(
+                        date: date,
+                        title: showLabels ? String(format: "%02d:00", hour) : ""
+                    )
+                )
+            }
+
+            guard let nextDay = Self.calendar.date(byAdding: .day, value: 1, to: cursor) else {
+                break
+            }
+            cursor = nextDay
+        }
+
+        return ticks
+    }
+
+    private func axisDayLabels() -> [SarosSpikeAxisDayLabel] {
+        var labels: [SarosSpikeAxisDayLabel] = []
+        var cursor = Self.calendar.startOfDay(for: displayInterval.start)
+
+        while cursor < displayInterval.end {
+            guard
+                let midday = Self.calendar.date(byAdding: .hour, value: 12, to: cursor),
+                let nextDay = Self.calendar.date(byAdding: .day, value: 1, to: cursor)
+            else {
+                break
+            }
+
+            if displayInterval.contains(midday) {
+                labels.append(
+                    SarosSpikeAxisDayLabel(
+                        date: midday,
+                        title: Self.centerDayFormatter.string(from: midday)
+                    )
+                )
+            }
+
+            cursor = nextDay
+        }
+
+        return labels
+    }
+
     @MainActor
     private func scrollToPresent(
         proxy: ScrollViewProxy,
@@ -864,6 +1224,7 @@ private struct SarosSpikeWaveTimelineView: View {
     ) {
         let now = Date()
         presentDate = now
+        probeDate = now
         currentState = waveField.sample(at: now) ?? currentState
         scroll(to: now, proxy: proxy, animated: animated)
     }
@@ -897,6 +1258,12 @@ private struct SarosSpikeWaveTimelineView: View {
         return displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
     }
 
+    private func moveProbe(toX x: CGFloat, contentWidth: CGFloat) {
+        let ratio = min(max(x / max(contentWidth, 1), 0), 1)
+        let date = displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
+        probeDate = date
+    }
+
     private func eventDotMarkers(
         events: [SarosGlobalFlipEvent],
         contentWidth: CGFloat,
@@ -916,7 +1283,7 @@ private struct SarosSpikeWaveTimelineView: View {
             let size = dotSize(for: event.rarity)
             let baseY = dotBaseY(
                 for: event,
-                field: waveField,
+                samples: waveSamples,
                 maxEnergy: maxEnergy,
                 height: height
             )
@@ -963,7 +1330,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private func dotBaseY(
         for event: SarosGlobalFlipEvent,
-        field: SarosSpikeWaveField,
+        samples: SarosSpikeWaveSamples,
         maxEnergy: Double,
         height: CGFloat
     ) -> CGFloat {
@@ -971,8 +1338,8 @@ private struct SarosSpikeWaveTimelineView: View {
         let top = height * 0.18
         let waveHeight = baseline - top
         let maxEnergy = max(maxEnergy, 0.000_000_001)
-        let peakHeight = field.component(for: event)?.peakHeight ?? 0
-        let peakY = baseline - CGFloat(peakHeight / maxEnergy) * waveHeight
+        let eventEnergy = samples.energy(for: event)
+        let peakY = baseline - CGFloat(eventEnergy / maxEnergy) * waveHeight
 
         return max(14, peakY - 10)
     }
@@ -1064,7 +1431,7 @@ private struct SarosSpikeWaveStatePanel: View {
 }
 
 private struct SarosSpikeWaveCanvas: View {
-    let field: SarosSpikeWaveField
+    let samples: SarosSpikeWaveSamples
     let currentState: SarosSpikeWaveState?
     let displayInterval: DateInterval
     let maxEnergy: Double
@@ -1089,7 +1456,7 @@ private struct SarosSpikeWaveCanvas: View {
                 context.stroke(line, with: .color(.white.opacity(0.06)), lineWidth: 1)
             }
 
-            drawComponents(
+            drawCombinedWave(
                 in: context,
                 size: size,
                 baseline: baseline,
@@ -1130,56 +1497,43 @@ private struct SarosSpikeWaveCanvas: View {
         return baseline - CGFloat(ratio) * waveHeight
     }
 
-    private func drawComponents(
+    private func drawCombinedWave(
         in context: GraphicsContext,
         size: CGSize,
         baseline: CGFloat,
         waveHeight: CGFloat,
         maxEnergy: Double
     ) {
-        for component in field.components where displayInterval.intersects(component.periodInterval) {
-            let start = max(component.period.leftBoundary, displayInterval.start)
-            let end = min(component.period.rightBoundary, displayInterval.end)
-            let duration = end.timeIntervalSince(start)
-            guard duration > 1 else { continue }
+        guard !samples.points.isEmpty else { return }
 
-            let startX = xPosition(for: start, width: size.width)
-            let endX = xPosition(for: end, width: size.width)
-            let pixelSpan = max(abs(endX - startX), 1)
-            let sampleCount = min(max(Int(pixelSpan / 3), 32), 320)
-            let color = component.period.spike.rarity.color
+        var line = Path()
+        var fill = Path()
+        fill.move(to: CGPoint(x: 0, y: baseline))
 
-            var line = Path()
-            var fill = Path()
-            fill.move(to: CGPoint(x: startX, y: baseline))
+        for (index, sample) in samples.points.enumerated() {
+            let x = CGFloat(sample.position) * size.width
+            let y = yPosition(
+                for: sample.energy,
+                baseline: baseline,
+                waveHeight: waveHeight,
+                maxEnergy: maxEnergy
+            )
+            let point = CGPoint(x: x, y: y)
 
-            for index in 0...sampleCount {
-                let ratio = Double(index) / Double(sampleCount)
-                let date = start.addingTimeInterval(duration * ratio)
-                let x = xPosition(for: date, width: size.width)
-                let y = yPosition(
-                    for: component.energy(at: date),
-                    baseline: baseline,
-                    waveHeight: waveHeight,
-                    maxEnergy: maxEnergy
-                )
-                let point = CGPoint(x: x, y: y)
-
-                if index == 0 {
-                    line.move(to: point)
-                } else {
-                    line.addLine(to: point)
-                }
-
-                fill.addLine(to: point)
+            if index == 0 {
+                line.move(to: point)
+            } else {
+                line.addLine(to: point)
             }
 
-            fill.addLine(to: CGPoint(x: endX, y: baseline))
-            fill.closeSubpath()
-
-            context.fill(fill, with: .color(color.opacity(0.12)))
-            context.stroke(line, with: .color(color.opacity(0.92)), lineWidth: lineWidth(for: component.period.spike.rarity))
+            fill.addLine(to: point)
         }
+
+        fill.addLine(to: CGPoint(x: size.width, y: baseline))
+        fill.closeSubpath()
+
+        context.fill(fill, with: .color(.white.opacity(0.11)))
+        context.stroke(line, with: .color(.white.opacity(0.96)), lineWidth: 1.7)
     }
 
     private func lineWidth(for rarity: FlipRarity) -> CGFloat {
@@ -1282,6 +1636,24 @@ private struct SarosSpikeAxisTick: Identifiable, Hashable {
     }
 }
 
+private struct SarosSpikeHourTick: Identifiable, Hashable {
+    let date: Date
+    let title: String
+
+    var id: String {
+        "\(Int(date.timeIntervalSince1970))-hour"
+    }
+}
+
+private struct SarosSpikeAxisDayLabel: Identifiable, Hashable {
+    let date: Date
+    let title: String
+
+    var id: String {
+        "\(Int(date.timeIntervalSince1970))-center-day"
+    }
+}
+
 private struct SarosSpikeWaveAxisTickView: View {
     let tick: SarosSpikeAxisTick
 
@@ -1298,6 +1670,97 @@ private struct SarosSpikeWaveAxisTickView: View {
                 .minimumScaleFactor(0.72)
         }
         .frame(width: tick.isMajor ? 78 : 54, height: 48, alignment: .top)
+    }
+}
+
+private struct SarosSpikeWaveHourTickView: View {
+    let tick: SarosSpikeHourTick
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 1, height: 12)
+
+            if !tick.title.isEmpty {
+                Text(tick.title)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.secondary.opacity(0.86))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
+        }
+        .frame(width: 48, height: 34, alignment: .top)
+    }
+}
+
+private struct SarosSpikeWaveDayLabelView: View {
+    let label: SarosSpikeAxisDayLabel
+
+    var body: some View {
+        Text(label.title)
+            .font(.caption2.monospacedDigit().weight(.semibold))
+            .foregroundStyle(Color.white.opacity(0.78))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.4), in: Capsule())
+            .frame(width: 132, height: 24)
+    }
+}
+
+private struct SarosSpikeWaveProbeHandle: View {
+    let date: Date
+    let state: SarosSpikeWaveState?
+    let color: Color
+    let x: CGFloat
+    let onDrag: (CGFloat) -> Void
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM HH:mm"
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(Self.formatter.string(from: date))
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.58), in: Capsule())
+
+            Circle()
+                .fill(color)
+                .frame(width: 16, height: 16)
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.72), lineWidth: 1.2)
+                }
+                .shadow(color: color.opacity(0.74), radius: 9)
+
+            if let state {
+                Text(String(format: "E %.3f", state.energy))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.44), in: Capsule())
+            }
+        }
+        .frame(width: 112, height: 88)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    onDrag(x + value.translation.width)
+                }
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Wave probe")
+        .accessibilityValue(Self.formatter.string(from: date))
     }
 }
 
@@ -1360,11 +1823,14 @@ private struct SarosPhaseGridCell: View {
 }
 
 private struct SarosPhaseDetailView: View {
+    @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
 
     let series: ActiveSarosPhaseSeries
 
     @State private var selectedGlobalTimelineEvent: SarosPhaseFlipEvent?
+    @State private var selectedMapSequence: ActiveSarosPhaseSeries?
+    @State private var seriesEclipses: [Eclipse] = []
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
@@ -1375,7 +1841,8 @@ private struct SarosPhaseDetailView: View {
                     SarosPhaseHeaderPanel(
                         reading: reading,
                         reference: reference,
-                        now: context.date
+                        now: context.date,
+                        seriesEclipses: seriesEclipses
                     )
                     .padding(.horizontal)
                     .padding(.top, 12)
@@ -1401,11 +1868,43 @@ private struct SarosPhaseDetailView: View {
         }
         .navigationTitle("Saros \(series.saros)")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    selectedMapSequence = series
+                } label: {
+                    Image(systemName: "map")
+                }
+                .accessibilityLabel("Open eclipse maps")
+            }
+        }
         .navigationDestination(item: $selectedGlobalTimelineEvent) { event in
             SarosGlobalFlipTimelineView(
                 referenceDate: event.date,
                 referenceEvent: event
             )
+        }
+        .navigationDestination(item: $selectedMapSequence) { series in
+            SarosEclipseMapSequenceView(series: series)
+        }
+        .task(id: series.saros) {
+            await loadSeriesEclipses()
+        }
+    }
+
+    @MainActor
+    private func loadSeriesEclipses() async {
+        let saros = series.saros
+        let eclipseService = services.eclipseService
+        let result = await Task.detached(priority: .userInitiated) {
+            Result {
+                try eclipseService.eclipses(forSaros: saros)
+                    .sorted { $0.date < $1.date }
+            }
+        }.value
+
+        if case .success(let eclipses) = result {
+            seriesEclipses = eclipses
         }
     }
 }
@@ -1414,6 +1913,7 @@ private struct SarosPhaseHeaderPanel: View {
     let reading: SarosClockReading
     let reference: SarosPhaseTimelineReference?
     let now: Date
+    let seriesEclipses: [Eclipse]
 
     private var tint: Color {
         reference?.event.rarity.color ?? .white
@@ -1430,20 +1930,55 @@ private struct SarosPhaseHeaderPanel: View {
         return max(reference.event.date.timeIntervalSince(now), 0).compactDuration
     }
 
+    private var yearMarkers: [SarosEclipseYearMarker] {
+        let sorted = seriesEclipses.isEmpty
+            ? [reading.previousEclipse, reading.nextEclipse]
+            : seriesEclipses
+        guard let nextIndex = sorted.firstIndex(where: { $0.id == reading.nextEclipse.id }) else {
+            return [
+                SarosEclipseYearMarker(eclipse: reading.previousEclipse, isUpcoming: false),
+                SarosEclipseYearMarker(eclipse: reading.nextEclipse, isUpcoming: true)
+            ]
+        }
+
+        let lowerBound = max(nextIndex - 2, sorted.startIndex)
+        return sorted[lowerBound...nextIndex].map { eclipse in
+            SarosEclipseYearMarker(
+                eclipse: eclipse,
+                isUpcoming: eclipse.id == reading.nextEclipse.id
+            )
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 16) {
-                OctalGlyph(
-                    value: reading.octalAddress,
-                    depth: reading.harmonicDepth,
-                    color: tint
-                )
-                .frame(width: 84, height: 84)
-                .padding(10)
-                .background(.black.opacity(0.28), in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(tint.opacity(0.28), lineWidth: 1)
+                VStack(spacing: 8) {
+                    OctalGlyph(
+                        value: reading.octalAddress,
+                        depth: reading.harmonicDepth,
+                        color: tint
+                    )
+                    .frame(width: 84, height: 84)
+                    .padding(10)
+                    .background(.black.opacity(0.28), in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(tint.opacity(0.28), lineWidth: 1)
+                    }
+
+                    OctalGlyph(
+                        value: fineAddress,
+                        depth: 3,
+                        color: tint
+                    )
+                    .frame(width: 28, height: 28)
+                    .padding(6)
+                    .background(.black.opacity(0.22), in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(tint.opacity(0.22), lineWidth: 1)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
@@ -1461,36 +1996,316 @@ private struct SarosPhaseHeaderPanel: View {
 
                 Spacer(minLength: 0)
 
-                OctalGlyph(
-                    value: fineAddress,
-                    depth: 3,
-                    color: tint
+                SarosEclipseCubeMapPreview(
+                    eclipse: reading.nextEclipse,
+                    color: tint,
+                    compact: true
                 )
-                .frame(width: 40, height: 40)
-                .padding(8)
-                .background(.black.opacity(0.22), in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(tint.opacity(0.22), lineWidth: 1)
-                }
+                .frame(width: 124, height: 124)
             }
 
-            VStack(spacing: 8) {
-                MetadataRow(
-                    title: "Previous eclipse",
-                    value: SarosPhaseFormat.eclipseSummary(reading.previousEclipse)
-                )
-                MetadataRow(
-                    title: "Next eclipse",
-                    value: SarosPhaseFormat.eclipseSummary(reading.nextEclipse)
-                )
-            }
+            SarosEclipseYearMarkersView(
+                markers: yearMarkers,
+                tint: tint
+            )
         }
     }
 
     private static func octalPower(_ exponent: Int) -> Int {
         guard exponent > 0 else { return 1 }
         return (0..<exponent).reduce(1) { value, _ in value * 8 }
+    }
+}
+
+private struct SarosEclipseYearMarker: Identifiable, Hashable {
+    let eclipse: Eclipse
+    let isUpcoming: Bool
+
+    var id: String { eclipse.id }
+}
+
+private struct SarosEclipseYearMarkersView: View {
+    let markers: [SarosEclipseYearMarker]
+    let tint: Color
+
+    private static let yearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy"
+        return formatter
+    }()
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(markers) { marker in
+                Text(Self.yearFormatter.string(from: marker.eclipse.date))
+                    .font(.caption.monospacedDigit().weight(marker.isUpcoming ? .bold : .semibold))
+                    .foregroundStyle(marker.isUpcoming ? tint : .secondary)
+                    .frame(maxWidth: .infinity, alignment: marker.isUpcoming ? .trailing : .leading)
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct SarosEclipseMapSequenceView: View {
+    @EnvironmentObject private var services: AppServices
+
+    let series: ActiveSarosPhaseSeries
+
+    @State private var eclipses: [Eclipse] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var didScrollToUpcoming = false
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    if eclipses.isEmpty && !isLoading {
+                        ContentUnavailableView(
+                            errorMessage ?? "No eclipse maps",
+                            systemImage: "map"
+                        )
+                        .padding(.top, 80)
+                    }
+
+                    ForEach(eclipses) { eclipse in
+                        SarosEclipseMapSequenceCard(
+                            eclipse: eclipse,
+                            color: color(for: eclipse),
+                            isUpcoming: eclipse.id == series.nextEclipse.id
+                        )
+                        .id(eclipse.id)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 12)
+            }
+            .overlay {
+                if isLoading {
+                    ProgressView()
+                }
+            }
+            .navigationTitle("Saros \(series.saros) maps")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                await loadEclipses()
+            }
+            .onChange(of: eclipses.count) { _, _ in
+                scrollToUpcoming(with: proxy)
+            }
+        }
+    }
+
+    @MainActor
+    private func loadEclipses() async {
+        guard eclipses.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        let eclipseService = services.eclipseService
+        let saros = series.saros
+
+        let result = await Task.detached(priority: .userInitiated) {
+            Result {
+                try eclipseService.eclipses(forSaros: saros)
+                    .sorted { $0.date < $1.date }
+            }
+        }.value
+
+        isLoading = false
+        switch result {
+        case .success(let loaded):
+            eclipses = loaded
+        case .failure(let error):
+            eclipses = []
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scrollToUpcoming(with proxy: ScrollViewProxy) {
+        guard !didScrollToUpcoming, !eclipses.isEmpty else { return }
+        didScrollToUpcoming = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+            withAnimation(.snappy(duration: 0.35)) {
+                proxy.scrollTo(series.nextEclipse.id, anchor: .center)
+            }
+        }
+    }
+
+    private func color(for eclipse: Eclipse) -> Color {
+        if eclipse.id == series.nextEclipse.id {
+            return .green
+        }
+        if eclipse.date < Date() {
+            return .secondary
+        }
+        return .cyan
+    }
+}
+
+private struct SarosEclipseMapSequenceCard: View {
+    let eclipse: Eclipse
+    let color: Color
+    let isUpcoming: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(JournalFormatters.dateTime.string(from: eclipse.date))
+                        .font(.headline)
+                        .foregroundStyle(isUpcoming ? color : .primary)
+                    Text(eclipse.displayTypeLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if let sequence = eclipse.sarosSequence,
+                   let count = eclipse.sarosSeriesCount
+                {
+                    Text("\(sequence)/\(count)")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(isUpcoming ? color : .secondary)
+                }
+            }
+
+            SarosEclipseMetricStrip(eclipse: eclipse, color: color)
+
+            SarosEclipseCubeMapPreview(
+                eclipse: eclipse,
+                color: color,
+                compact: false
+            )
+            .frame(height: 260)
+        }
+        .padding(12)
+        .background(.white.opacity(isUpcoming ? 0.09 : 0.055), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(color.opacity(isUpcoming ? 0.36 : 0.12), lineWidth: isUpcoming ? 1.2 : 1)
+        }
+    }
+}
+
+private struct SarosEclipseMetricStrip: View {
+    let eclipse: Eclipse
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let gamma = eclipse.gamma {
+                metric(title: "Gamma", value: String(format: "%+.3f", gamma))
+            }
+
+            if let magnitude = eclipse.magnitude {
+                metric(title: "Mag", value: String(format: "%.3f", magnitude))
+            }
+        }
+    }
+
+    private func metric(title: String, value: String) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .foregroundStyle(color)
+        }
+        .font(.caption.monospacedDigit().weight(.semibold))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.white.opacity(0.07), in: Capsule())
+    }
+}
+
+private struct SarosEclipseCubeMapPreview: View {
+    @EnvironmentObject private var services: AppServices
+
+    let eclipse: Eclipse
+    let color: Color
+    let compact: Bool
+
+    @State private var overlay: CubeMapEclipseOverlay?
+    @State private var focus = CubeMapProjectionFocus.zero
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ZStack {
+            if let overlay {
+                CubeMapView(
+                    overlays: [overlay],
+                    displayMode: .isometric,
+                    projectionOffsets: focus.offsets,
+                    initialYawQuarter: focus.yawQuarter,
+                    initialShowsTop: focus.showsTop,
+                    allowsInteraction: false,
+                    showsFrame: !compact,
+                    showsBackground: !compact
+                )
+                .id("\(eclipse.id)-\(focus.offsets.longitude)-\(focus.showsTop)-\(compact)")
+            } else if !isLoading {
+                Image(systemName: "map")
+                    .font(compact ? .title3 : .largeTitle)
+                    .foregroundStyle(.secondary)
+            }
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(compact ? .mini : .regular)
+            }
+
+            if let errorMessage, !compact {
+                Text(errorMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(10)
+                    .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if !compact {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.white.opacity(0.035))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 10 : 8))
+        .task(id: eclipse.id) {
+            await loadPath()
+        }
+    }
+
+    @MainActor
+    private func loadPath() async {
+        isLoading = true
+        errorMessage = nil
+        overlay = nil
+
+        do {
+            guard let geometry = try services.eclipseService.pathGeometry(for: eclipse.id),
+                  !geometry.polygons.isEmpty
+            else {
+                isLoading = false
+                return
+            }
+
+            focus = CubeMapProjectionFocus.fitting(rings: geometry.polygons)
+            overlay = CubeMapEclipseOverlay(
+                id: eclipse.id,
+                saros: eclipse.saros,
+                title: "Saros \(eclipse.saros)",
+                date: eclipse.date,
+                color: color,
+                polygons: geometry.polygons
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
     }
 }
 
@@ -1941,6 +2756,7 @@ private struct SarosGlobalFlipTimelineView: View {
     @State private var selectedMonth: SarosGlobalTimelineMonth?
     @State private var monthDistributions: [String: SarosFlipMonthDistribution] = [:]
     @State private var didScrollToReferenceMonth = false
+    @State private var didOpenReferenceMonth = false
 
     private var months: [SarosGlobalTimelineMonth] {
         SarosGlobalTimelineMonth.months(around: referenceDate)
@@ -1985,6 +2801,7 @@ private struct SarosGlobalFlipTimelineView: View {
             .task(id: harmonicDepth) {
                 loadMonthDistributions()
                 scrollToReferenceMonth(with: proxy)
+                openReferenceMonth()
             }
         }
         .navigationDestination(item: $selectedMonth) { month in
@@ -1993,6 +2810,15 @@ private struct SarosGlobalFlipTimelineView: View {
                 referenceDate: referenceDate,
                 referenceEvent: referenceEvent
             )
+        }
+    }
+
+    private func openReferenceMonth() {
+        guard !didOpenReferenceMonth else { return }
+        didOpenReferenceMonth = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            selectedMonth = SarosGlobalTimelineMonth.containing(referenceDate)
         }
     }
 
@@ -2036,6 +2862,8 @@ private struct SarosGlobalMonthTimelineView: View {
     @State private var didScrollToReference = false
     @State private var errorMessage: String?
     @State private var pendingScrollTarget: SarosMonthScrollTarget = .reference
+    @State private var selectedSeries: ActiveSarosPhaseSeries?
+    @State private var openingSarosID: Int?
 
     init(
         month: SarosGlobalTimelineMonth,
@@ -2065,7 +2893,7 @@ private struct SarosGlobalMonthTimelineView: View {
     }
 
     private var referenceScrollID: String {
-        referenceGlobalEvent?.id ?? Self.referenceMarkerID
+        dayID(for: referenceDay)
     }
 
     var body: some View {
@@ -2083,7 +2911,8 @@ private struct SarosGlobalMonthTimelineView: View {
                             day: day,
                             events: dayEvents[index],
                             referenceDate: referenceDate,
-                            referenceEvent: referenceGlobalEvent
+                            referenceEvent: referenceGlobalEvent,
+                            onSelectEvent: openSaros
                         )
                         .id(dayID(for: day))
                     }
@@ -2106,12 +2935,18 @@ private struct SarosGlobalMonthTimelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .task(id: "\(visibleMonth.id)-\(harmonicDepth)") {
                 loadFixedTimeline()
-                scrollToReference(with: proxy)
+                scrollToReference(with: proxy, delay: 0.18)
             }
             .onChange(of: isLoadingEvents) { _, loading in
                 guard !loading else { return }
-                scrollToReference(with: proxy, force: true)
+                scrollToReference(with: proxy, force: true, delay: 0.16)
             }
+            .onChange(of: dayEvents.count) { _, _ in
+                scrollToReference(with: proxy, force: true, delay: 0.16)
+            }
+        }
+        .navigationDestination(item: $selectedSeries) { series in
+            SarosPhaseDetailView(series: series)
         }
     }
 
@@ -2172,31 +3007,100 @@ private struct SarosGlobalMonthTimelineView: View {
         visibleMonth = month
     }
 
+    private func openSaros(_ event: SarosGlobalFlipEvent) {
+        guard openingSarosID != event.saros else { return }
+        openingSarosID = event.saros
+
+        let saros = event.saros
+        let eventDate = event.date
+        let eclipseService = services.eclipseService
+
+        Task.detached(priority: .userInitiated) {
+            let result: Result<ActiveSarosPhaseSeries, Error> = Result {
+                guard let summary = try eclipseService.allSarosSeries().first(where: { $0.saros == saros }) else {
+                    throw SarosSpikeWaveError.missingSaros(saros)
+                }
+
+                let currentInterval = try eclipseService.previousAndNextEclipse(saros: saros, around: Date())
+                let fallbackInterval = try eclipseService.previousAndNextEclipse(saros: saros, around: eventDate)
+                let interval = currentInterval ?? fallbackInterval
+
+                guard let interval else {
+                    throw SarosSpikeWaveError.missingSaros(saros)
+                }
+
+                return ActiveSarosPhaseSeries(
+                    summary: summary,
+                    previousEclipse: interval.previous,
+                    nextEclipse: interval.next
+                )
+            }
+
+            await MainActor.run {
+                openingSarosID = nil
+                switch result {
+                case .success(let series):
+                    selectedSeries = series
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func scrollToReference(with proxy: ScrollViewProxy, force: Bool = false) {
+        scrollToReference(with: proxy, force: force, delay: 0.08)
+    }
+
+    private func scrollToReference(
+        with proxy: ScrollViewProxy,
+        force: Bool = false,
+        delay: TimeInterval
+    ) {
         let target = pendingScrollTarget
         guard force || !didScrollToReference else { return }
         didScrollToReference = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            let id: String?
-            let anchor: UnitPoint
-            switch target {
-            case .reference:
-                guard isReferenceMonth else { return }
-                id = referenceScrollID
-                anchor = .center
-            case .start:
-                id = days.first.map(dayID(for:))
-                anchor = .top
-            case .end:
-                id = days.last.map(dayID(for:))
-                anchor = .bottom
-            }
+        let delays: [TimeInterval] = target == .reference
+            ? [delay, delay + 0.22, delay + 0.48]
+            : [delay, delay + 0.18]
+        let monthID = visibleMonth.id
 
-            guard let id else { return }
+        for scrollDelay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + scrollDelay) {
+                guard visibleMonth.id == monthID else { return }
+                scrollToTarget(target, with: proxy, animated: scrollDelay == delay)
+            }
+        }
+    }
+
+    private func scrollToTarget(
+        _ target: SarosMonthScrollTarget,
+        with proxy: ScrollViewProxy,
+        animated: Bool
+    ) {
+        let id: String?
+        let anchor: UnitPoint
+        switch target {
+        case .reference:
+            guard isReferenceMonth else { return }
+            id = referenceScrollID
+            anchor = .center
+        case .start:
+            id = days.first.map(dayID(for:))
+            anchor = .top
+        case .end:
+            id = days.last.map(dayID(for:))
+            anchor = .bottom
+        }
+
+        guard let id else { return }
+        if animated {
             withAnimation(.snappy(duration: 0.35)) {
                 proxy.scrollTo(id, anchor: anchor)
             }
+        } else {
+            proxy.scrollTo(id, anchor: anchor)
         }
     }
 
@@ -2467,6 +3371,7 @@ private struct SarosGlobalDaySection: View {
     let events: [SarosGlobalFlipEvent]?
     let referenceDate: Date
     let referenceEvent: SarosGlobalFlipEvent?
+    let onSelectEvent: (SarosGlobalFlipEvent) -> Void
 
     private var isReferenceDay: Bool {
         SarosGlobalTimelineBuilder.calendar.isDate(day, inSameDayAs: referenceDate)
@@ -2519,11 +3424,16 @@ private struct SarosGlobalDaySection: View {
                     .id(isReferenceDay ? SarosGlobalMonthTimelineView.referenceMarkerID : "void-\(Int(day.timeIntervalSince1970))")
             } else {
                 ForEach(rows) { event in
-                    SarosGlobalFlipRow(
-                        event: event,
-                        referenceDate: referenceDate,
-                        isReference: event.id == referenceEvent?.id
-                    )
+                    Button {
+                        onSelectEvent(event)
+                    } label: {
+                        SarosGlobalFlipRow(
+                            event: event,
+                            referenceDate: referenceDate,
+                            isReference: event.id == referenceEvent?.id
+                        )
+                    }
+                    .buttonStyle(.plain)
                     .id(event.id)
                 }
 

@@ -68,6 +68,7 @@ struct CubeMapView: View {
     let projectionOffsets: CubeMapProjectionOffsets
     let allowsInteraction: Bool
     let showsFrame: Bool
+    let showsBackground: Bool
 
     @State private var cubeFace: CubeMapFace
     @State private var previousSingleFace: CubeMapFace?
@@ -86,13 +87,15 @@ struct CubeMapView: View {
         initialYawQuarter: Int = 0,
         initialShowsTop: Bool = true,
         allowsInteraction: Bool = true,
-        showsFrame: Bool = true
+        showsFrame: Bool = true,
+        showsBackground: Bool = true
     ) {
         self.overlays = overlays
         self.displayMode = displayMode
         self.projectionOffsets = projectionOffsets
         self.allowsInteraction = allowsInteraction
         self.showsFrame = showsFrame
+        self.showsBackground = showsBackground
         _cubeFace = State(initialValue: initialFace)
         _isometricYawQuarter = State(initialValue: initialYawQuarter)
         _isometricShowsTop = State(initialValue: initialShowsTop)
@@ -107,7 +110,12 @@ struct CubeMapView: View {
                 .contentShape(Rectangle())
                 .gesture(edgeTapGesture(in: proxy.size))
             }
-            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: showsFrame ? 8 : 0))
+            .background {
+                if showsBackground {
+                    RoundedRectangle(cornerRadius: showsFrame ? 8 : 0)
+                        .fill(.white.opacity(0.04))
+                }
+            }
             .overlay {
                 if showsFrame {
                     RoundedRectangle(cornerRadius: 8)
