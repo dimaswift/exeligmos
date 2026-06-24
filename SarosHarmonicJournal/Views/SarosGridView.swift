@@ -335,6 +335,7 @@ private struct SarosSpikeWaveComponent: Hashable {
     let leftBoundary: Date
     let rightBoundary: Date
     let peakHeight: Double
+    let gaussianExtent: Double
 
     func width(for offset: TimeInterval) -> TimeInterval {
         offset < 0
@@ -374,6 +375,7 @@ private struct SarosSpikeWaveCacheKey: Hashable {
     let loadEnd: Int
     let sampleCount: Int
     let minimumRarityID: String
+    let includesSeriesEclipseMetrics: Bool
 }
 
 private struct SarosSpikeWaveCacheEntry {
@@ -558,6 +560,8 @@ private struct SarosSpikeWaveField {
 }
 
 private enum SarosSpikeWaveCalculator {
+    private static let baseAmplitudeMultiplier = 2.5
+
     static func field(events: [SarosGlobalFlipEvent]) -> SarosSpikeWaveField {
         let spikes = events.sorted { lhs, rhs in
             if lhs.date != rhs.date {
@@ -597,7 +601,7 @@ private enum SarosSpikeWaveCalculator {
         field(events: events).sample(at: date)
     }
 
-    private static func peakHeight(for rarity: FlipRarity) -> Double {
+    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
         switch rarity.baseRarity {
         case .mythic:
             return 4
@@ -610,6 +614,27 @@ private enum SarosSpikeWaveCalculator {
         default:
             return 0.25
         }
+    }
+
+    private static func peakHeight(for event: SarosGlobalFlipEvent) -> Double {
+        basePeakHeight(for: event.rarity)
+            * Self.baseAmplitudeMultiplier
+            * magnitudeAmplitudeMultiplier(for: event.seriesEclipseMagnitude)
+    }
+
+    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
+        guard let magnitude, magnitude.isFinite else { return 1 }
+        return min(max(magnitude, 0.18), 1.8)
+    }
+
+    private static func gaussianExtent(forGamma gamma: Double?) -> Double {
+        guard let gamma, gamma.isFinite else {
+            return SarosSpikeWaveComponent.defaultGaussianExtent
+        }
+
+        // Lower absolute gamma means a more central eclipse, so the contribution spreads wider.
+        let gammaScale = min(max(sqrt(max(abs(gamma), 0.02)), 0.45), 1.45)
+        return SarosSpikeWaveComponent.defaultGaussianExtent * gammaScale
     }
 
     private static func component(
@@ -636,7 +661,8 @@ private enum SarosSpikeWaveCalculator {
             sequenceKey: "\(source.saros)-\(source.rarity.baseRarity.id)",
             leftBoundary: leftBoundary,
             rightBoundary: rightBoundary,
-            peakHeight: peakHeight(for: source.rarity)
+            peakHeight: peakHeight(for: source),
+            gaussianExtent: gaussianExtent(forGamma: source.seriesEclipseGamma)
         )
     }
 
@@ -679,7 +705,7 @@ private enum SarosSpikeWaveCalculator {
 }
 
 private extension SarosSpikeWaveComponent {
-    static let gaussianExtent = 3.2
+    static let defaultGaussianExtent = 3.2
 
     var periodInterval: DateInterval {
         DateInterval(start: leftBoundary, end: rightBoundary)
@@ -693,7 +719,7 @@ private extension SarosSpikeWaveComponent {
         guard contains(date) else { return 0 }
 
         let x = gaussianCoordinate(at: date)
-        let boundaryValue = exp(-0.5 * Self.gaussianExtent * Self.gaussianExtent)
+        let boundaryValue = exp(-0.5 * gaussianExtent * gaussianExtent)
         let raw = exp(-0.5 * x * x)
         let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
 
@@ -714,7 +740,7 @@ private extension SarosSpikeWaveComponent {
         let offset = date.timeIntervalSince(period.spike.date)
         let span = max(width(for: offset), 1)
         let normalized = min(max(offset / span, -1), 1)
-        return normalized * Self.gaussianExtent
+        return normalized * gaussianExtent
     }
 }
 
@@ -1071,7 +1097,8 @@ private struct SarosSpikeWaveTimelineView: View {
                     summaries: summaries,
                     eclipseService: eclipseService,
                     harmonicDepth: harmonicDepth,
-                    minimumRarity: minimumRarity
+                    minimumRarity: minimumRarity,
+                    includeSeriesEclipseMetrics: true
                 )
                 let field = SarosSpikeWaveCalculator.field(events: loadedEvents)
                 let samples = field.samples(
@@ -1130,7 +1157,8 @@ private struct SarosSpikeWaveTimelineView: View {
             loadStart: Int(loadInterval.start.timeIntervalSince1970),
             loadEnd: Int(loadInterval.end.timeIntervalSince1970),
             sampleCount: sampleCount,
-            minimumRarityID: minimumRarity.id
+            minimumRarityID: minimumRarity.id,
+            includesSeriesEclipseMetrics: true
         )
     }
 
@@ -3642,6 +3670,8 @@ private struct SarosGlobalFlipEvent: Identifiable, Hashable {
     let octalAddress: String
     let harmonicDepth: Int
     let rarity: FlipRarity
+    let seriesEclipseGamma: Double?
+    let seriesEclipseMagnitude: Double?
 
     var id: String {
         "\(saros)-\(binIndex)-\(Int(date.timeIntervalSince1970))-\(rarity.id)"
@@ -3653,7 +3683,9 @@ private struct SarosGlobalFlipEvent: Identifiable, Hashable {
         date: Date,
         octalAddress: String,
         harmonicDepth: Int,
-        rarity: FlipRarity
+        rarity: FlipRarity,
+        seriesEclipseGamma: Double? = nil,
+        seriesEclipseMagnitude: Double? = nil
     ) {
         self.saros = saros
         self.binIndex = binIndex
@@ -3661,6 +3693,8 @@ private struct SarosGlobalFlipEvent: Identifiable, Hashable {
         self.octalAddress = octalAddress
         self.harmonicDepth = harmonicDepth
         self.rarity = rarity
+        self.seriesEclipseGamma = seriesEclipseGamma
+        self.seriesEclipseMagnitude = seriesEclipseMagnitude
     }
 
     init(event: SarosPhaseFlipEvent) {
@@ -3687,7 +3721,8 @@ private enum SarosGlobalTimelineBuilder {
         summaries: [SarosSeriesSummary],
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
-        minimumRarity: FlipRarity = .epic
+        minimumRarity: FlipRarity = .epic,
+        includeSeriesEclipseMetrics: Bool = false
     ) -> [SarosGlobalFlipEvent] {
         let start = calendar.startOfDay(for: day)
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
@@ -3696,7 +3731,8 @@ private enum SarosGlobalTimelineBuilder {
             summaries: summaries,
             eclipseService: eclipseService,
             harmonicDepth: rawHarmonicDepth,
-            minimumRarity: minimumRarity
+            minimumRarity: minimumRarity,
+            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics
         )
     }
 
@@ -3705,14 +3741,16 @@ private enum SarosGlobalTimelineBuilder {
         summaries: [SarosSeriesSummary],
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
-        minimumRarity: FlipRarity = .epic
+        minimumRarity: FlipRarity = .epic,
+        includeSeriesEclipseMetrics: Bool = false
     ) -> [Int: [SarosGlobalFlipEvent]] {
         Dictionary(grouping: events(
             in: interval,
             summaries: summaries,
             eclipseService: eclipseService,
             harmonicDepth: rawHarmonicDepth,
-            minimumRarity: minimumRarity
+            minimumRarity: minimumRarity,
+            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics
         )) { event in
             dayKey(for: event.date)
         }
@@ -3727,7 +3765,8 @@ private enum SarosGlobalTimelineBuilder {
         summaries: [SarosSeriesSummary],
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
-        minimumRarity: FlipRarity = .epic
+        minimumRarity: FlipRarity = .epic,
+        includeSeriesEclipseMetrics: Bool = false
     ) -> [SarosGlobalFlipEvent] {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
         let start = interval.start
@@ -3743,6 +3782,10 @@ private enum SarosGlobalTimelineBuilder {
             )
 
             for interval in intervals {
+                let weightingInterval = includeSeriesEclipseMetrics
+                    ? intervalWithDetailedEclipseMetrics(interval, eclipseService: eclipseService)
+                    : interval
+
                 guard let reading = try? SarosClockCalculator.reading(
                     saros: summary.saros,
                     previous: interval.previous,
@@ -3755,6 +3798,7 @@ private enum SarosGlobalTimelineBuilder {
 
                 appendBoundaryEventIfNeeded(
                     date: interval.previous.date,
+                    eclipse: weightingInterval.previous,
                     reading: reading,
                     start: start,
                     end: end,
@@ -3762,6 +3806,7 @@ private enum SarosGlobalTimelineBuilder {
                 )
                 appendBoundaryEventIfNeeded(
                     date: interval.next.date,
+                    eclipse: weightingInterval.next,
                     reading: reading,
                     start: start,
                     end: end,
@@ -3778,13 +3823,16 @@ private enum SarosGlobalTimelineBuilder {
                         if date >= end { break }
 
                         if date >= start && !isBoundaryDuplicate(bin: currentBin, rarity: rarity, reading: reading) {
+                            let seriesEclipse = seriesWeightingEclipse(for: date, in: weightingInterval)
                             let event = SarosGlobalFlipEvent(
                                 saros: reading.saros,
                                 binIndex: currentBin,
                                 date: date,
                                 octalAddress: reading.octalAddress(forBinIndex: currentBin),
                                 harmonicDepth: harmonicDepth,
-                                rarity: rarity
+                                rarity: rarity,
+                                seriesEclipseGamma: seriesEclipse.gamma,
+                                seriesEclipseMagnitude: seriesEclipse.magnitude
                             )
                             upsert(event, into: &eventsByBin)
                         }
@@ -3812,6 +3860,7 @@ private enum SarosGlobalTimelineBuilder {
 
     private static func appendBoundaryEventIfNeeded(
         date: Date,
+        eclipse: Eclipse,
         reading: SarosClockReading,
         start: Date,
         end: Date,
@@ -3825,9 +3874,46 @@ private enum SarosGlobalTimelineBuilder {
             date: date,
             octalAddress: String(repeating: "7", count: reading.harmonicDepth),
             harmonicDepth: reading.harmonicDepth,
-            rarity: .mythicDigit(7)
+            rarity: .mythicDigit(7),
+            seriesEclipseGamma: eclipse.gamma,
+            seriesEclipseMagnitude: eclipse.magnitude
         )
         upsert(event, into: &eventsByBin)
+    }
+
+    private static func seriesWeightingEclipse(
+        for date: Date,
+        in interval: SarosInterval
+    ) -> Eclipse {
+        if abs(date.timeIntervalSince(interval.previous.date)) < 1 {
+            return interval.previous
+        }
+
+        if abs(date.timeIntervalSince(interval.next.date)) < 1 {
+            return interval.next
+        }
+
+        return interval.next
+    }
+
+    private static func eclipseWithMetrics(
+        _ eclipse: Eclipse,
+        eclipseService: any EclipseService
+    ) -> Eclipse {
+        guard eclipse.gamma == nil || eclipse.magnitude == nil else { return eclipse }
+        return (try? eclipseService.eclipse(withID: eclipse.id)) ?? eclipse
+    }
+
+    private static func intervalWithDetailedEclipseMetrics(
+        _ interval: SarosInterval,
+        eclipseService: any EclipseService
+    ) -> SarosInterval {
+        SarosInterval(
+            saros: interval.saros,
+            previous: eclipseWithMetrics(interval.previous, eclipseService: eclipseService),
+            next: eclipseWithMetrics(interval.next, eclipseService: eclipseService),
+            normalizedPhase: interval.normalizedPhase
+        )
     }
 
     private static func isBoundaryDuplicate(
