@@ -5,8 +5,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     case feed
     case clock
     case saros
-    case catalog
-    case camera
+    case record
     case settings
 
     var id: String { rawValue }
@@ -14,10 +13,9 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .feed: "Feed"
-        case .clock: "Threads"
+        case .clock: "Tags"
         case .saros: "Saros"
-        case .catalog: "Catalog"
-        case .camera: "Camera"
+        case .record: "Record"
         case .settings: "Settings"
         }
     }
@@ -25,10 +23,9 @@ enum AppTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .feed: "rectangle.stack"
-        case .clock: "moonphase.new.moon"
+        case .clock: "tag"
         case .saros: "circle.grid.3x3"
-        case .catalog: "globe.americas"
-        case .camera: "camera.viewfinder"
+        case .record: "square.and.pencil"
         case .settings: "gearshape"
         }
     }
@@ -92,13 +89,11 @@ struct RootView: View {
         case .feed:
             FeedView()
         case .clock:
-            ClockDashboardView()
+            TagsView()
         case .saros:
             SarosGridView()
-        case .catalog:
-            CatalogView()
-        case .camera:
-            MirrorCameraView()
+        case .record:
+            JournalTemplatesView()
         case .settings:
             SettingsView()
         }
@@ -157,72 +152,79 @@ private struct RecordCaptureRequest: Identifiable {
 
 private struct FeedView: View {
     @EnvironmentObject private var services: AppServices
-
-    @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
-    @Query(sort: \JournalRecord.eventDate, order: .reverse) private var records: [JournalRecord]
-    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     @State private var selectedRarity: FlipRarity?
+    @State private var selectedDirection: JournalWaveDirection?
+    @State private var selectedExtremum: JournalWaveExtremum?
     @State private var dateFilterMode: FeedDateFilterMode = .all
     @State private var selectedDate = Date()
-    @State private var selectedRecord: JournalRecord?
+    @State private var selectedSaros: Int?
+    @State private var selectedSynodicBin: Int?
+    @State private var selectedAnomalisticBin: Int?
+    @State private var selectedDraconicBin: Int?
+    @State private var selectedEntry: JournalEntry?
+    @State private var isCreatingEntry = false
+    @State private var isFilterPresented = false
 
-    private var entityTitlesByID: [UUID: String] {
-        Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0.displayTitle) })
-    }
-
-    private var filteredRecords: [JournalRecord] {
-        records.filter { record in
-            let matchesRarity = selectedRarity.map { recordRarity(for: record).baseRarity == $0.baseRarity } ?? true
+    private var filteredEntries: [JournalEntry] {
+        entries.filter { entry in
+            let context = entry.context
+            let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
+            let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
+            let matchesDirection = selectedDirection.map { context.direction == $0 } ?? true
+            let matchesExtremum = selectedExtremum.map { context.extremum == $0 } ?? true
+            let matchesSaros = selectedSaros.map { context.sarosNumbers.contains($0) } ?? true
+            let matchesMoon = matchesMoonFilters(entry.eventDate)
             let matchesDate = switch dateFilterMode {
             case .all:
                 true
             case .day:
-                Calendar.current.isDate(record.eventDate, inSameDayAs: selectedDate)
+                Calendar.current.isDate(entry.eventDate, inSameDayAs: selectedDate)
             }
-            return matchesRarity && matchesDate
+            return matchesRarity && matchesDirection && matchesExtremum && matchesSaros && matchesMoon && matchesDate
         }
     }
 
-    private var recordGroups: [FeedRecordDayGroup] {
+    private var entryGroups: [FeedEntryDayGroup] {
         let calendar = Calendar.current
-        return Dictionary(grouping: filteredRecords) { record in
-            calendar.startOfDay(for: record.eventDate)
+        return Dictionary(grouping: filteredEntries) { entry in
+            calendar.startOfDay(for: entry.eventDate)
         }
-        .map { day, records in
-            FeedRecordDayGroup(
+        .map { day, entries in
+            FeedEntryDayGroup(
                 day: day,
-                records: records.sorted { $0.eventDate > $1.eventDate }
+                entries: entries.sorted { $0.eventDate > $1.eventDate }
             )
         }
         .sorted { $0.day > $1.day }
     }
 
+    private var primeColorsBySaros: [Int: Color] {
+        Dictionary(uniqueKeysWithValues: tags.filter(\.isPrime).map {
+            ($0.saros, Color(hex: $0.tintHex, fallback: .white))
+        })
+    }
+
     var body: some View {
         List {
-            moonClockSection
-            filterSection
-
-            if records.isEmpty {
+            if entries.isEmpty {
                 Section {
-                    ContentUnavailableView("No records yet", systemImage: "rectangle.stack")
+                    ContentUnavailableView("No entries yet", systemImage: "rectangle.stack")
                 }
-            } else if filteredRecords.isEmpty {
+            } else if filteredEntries.isEmpty {
                 Section {
-                    ContentUnavailableView("No matching records", systemImage: "line.3.horizontal.decrease.circle")
+                    ContentUnavailableView("No matching entries", systemImage: "line.3.horizontal.decrease.circle")
                 }
             } else {
-                ForEach(recordGroups) { group in
+                ForEach(entryGroups) { group in
                     Section {
-                        ForEach(group.records) { record in
+                        ForEach(group.entries) { entry in
                             Button {
-                                selectedRecord = record
+                                selectedEntry = entry
                             } label: {
-                                JournalRecordRow(
-                                    record: record,
-                                    entityTitle: entityTitle(for: record),
-                                    rarity: recordRarity(for: record)
-                                )
+                                JournalEntryRow(entry: entry, tags: tags)
                             }
                             .buttonStyle(.plain)
                             .listRowSeparator(.visible)
@@ -237,66 +239,66 @@ private struct FeedView: View {
                 }
             }
         }
-        .navigationTitle("Feed")
-        .navigationDestination(item: $selectedRecord) { record in
-            JournalRecordDetailView(
-                record: record,
-                entityTitle: entityTitle(for: record)
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var moonClockSection: some View {
-        TimelineView(.periodic(from: Date(), by: Self.moonClockRefreshInterval)) { context in
-            Section {
-                if let reading = try? services.moonPhaseService.octalReading(for: context.date, depth: 8) {
-                    NavigationLink {
-                        MoonTimelineScreen()
-                    } label: {
-                        MoonPhaseClockCard(reading: reading)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    ContentUnavailableView("Moon phase unavailable", systemImage: "moonphase.new.moon")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    isFilterPresented = true
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter feed")
+
+                Button {
+                    isCreatingEntry = true
+                } label: {
+                    Image(systemName: "record.circle")
+                }
+                .accessibilityLabel("Record entry")
             }
         }
-    }
-
-    private var filterSection: some View {
-        Section("Filters") {
-            Picker("Rarity", selection: $selectedRarity) {
-                Text("All rarities").tag(nil as FlipRarity?)
-                ForEach(FlipRarity.baseRarities) { rarity in
-                    Text(rarity.title).tag(Optional(rarity))
-                }
+        .navigationDestination(item: $selectedEntry) { entry in
+            JournalEntryDetailView(entry: entry, tags: tags)
+        }
+        .sheet(isPresented: $isCreatingEntry) {
+            NavigationStack {
+                JournalEntryCaptureView(recordStartedAt: Date())
             }
-            .pickerStyle(.menu)
-
-            Picker("Date", selection: $dateFilterMode) {
-                ForEach(FeedDateFilterMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            if dateFilterMode == .day {
-                DatePicker("Day", selection: $selectedDate, displayedComponents: .date)
+        }
+        .sheet(isPresented: $isFilterPresented) {
+            NavigationStack {
+                JournalEntryFeedFilterView(
+                    selectedRarity: $selectedRarity,
+                    selectedDirection: $selectedDirection,
+                    selectedExtremum: $selectedExtremum,
+                    dateFilterMode: $dateFilterMode,
+                    selectedDate: $selectedDate,
+                    selectedSaros: $selectedSaros,
+                    selectedSynodicBin: $selectedSynodicBin,
+                    selectedAnomalisticBin: $selectedAnomalisticBin,
+                    selectedDraconicBin: $selectedDraconicBin,
+                    primeColorsBySaros: primeColorsBySaros
+                )
             }
         }
     }
 
-    private func entityTitle(for record: JournalRecord) -> String {
-        entityTitlesByID[record.entityID] ?? "Saros \(record.saros)"
+    private func matchesMoonFilters(_ date: Date) -> Bool {
+        guard selectedSynodicBin != nil || selectedAnomalisticBin != nil || selectedDraconicBin != nil else {
+            return true
+        }
+        guard let reading = try? services.moonPhaseService.octalReading(for: date, depth: 3) else {
+            return false
+        }
+        return matchesMoonBin(selectedSynodicBin, kind: .synodic, reading: reading)
+            && matchesMoonBin(selectedAnomalisticBin, kind: .anomalistic, reading: reading)
+            && matchesMoonBin(selectedDraconicBin, kind: .draconic, reading: reading)
     }
 
-    private func recordRarity(for record: JournalRecord) -> FlipRarity {
-        FlipRarity.rarity(
-            forOctalAddress: record.octalAddress,
-            harmonicDepth: record.harmonicDepth,
-            isEclipse: record.triggerType == .eclipse
-        )
+    private func matchesMoonBin(_ bin: Int?, kind: MoonCycleKind, reading: MoonPhaseOctalReading) -> Bool {
+        guard let bin else { return true }
+        return reading.component(kind)?.digit == bin
     }
 
     private func dayTitle(for day: Date) -> String {
@@ -308,8 +310,130 @@ private struct FeedView: View {
         }
         return JournalFormatters.date.string(from: day)
     }
+}
 
-    private static let moonClockRefreshInterval: TimeInterval = 0.2
+private struct JournalEntryFeedFilterView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @Binding var selectedRarity: FlipRarity?
+    @Binding var selectedDirection: JournalWaveDirection?
+    @Binding var selectedExtremum: JournalWaveExtremum?
+    @Binding var dateFilterMode: FeedDateFilterMode
+    @Binding var selectedDate: Date
+    @Binding var selectedSaros: Int?
+    @Binding var selectedSynodicBin: Int?
+    @Binding var selectedAnomalisticBin: Int?
+    @Binding var selectedDraconicBin: Int?
+
+    let primeColorsBySaros: [Int: Color]
+
+    var body: some View {
+        Form {
+            Section {
+                if let selectedSaros {
+                    Button {
+                        self.selectedSaros = nil
+                    } label: {
+                        Label("Clear Saros \(selectedSaros)", systemImage: "xmark.circle")
+                    }
+                }
+
+                SarosGlyphGridPicker(
+                    selectedSaros: $selectedSaros,
+                    primeColorsBySaros: primeColorsBySaros
+                )
+                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                .listRowBackground(Color.clear)
+            } header: {
+                Text("Saros")
+            }
+
+            Section("Wave") {
+                Picker("Closest rarity", selection: $selectedRarity) {
+                    Text("All rarities").tag(nil as FlipRarity?)
+                    ForEach(FlipRarity.eventBaseRarities) { rarity in
+                        Text(rarity.title).tag(Optional(rarity))
+                    }
+                }
+
+                Picker("Direction", selection: $selectedDirection) {
+                    Text("All directions").tag(nil as JournalWaveDirection?)
+                    ForEach(JournalWaveDirection.allCases) { direction in
+                        Text(direction.title).tag(Optional(direction))
+                    }
+                }
+
+                Picker("Extremum", selection: $selectedExtremum) {
+                    Text("All extrema").tag(nil as JournalWaveExtremum?)
+                    ForEach(JournalWaveExtremum.allCases) { extremum in
+                        Text(extremum.title).tag(Optional(extremum))
+                    }
+                }
+            }
+
+            Section("Moon") {
+                MoonBinPicker(title: "Synodic", selection: $selectedSynodicBin)
+                MoonBinPicker(title: "Anomalistic", selection: $selectedAnomalisticBin)
+                MoonBinPicker(title: "Draconic", selection: $selectedDraconicBin)
+            }
+
+            Section("Date") {
+                Picker("Date", selection: $dateFilterMode) {
+                    ForEach(FeedDateFilterMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if dateFilterMode == .day {
+                    DatePicker("Day", selection: $selectedDate, displayedComponents: .date)
+                }
+            }
+
+            Section {
+                Button {
+                    clearFilters()
+                } label: {
+                    Label("Clear filters", systemImage: "xmark.circle")
+                }
+            }
+        }
+        .navigationTitle("Filters")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func clearFilters() {
+        selectedRarity = nil
+        selectedDirection = nil
+        selectedExtremum = nil
+        selectedSaros = nil
+        selectedSynodicBin = nil
+        selectedAnomalisticBin = nil
+        selectedDraconicBin = nil
+        dateFilterMode = .all
+    }
+}
+
+struct MoonBinPicker: View {
+    let title: String
+    @Binding var selection: Int?
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            Text("Any").tag(nil as Int?)
+            ForEach(0..<8, id: \.self) { bin in
+                Text("\(bin)").tag(Optional(bin))
+            }
+        }
+        .pickerStyle(.menu)
+    }
 }
 
 private enum FeedDateFilterMode: String, CaseIterable, Identifiable {
@@ -326,9 +450,9 @@ private enum FeedDateFilterMode: String, CaseIterable, Identifiable {
     }
 }
 
-private struct FeedRecordDayGroup: Identifiable {
+private struct FeedEntryDayGroup: Identifiable {
     let day: Date
-    let records: [JournalRecord]
+    let entries: [JournalEntry]
 
     var id: Date { day }
 }

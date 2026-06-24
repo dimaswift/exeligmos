@@ -13,6 +13,9 @@ struct SarosHarmonicJournalApp: App {
                 for: TrackedEntity.self,
                 ThreadGroup.self,
                 JournalRecord.self,
+                JournalEntry.self,
+                JournalTag.self,
+                JournalTemplate.self,
                 RecordDraft.self,
                 CustomFlipEvent.self
             )

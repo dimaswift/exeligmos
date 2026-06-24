@@ -1,8 +1,10 @@
+import SwiftData
 import SwiftUI
 
 struct SarosGridView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     @State private var activeSeries: [ActiveSarosPhaseSeries] = []
     @State private var selectedSeries: ActiveSarosPhaseSeries?
@@ -50,7 +52,8 @@ struct SarosGridView: View {
                                         reading: reading,
                                         date: context.date,
                                         size: metrics.cellSize,
-                                        highlightRarity: nearestFlip?.saros == series.saros ? nearestFlip?.rarity : nil
+                                        highlightRarity: nearestFlip?.saros == series.saros ? nearestFlip?.rarity : nil,
+                                        primeTint: primeColorsBySaros[series.saros]
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -80,6 +83,12 @@ struct SarosGridView: View {
     private static let gridColumnCount = 5
     private static let gridRowCount = 8
     private static let gridCapacity = 40
+
+    private var primeColorsBySaros: [Int: Color] {
+        Dictionary(uniqueKeysWithValues: tags.filter(\.isPrime).map {
+            ($0.saros, Color(hex: $0.tintHex, fallback: .white))
+        })
+    }
 
     private struct GridMetrics {
         let cellSize: CGFloat
@@ -1811,6 +1820,7 @@ private struct SarosPhaseGridCell: View {
     let date: Date
     let size: CGFloat
     let highlightRarity: FlipRarity?
+    let primeTint: Color?
 
     private var upcomingRarity: FlipRarity? {
         reading.rarityCountdowns(now: date)
@@ -1824,11 +1834,11 @@ private struct SarosPhaseGridCell: View {
     }
 
     private var tint: Color {
-        highlightRarity?.color ?? upcomingRarity?.color ?? .white
+        highlightRarity?.color ?? primeTint ?? upcomingRarity?.color ?? .white
     }
 
     private var isHighlighted: Bool {
-        highlightRarity != nil || upcomingRarity != nil
+        highlightRarity != nil || upcomingRarity != nil || primeTint != nil
     }
 
     var body: some View {
@@ -1853,12 +1863,59 @@ private struct SarosPhaseGridCell: View {
 private struct SarosPhaseDetailView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     let series: ActiveSarosPhaseSeries
 
+    @State private var selectedTab: SarosPhaseDetailTab = .records
+    @State private var selectedEntry: JournalEntry?
     @State private var selectedGlobalTimelineEvent: SarosPhaseFlipEvent?
-    @State private var selectedMapSequence: ActiveSarosPhaseSeries?
     @State private var seriesEclipses: [Eclipse] = []
+    @State private var isRecordFilterPresented = false
+    @State private var selectedRecordRarity: FlipRarity?
+    @State private var selectedRecordDirection: JournalWaveDirection?
+    @State private var selectedRecordExtremum: JournalWaveExtremum?
+    @State private var recordDateFilterMode: JournalRecordDateFilterMode = .all
+    @State private var selectedRecordDate = Date()
+    @State private var selectedSynodicBin: Int?
+    @State private var selectedAnomalisticBin: Int?
+    @State private var selectedDraconicBin: Int?
+    @State private var spikesOnly = false
+
+    private var seriesEntries: [JournalEntry] {
+        entries.filter { $0.context.sarosNumbers.contains(series.saros) }
+    }
+
+    private var filteredSeriesEntries: [JournalEntry] {
+        seriesEntries.filter { entry in
+            let context = entry.context
+            let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
+            let matchesRarity = selectedRecordRarity.map { closestRarity == $0.baseRarity } ?? true
+            let matchesDirection = selectedRecordDirection.map { context.direction == $0 } ?? true
+            let matchesExtremum = selectedRecordExtremum.map { context.extremum == $0 } ?? true
+            let matchesMoon = matchesMoonFilters(entry.eventDate)
+            let matchesSpikesOnly = !spikesOnly || context.closestSpike?.saros == series.saros
+            let matchesDate = switch recordDateFilterMode {
+            case .all:
+                true
+            case .day:
+                Calendar.current.isDate(entry.eventDate, inSameDayAs: selectedRecordDate)
+            }
+            return matchesRarity && matchesDirection && matchesExtremum && matchesMoon && matchesSpikesOnly && matchesDate
+        }
+    }
+
+    private var hasActiveRecordFilters: Bool {
+        selectedRecordRarity != nil
+            || selectedRecordDirection != nil
+            || selectedRecordExtremum != nil
+            || selectedSynodicBin != nil
+            || selectedAnomalisticBin != nil
+            || selectedDraconicBin != nil
+            || spikesOnly
+            || recordDateFilterMode != .all
+    }
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
@@ -1878,14 +1935,36 @@ private struct SarosPhaseDetailView: View {
 
                     Divider()
 
-                    SarosFlipEventTimelineView(
-                        series: series,
-                        reference: reference,
-                        now: context.date,
-                        onSelectEvent: { event in
-                            selectedGlobalTimelineEvent = event
+                    Picker("Saros view", selection: $selectedTab) {
+                        ForEach(SarosPhaseDetailTab.allCases) { tab in
+                            Text(tab.title).tag(tab)
                         }
-                    )
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+
+                    Divider()
+
+                    switch selectedTab {
+                    case .records:
+                        SarosPhaseRecordsList(
+                            entries: filteredSeriesEntries,
+                            tags: tags,
+                            selectEntry: { selectedEntry = $0 }
+                        )
+                    case .timeline:
+                        SarosFlipEventTimelineView(
+                            series: series,
+                            reference: reference,
+                            now: context.date,
+                            onSelectEvent: { event in
+                                selectedGlobalTimelineEvent = event
+                            }
+                        )
+                    case .maps:
+                        SarosEclipseMapSequenceView(series: series)
+                    }
                 }
             } else {
                 ContentUnavailableView(
@@ -1899,12 +1978,30 @@ private struct SarosPhaseDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    selectedMapSequence = series
+                    isRecordFilterPresented = true
                 } label: {
-                    Image(systemName: "map")
+                    Image(systemName: hasActiveRecordFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
-                .accessibilityLabel("Open eclipse maps")
+                .accessibilityLabel("Filter records")
             }
+        }
+        .sheet(isPresented: $isRecordFilterPresented) {
+            NavigationStack {
+                JournalScopedRecordFilterView(
+                    selectedRarity: $selectedRecordRarity,
+                    selectedDirection: $selectedRecordDirection,
+                    selectedExtremum: $selectedRecordExtremum,
+                    dateFilterMode: $recordDateFilterMode,
+                    selectedDate: $selectedRecordDate,
+                    selectedSynodicBin: $selectedSynodicBin,
+                    selectedAnomalisticBin: $selectedAnomalisticBin,
+                    selectedDraconicBin: $selectedDraconicBin,
+                    spikesOnly: $spikesOnly
+                )
+            }
+        }
+        .navigationDestination(item: $selectedEntry) { entry in
+            JournalEntryDetailView(entry: entry, tags: tags)
         }
         .navigationDestination(item: $selectedGlobalTimelineEvent) { event in
             SarosGlobalFlipTimelineView(
@@ -1912,12 +2009,26 @@ private struct SarosPhaseDetailView: View {
                 referenceEvent: event
             )
         }
-        .navigationDestination(item: $selectedMapSequence) { series in
-            SarosEclipseMapSequenceView(series: series)
-        }
         .task(id: series.saros) {
             await loadSeriesEclipses()
         }
+    }
+
+    private func matchesMoonFilters(_ date: Date) -> Bool {
+        guard selectedSynodicBin != nil || selectedAnomalisticBin != nil || selectedDraconicBin != nil else {
+            return true
+        }
+        guard let reading = try? services.moonPhaseService.octalReading(for: date, depth: 3) else {
+            return false
+        }
+        return matchesMoonBin(selectedSynodicBin, kind: .synodic, reading: reading)
+            && matchesMoonBin(selectedAnomalisticBin, kind: .anomalistic, reading: reading)
+            && matchesMoonBin(selectedDraconicBin, kind: .draconic, reading: reading)
+    }
+
+    private func matchesMoonBin(_ bin: Int?, kind: MoonCycleKind, reading: MoonPhaseOctalReading) -> Bool {
+        guard let bin else { return true }
+        return reading.component(kind)?.digit == bin
     }
 
     @MainActor
@@ -1934,6 +2045,150 @@ private struct SarosPhaseDetailView: View {
         if case .success(let eclipses) = result {
             seriesEclipses = eclipses
         }
+    }
+}
+
+private enum SarosPhaseDetailTab: String, CaseIterable, Identifiable {
+    case records
+    case timeline
+    case maps
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .records: "Records"
+        case .timeline: "Timeline"
+        case .maps: "Maps"
+        }
+    }
+}
+
+enum JournalRecordDateFilterMode: String, CaseIterable, Identifiable {
+    case all
+    case day
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All Dates"
+        case .day: "Day"
+        }
+    }
+}
+
+struct JournalScopedRecordFilterView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @Binding var selectedRarity: FlipRarity?
+    @Binding var selectedDirection: JournalWaveDirection?
+    @Binding var selectedExtremum: JournalWaveExtremum?
+    @Binding var dateFilterMode: JournalRecordDateFilterMode
+    @Binding var selectedDate: Date
+    @Binding var selectedSynodicBin: Int?
+    @Binding var selectedAnomalisticBin: Int?
+    @Binding var selectedDraconicBin: Int?
+    @Binding var spikesOnly: Bool
+
+    var body: some View {
+        Form {
+            Section("Wave") {
+                Picker("Closest rarity", selection: $selectedRarity) {
+                    Text("All rarities").tag(nil as FlipRarity?)
+                    ForEach(FlipRarity.eventBaseRarities) { rarity in
+                        Text(rarity.title).tag(Optional(rarity))
+                    }
+                }
+
+                Picker("Direction", selection: $selectedDirection) {
+                    Text("All directions").tag(nil as JournalWaveDirection?)
+                    ForEach(JournalWaveDirection.allCases) { direction in
+                        Text(direction.title).tag(Optional(direction))
+                    }
+                }
+
+                Picker("Extremum", selection: $selectedExtremum) {
+                    Text("All extrema").tag(nil as JournalWaveExtremum?)
+                    ForEach(JournalWaveExtremum.allCases) { extremum in
+                        Text(extremum.title).tag(Optional(extremum))
+                    }
+                }
+
+                Toggle("Spikes only", isOn: $spikesOnly)
+            }
+
+            Section("Moon") {
+                MoonBinPicker(title: "Synodic", selection: $selectedSynodicBin)
+                MoonBinPicker(title: "Anomalistic", selection: $selectedAnomalisticBin)
+                MoonBinPicker(title: "Draconic", selection: $selectedDraconicBin)
+            }
+
+            Section("Date") {
+                Picker("Date", selection: $dateFilterMode) {
+                    ForEach(JournalRecordDateFilterMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if dateFilterMode == .day {
+                    DatePicker("Day", selection: $selectedDate, displayedComponents: .date)
+                }
+            }
+
+            Section {
+                Button {
+                    clearFilters()
+                } label: {
+                    Label("Clear filters", systemImage: "xmark.circle")
+                }
+            }
+        }
+        .navigationTitle("Record Filters")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func clearFilters() {
+        selectedRarity = nil
+        selectedDirection = nil
+        selectedExtremum = nil
+        selectedSynodicBin = nil
+        selectedAnomalisticBin = nil
+        selectedDraconicBin = nil
+        spikesOnly = false
+        dateFilterMode = .all
+    }
+}
+
+private struct SarosPhaseRecordsList: View {
+    let entries: [JournalEntry]
+    let tags: [JournalTag]
+    let selectEntry: (JournalEntry) -> Void
+
+    var body: some View {
+        List {
+            if entries.isEmpty {
+                ContentUnavailableView("No records in this Saros", systemImage: "rectangle.stack")
+            } else {
+                ForEach(entries) { entry in
+                    Button {
+                        selectEntry(entry)
+                    } label: {
+                        JournalEntryRow(entry: entry, tags: tags)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .listStyle(.plain)
     }
 }
 

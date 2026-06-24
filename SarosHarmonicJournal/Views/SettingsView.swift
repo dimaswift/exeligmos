@@ -42,11 +42,27 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Camera") {
+                NavigationLink {
+                    MirrorCameraView()
+                } label: {
+                    Label("Open camera", systemImage: "camera.viewfinder")
+                }
+            }
+
             Section("Threads") {
                 NavigationLink {
                     ThreadGroupSettingsView()
                 } label: {
                     Label("Groups", systemImage: "circle.grid.2x2")
+                }
+            }
+
+            Section("Journal") {
+                NavigationLink {
+                    JournalMigrationSettingsView()
+                } label: {
+                    Label("Migrate to entry calendar", systemImage: "arrow.triangle.branch")
                 }
             }
 

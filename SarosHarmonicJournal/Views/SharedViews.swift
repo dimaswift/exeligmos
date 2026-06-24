@@ -71,13 +71,16 @@ extension Color {
 enum JournalRecordMarkers {
     static let fallback = "✦"
 
-    private static let choices = [
-        "✨", "🌙", "☀️", "🪐", "🌀", "🔥", "🌊", "🌿",
-        "🧭", "🔮", "🕯️", "💠", "🎐", "🪞", "⚡️", "🌑"
+    private static let emojiRanges: [ClosedRange<Int>] = [
+        0x1F300...0x1F5FF,
+        0x1F600...0x1F64F,
+        0x1F900...0x1F9FF
     ]
 
     static func random() -> String {
-        choices.randomElement() ?? fallback
+        let randomRange = emojiRanges.randomElement()!
+        let randomScalar = UnicodeScalar(randomRange.randomElement()!)!
+        return String(randomScalar)
     }
 
     static func marker(from value: String?) -> String {
@@ -325,13 +328,17 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
     }
 
     var primaryColor: Color {
+        if case .mythicDigit(let digit) = self, digit == 7 {
+            return .red
+        }
+
         switch baseRarity {
-        case .common: .white
-        case .rare: .blue
-        case .epic: .purple
-        case .legendary: .yellow
-        case .mythic: .red
-        default: .blue
+        case .common: return .white
+        case .rare: return .gray
+        case .epic: return .blue
+        case .legendary: return .purple
+        case .mythic: return .yellow
+        default: return .blue
         }
     }
 
