@@ -74,9 +74,11 @@ struct RootView: View {
         .task {
             consumePendingRecordCapture()
             prewarmSarosFlipDistribution()
+            refreshSarosEventNotifications()
         }
         .onChange(of: harmonicDepth) { _, _ in
             prewarmSarosFlipDistribution()
+            refreshSarosEventNotifications()
         }
         .onChange(of: entities.map(\.id)) { _, _ in
             consumePendingRecordCapture()
@@ -139,6 +141,15 @@ struct RootView: View {
                 around: Date(),
                 harmonicDepth: harmonicDepth,
                 eclipseService: services.eclipseService
+            )
+        }
+    }
+
+    private func refreshSarosEventNotifications() {
+        Task {
+            await services.notificationScheduler.refreshGlobalSarosEventSchedules(
+                eclipseService: services.eclipseService,
+                harmonicDepth: harmonicDepth
             )
         }
     }
@@ -239,7 +250,7 @@ private struct FeedView: View {
                 }
             }
         }
-        .navigationTitle("")
+        .navigationTitle("Feed")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {

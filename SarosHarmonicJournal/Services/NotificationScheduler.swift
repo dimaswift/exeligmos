@@ -139,6 +139,67 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func refreshGlobalSarosEventSchedules(
+        eclipseService: any EclipseService,
+        harmonicDepth rawHarmonicDepth: Int,
+        horizon: TimeInterval = 14 * 86_400,
+        peakLimit: Int = 32,
+        boundaryLimit: Int = 24
+    ) async {
+        guard await requestAuthorization() else { return }
+
+        let center = UNUserNotificationCenter.current()
+        let pending = await pendingRequests()
+        center.removePendingNotificationRequests(
+            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
+        )
+
+        let now = Date()
+        let depth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        let interval = DateInterval(
+            start: now.addingTimeInterval(-horizon),
+            end: now.addingTimeInterval(horizon)
+        )
+
+        guard
+            let summaries = try? eclipseService.allSarosSeries().sorted(by: { $0.saros < $1.saros })
+        else {
+            return
+        }
+
+        let events = Self.globalEvents(
+            in: interval,
+            summaries: summaries,
+            eclipseService: eclipseService,
+            harmonicDepth: depth
+        )
+        let futureEvents = events
+            .filter { $0.date > now }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date < rhs.date }
+                if lhs.rarity != rhs.rarity { return lhs.rarity > rhs.rarity }
+                return lhs.saros < rhs.saros
+            }
+
+        for event in futureEvents.prefix(peakLimit) {
+            await schedulePeakNotification(event: event, notifyDate: event.date)
+        }
+
+        let boundaryEvents = Self.distinctTimelineEvents(events)
+        let boundaryCandidates = zip(boundaryEvents, boundaryEvents.dropFirst())
+            .compactMap { previous, next -> SarosBoundaryNotification? in
+                let boundaryDate = Date(
+                    timeIntervalSince1970: (previous.date.timeIntervalSince1970 + next.date.timeIntervalSince1970) / 2
+                )
+                guard boundaryDate > now, boundaryDate < interval.end else { return nil }
+                return SarosBoundaryNotification(previous: previous, next: next, date: boundaryDate)
+            }
+
+        for boundary in boundaryCandidates.prefix(boundaryLimit) {
+            await scheduleBoundaryNotification(boundary)
+        }
+    }
+
     private func notifyDate(
         for preference: FlipNotificationRarityPreference,
         flipDate: Date,
@@ -269,6 +330,82 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
+    private func schedulePeakNotification(
+        event: ScheduledSarosEvent,
+        notifyDate: Date
+    ) async {
+        let content = UNMutableNotificationContent()
+        content.title = "Peak reached"
+        content.subtitle = event.shortTitle
+        content.body = "\(event.shortTitle) peaked at \(JournalFormatters.dateTime.string(from: event.date))."
+        content.sound = .default
+        content.interruptionLevel = event.rarity.baseRarity == .mythic ? .timeSensitive : .active
+        content.threadIdentifier = "saros-global-peak-\(event.saros)"
+        content.relevanceScore = event.relevanceScore
+        content.userInfo = [
+            "trigger": "sarosPeak",
+            "saros": event.saros,
+            "date": event.date.timeIntervalSince1970,
+            "octalAddress": event.octalAddress,
+            "rarity": event.rarity.rawValue
+        ]
+
+        if let attachment = await glyphAttachment(
+            octalAddress: event.octalAddress,
+            harmonicDepth: event.harmonicDepth,
+            style: event.rarity.glyphStyle
+        ) {
+            content.attachments = [attachment]
+        }
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)global.peak.\(event.saros).\(Int(event.date.timeIntervalSince1970))"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        )
+    }
+
+    private func scheduleBoundaryNotification(_ boundary: SarosBoundaryNotification) async {
+        let peakWait = max(boundary.next.date.timeIntervalSince(boundary.date), 0)
+        let content = UNMutableNotificationContent()
+        content.title = "Saros boundary crossed"
+        content.subtitle = "Beginning ascent into \(boundary.next.shortTitle)"
+        content.body = "Descent from \(boundary.previous.shortTitle) completed. Peak in \(peakWait.compactDuration)."
+        content.sound = .default
+        content.interruptionLevel = boundary.next.rarity.baseRarity == .mythic ? .timeSensitive : .active
+        content.threadIdentifier = "saros-global-boundary"
+        content.relevanceScore = boundary.next.relevanceScore
+        content.userInfo = [
+            "trigger": "sarosBoundary",
+            "previousSaros": boundary.previous.saros,
+            "nextSaros": boundary.next.saros,
+            "date": boundary.date.timeIntervalSince1970,
+            "nextPeakDate": boundary.next.date.timeIntervalSince1970,
+            "nextOctalAddress": boundary.next.octalAddress,
+            "nextRarity": boundary.next.rarity.rawValue
+        ]
+
+        if let attachment = await glyphAttachment(
+            octalAddress: boundary.next.octalAddress,
+            harmonicDepth: boundary.next.harmonicDepth,
+            style: boundary.next.rarity.glyphStyle
+        ) {
+            content.attachments = [attachment]
+        }
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: boundary.date),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)global.boundary.\(Int(boundary.previous.date.timeIntervalSince1970)).\(Int(boundary.next.date.timeIntervalSince1970))"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        )
+    }
+
     private func notificationTitle(
         entity: TrackedEntity,
         rarity: FlipRarity,
@@ -348,5 +485,209 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             return nil
         }
     }
+}
 
+private struct ScheduledSarosEvent: Hashable, Identifiable {
+    let saros: Int
+    let binIndex: Int
+    let date: Date
+    let octalAddress: String
+    let harmonicDepth: Int
+    let rarity: FlipRarity
+
+    var id: String {
+        "\(saros)-\(binIndex)-\(Int(date.timeIntervalSince1970))-\(rarity.id)"
+    }
+
+    var shortTitle: String {
+        "Saros \(saros) \(rarity.title)"
+    }
+
+    var relevanceScore: Double {
+        min(max(Double(rarity.rank) / Double(FlipRarity.mythicDigit(7).rank), 0.2), 1.0)
+    }
+}
+
+private struct SarosBoundaryNotification: Hashable {
+    let previous: ScheduledSarosEvent
+    let next: ScheduledSarosEvent
+    let date: Date
+}
+
+private extension NotificationScheduler {
+    static func globalEvents(
+        in interval: DateInterval,
+        summaries: [SarosSeriesSummary],
+        eclipseService: any EclipseService,
+        harmonicDepth rawHarmonicDepth: Int
+    ) -> [ScheduledSarosEvent] {
+        let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        let start = interval.start
+        let end = interval.end
+        var eventsByKey: [String: ScheduledSarosEvent] = [:]
+
+        for summary in summaries where summary.firstEclipseDate < end && summary.lastEclipseDate > start {
+            for sarosInterval in candidateIntervals(
+                summary: summary,
+                start: start,
+                end: end,
+                eclipseService: eclipseService
+            ) {
+                guard let reading = try? SarosClockCalculator.reading(
+                    saros: summary.saros,
+                    previous: sarosInterval.previous,
+                    next: sarosInterval.next,
+                    now: max(start, sarosInterval.previous.date),
+                    harmonicDepth: harmonicDepth
+                ) else {
+                    continue
+                }
+
+                appendBoundaryEventIfNeeded(
+                    date: sarosInterval.previous.date,
+                    reading: reading,
+                    start: start,
+                    end: end,
+                    into: &eventsByKey
+                )
+                appendBoundaryEventIfNeeded(
+                    date: sarosInterval.next.date,
+                    reading: reading,
+                    start: start,
+                    end: end,
+                    into: &eventsByKey
+                )
+
+                for rarity in FlipRarity.eventRarities(for: harmonicDepth) where rarity >= .epic {
+                    var bin = reading.nextQualifiedFlipBin(
+                        after: max(reading.binIndex - 1, -1),
+                        rarity: rarity,
+                        exact: true
+                    )
+
+                    while let currentBin = bin,
+                          currentBin > 0,
+                          currentBin < reading.binCount
+                    {
+                        let date = reading.date(forBinIndex: currentBin)
+                        if date >= end { break }
+
+                        if date >= start && !isBoundaryDuplicate(bin: currentBin, rarity: rarity, reading: reading) {
+                            upsert(
+                                ScheduledSarosEvent(
+                                    saros: reading.saros,
+                                    binIndex: currentBin,
+                                    date: date,
+                                    octalAddress: reading.octalAddress(forBinIndex: currentBin),
+                                    harmonicDepth: harmonicDepth,
+                                    rarity: rarity
+                                ),
+                                into: &eventsByKey
+                            )
+                        }
+
+                        let nextBin = reading.nextQualifiedFlipBin(after: currentBin, rarity: rarity, exact: true)
+                        guard let nextBin, nextBin > currentBin else { break }
+                        bin = nextBin
+                    }
+                }
+            }
+        }
+
+        return eventsByKey.values.sorted {
+            if $0.date != $1.date { return $0.date < $1.date }
+            if $0.saros != $1.saros { return $0.saros < $1.saros }
+            return $0.rarity > $1.rarity
+        }
+    }
+
+    static func distinctTimelineEvents(_ events: [ScheduledSarosEvent]) -> [ScheduledSarosEvent] {
+        var eventsBySecond: [Int64: ScheduledSarosEvent] = [:]
+        for event in events {
+            let key = Int64(event.date.timeIntervalSince1970.rounded(.towardZero))
+            if let existing = eventsBySecond[key] {
+                if event.rarity > existing.rarity {
+                    eventsBySecond[key] = event
+                }
+            } else {
+                eventsBySecond[key] = event
+            }
+        }
+        return eventsBySecond.values.sorted { $0.date < $1.date }
+    }
+
+    static func candidateIntervals(
+        summary: SarosSeriesSummary,
+        start: Date,
+        end: Date,
+        eclipseService: any EclipseService
+    ) -> [SarosInterval] {
+        let duration = end.timeIntervalSince(start)
+        let probes = [
+            start,
+            start.addingTimeInterval(duration / 2),
+            end.addingTimeInterval(-1)
+        ]
+        var seen = Set<String>()
+        var intervals: [SarosInterval] = []
+
+        for probe in probes {
+            guard let interval = try? eclipseService.previousAndNextEclipse(
+                saros: summary.saros,
+                around: probe
+            ) else {
+                continue
+            }
+
+            let key = "\(interval.previous.id)-\(interval.next.id)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            intervals.append(interval)
+        }
+
+        return intervals
+    }
+
+    static func appendBoundaryEventIfNeeded(
+        date: Date,
+        reading: SarosClockReading,
+        start: Date,
+        end: Date,
+        into eventsByKey: inout [String: ScheduledSarosEvent]
+    ) {
+        guard date >= start, date < end else { return }
+        upsert(
+            ScheduledSarosEvent(
+                saros: reading.saros,
+                binIndex: reading.binCount,
+                date: date,
+                octalAddress: String(repeating: "7", count: reading.harmonicDepth),
+                harmonicDepth: reading.harmonicDepth,
+                rarity: .mythicDigit(7)
+            ),
+            into: &eventsByKey
+        )
+    }
+
+    static func isBoundaryDuplicate(
+        bin: Int,
+        rarity: FlipRarity,
+        reading: SarosClockReading
+    ) -> Bool {
+        rarity == .mythicDigit(7) && bin == reading.binCount - 1
+    }
+
+    static func upsert(
+        _ event: ScheduledSarosEvent,
+        into eventsByKey: inout [String: ScheduledSarosEvent]
+    ) {
+        let key = "\(event.saros)-\(Int(event.date.timeIntervalSince1970))"
+        if let existing = eventsByKey[key] {
+            if event.rarity > existing.rarity {
+                eventsByKey[key] = event
+            }
+        } else {
+            eventsByKey[key] = event
+        }
+    }
 }

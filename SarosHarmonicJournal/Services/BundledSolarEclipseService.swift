@@ -285,9 +285,10 @@ private struct SolarEclipseStore {
     }
 }
 
-private final class SolarEclipseGeometryStore {
+private final class SolarEclipseGeometryStore: @unchecked Sendable {
     private let directoryURL: URL
     private var cache: [Int: [Int64: SolarEclipseGeometryRecord]] = [:]
+    private let cacheLock = NSLock()
 
     init?(bundle: Bundle) {
         let url = bundle.url(forResource: "SolarGeoData", withExtension: nil)
@@ -299,10 +300,16 @@ private final class SolarEclipseGeometryStore {
     }
 
     func record(saros: Int, unixTime: Int64) -> SolarEclipseGeometryRecord? {
-        if cache[saros] == nil {
-            cache[saros] = loadSeries(saros: saros)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        if let series = cache[saros] {
+            return series[unixTime]
         }
-        return cache[saros]?[unixTime]
+
+        let series = loadSeries(saros: saros)
+        cache[saros] = series
+        return series[unixTime]
     }
 
     private func loadSeries(saros: Int) -> [Int64: SolarEclipseGeometryRecord] {
