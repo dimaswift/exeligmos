@@ -1049,9 +1049,8 @@ enum AppDeepLinkStore {
 private struct AutoSyncObserver: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.scenePhase) private var scenePhase
-    @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
-    @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
-    @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
     @AppStorage(JournalSettings.autoSyncEnabledKey) private var autoSyncEnabled = false
 
@@ -1059,11 +1058,20 @@ private struct AutoSyncObserver: View {
     @State private var lastCheckedFingerprint = ""
 
     private var syncFingerprint: String {
-        [
-            autoSyncEnabled ? "1" : "0",
-            syncServerURL,
-            records.map { $0.id.uuidString }.joined(separator: ",")
-        ].joined(separator: "|")
+        "\(autoSyncEnabled ? "1" : "0")|\(syncServerURL)|\(tagFingerprint)|\(entryFingerprint)"
+    }
+
+    private var tagFingerprint: String {
+        tags.map { tag in
+            "\(tag.id.uuidString):\(tag.updatedAt.timeIntervalSince1970):\(tag.name):\(tag.emoji):\(tag.saros):\(tag.colorHex ?? "")"
+        }.joined(separator: ",")
+    }
+
+    private var entryFingerprint: String {
+        entries.map { entry in
+            let mediaIDs = entry.mediaItems.map { $0.id.uuidString }.joined(separator: "+")
+            return "\(entry.id.uuidString):\(entry.updatedAt.timeIntervalSince1970):\(entry.eventDate.timeIntervalSince1970):\(mediaIDs)"
+        }.joined(separator: ",")
     }
 
     var body: some View {
@@ -1105,12 +1113,11 @@ private struct AutoSyncObserver: View {
         defer { isSyncing = false }
 
         do {
-            if autoSyncEnabled, !records.isEmpty {
-                _ = try await services.syncService.pushMissingRecords(
+            if autoSyncEnabled, !entries.isEmpty {
+                _ = try await services.syncService.pushMissingEntries(
                     to: syncServerURL,
-                    entities: entities,
-                    records: records,
-                    groups: threadGroups
+                    tags: tags,
+                    entries: entries
                 )
             }
             _ = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)

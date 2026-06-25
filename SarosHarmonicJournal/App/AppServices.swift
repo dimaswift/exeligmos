@@ -11,7 +11,6 @@ final class AppServices: ObservableObject {
     let animacyDatasetQueue: AnimacyDatasetQueueStore
     let sarosFlipDistributionStore: SarosFlipDistributionStore
     let sarosEventContextService: SarosEventContextService
-    let journalMigrationService: JournalMigrationService
 
     init(
         eclipseService: any EclipseService = CPlusPlusEclipseService(),
@@ -26,8 +25,5 @@ final class AppServices: ObservableObject {
         self.animacyDatasetQueue = AnimacyDatasetQueueStore()
         self.sarosFlipDistributionStore = SarosFlipDistributionStore()
         self.sarosEventContextService = SarosEventContextService(eclipseService: eclipseService)
-        self.journalMigrationService = JournalMigrationService(
-            contextService: self.sarosEventContextService
-        )
     }
 }

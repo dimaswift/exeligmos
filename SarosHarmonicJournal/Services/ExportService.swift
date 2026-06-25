@@ -6,19 +6,25 @@ struct JournalExportArchive: Codable {
     let threadGroups: [ThreadGroupSnapshot]
     let entities: [TrackedEntitySnapshot]
     let records: [JournalRecordSnapshot]
+    let tags: [JournalTagSnapshot]
+    let entries: [JournalEntrySnapshot]
 
     init(
         appVersion: String,
         exportTimestamp: Date,
         threadGroups: [ThreadGroupSnapshot] = [],
         entities: [TrackedEntitySnapshot],
-        records: [JournalRecordSnapshot]
+        records: [JournalRecordSnapshot],
+        tags: [JournalTagSnapshot] = [],
+        entries: [JournalEntrySnapshot] = []
     ) {
         self.appVersion = appVersion
         self.exportTimestamp = exportTimestamp
         self.threadGroups = threadGroups
         self.entities = entities
         self.records = records
+        self.tags = tags
+        self.entries = entries
     }
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +33,8 @@ struct JournalExportArchive: Codable {
         case threadGroups
         case entities
         case records
+        case tags
+        case entries
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +44,8 @@ struct JournalExportArchive: Codable {
         self.threadGroups = try container.decodeIfPresent([ThreadGroupSnapshot].self, forKey: .threadGroups) ?? []
         self.entities = try container.decode([TrackedEntitySnapshot].self, forKey: .entities)
         self.records = try container.decode([JournalRecordSnapshot].self, forKey: .records)
+        self.tags = try container.decodeIfPresent([JournalTagSnapshot].self, forKey: .tags) ?? []
+        self.entries = try container.decodeIfPresent([JournalEntrySnapshot].self, forKey: .entries) ?? []
     }
 }
 
@@ -83,6 +93,20 @@ struct ThreadGroupSnapshot: Codable, Identifiable {
     let rarityRawValue: String
 }
 
+struct JournalTagSnapshot: Codable, Identifiable {
+    let id: UUID
+    let createdAt: Date
+    let updatedAt: Date
+    let name: String
+    let emoji: String
+    let anchorDate: Date
+    let saros: Int
+    let notes: String?
+    let sourceEntityID: UUID?
+    let isPrime: Bool
+    let colorHex: String
+}
+
 struct JournalRecordSnapshot: Codable, Identifiable {
     let id: UUID
     let entityID: UUID
@@ -102,6 +126,21 @@ struct JournalRecordSnapshot: Codable, Identifiable {
     let longitude: Double?
 }
 
+struct JournalEntrySnapshot: Codable, Identifiable {
+    let id: UUID
+    let createdAt: Date
+    let updatedAt: Date
+    let eventDate: Date
+    let unixTimestamp: Int64
+    let text: String?
+    let emoji: String?
+    let mediaItems: [JournalMediaItem]
+    let context: JournalEventContext
+    let latitude: Double?
+    let longitude: Double?
+    let sourceRecordID: UUID?
+}
+
 final class ExportService {
     func makeArchive(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) -> JournalExportArchive {
         JournalExportArchive(
@@ -110,6 +149,17 @@ final class ExportService {
             threadGroups: groups.map(ThreadGroupSnapshot.init(group:)),
             entities: entities.map(TrackedEntitySnapshot.init(entity:)),
             records: records.map(JournalRecordSnapshot.init(record:))
+        )
+    }
+
+    func makeEntryArchive(tags: [JournalTag], entries: [JournalEntry]) -> JournalExportArchive {
+        JournalExportArchive(
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
+            exportTimestamp: Date(),
+            entities: [],
+            records: [],
+            tags: tags.map(JournalTagSnapshot.init(tag:)),
+            entries: entries.map(JournalEntrySnapshot.init(entry:))
         )
     }
 
@@ -417,6 +467,24 @@ extension ThreadGroupSnapshot {
     }
 }
 
+extension JournalTagSnapshot {
+    init(tag: JournalTag) {
+        self.init(
+            id: tag.id,
+            createdAt: tag.createdAt,
+            updatedAt: tag.updatedAt,
+            name: tag.name,
+            emoji: tag.emoji,
+            anchorDate: tag.anchorDate,
+            saros: tag.saros,
+            notes: tag.notes,
+            sourceEntityID: tag.sourceEntityID,
+            isPrime: tag.isPrime,
+            colorHex: tag.tintHex
+        )
+    }
+}
+
 extension JournalRecordSnapshot {
     init(record: JournalRecord) {
         let portableMediaItems = record.mediaItems.map { item in
@@ -445,6 +513,34 @@ extension JournalRecordSnapshot {
             resonanceGroupID: record.resonanceGroupID,
             latitude: record.latitude,
             longitude: record.longitude
+        )
+    }
+}
+
+extension JournalEntrySnapshot {
+    init(entry: JournalEntry) {
+        let portableMediaItems = entry.mediaItems.map { item in
+            JournalMediaItem(
+                id: item.id,
+                type: item.type,
+                localPath: MediaStorage.portablePath(for: item),
+                createdAt: item.createdAt
+            )
+        }
+
+        self.init(
+            id: entry.id,
+            createdAt: entry.createdAt,
+            updatedAt: entry.updatedAt,
+            eventDate: entry.eventDate,
+            unixTimestamp: entry.unixTimestamp,
+            text: entry.text,
+            emoji: entry.emoji,
+            mediaItems: portableMediaItems,
+            context: entry.context,
+            latitude: entry.latitude,
+            longitude: entry.longitude,
+            sourceRecordID: entry.sourceRecordID
         )
     }
 }

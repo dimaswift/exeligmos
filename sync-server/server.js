@@ -26,11 +26,12 @@ const RARITY_DIGIT_PREFIXES = {
   7: 'Omega'
 };
 const RARITY_BASES = {
-  rare: { key: 'rare', title: 'Triplex', order: 3, wildcardPrefixCount: 3, color: '#2f9bff' },
-  epic: { key: 'epic', title: 'Duplex', order: 4, wildcardPrefixCount: 2, color: '#b45cff' },
-  legendary: { key: 'legendary', title: 'Simplex', order: 5, wildcardPrefixCount: 1, color: '#f4c542' },
-  mythic: { key: 'mythic', title: 'Nihil', order: 6, wildcardPrefixCount: 0, color: '#ef4136' }
+  rare: { key: 'rare', title: 'Triplex', order: 3, wildcardPrefixCount: 3, color: '#f3f5f7' },
+  epic: { key: 'epic', title: 'Duplex', order: 4, wildcardPrefixCount: 2, color: '#2f9bff' },
+  legendary: { key: 'legendary', title: 'Simplex', order: 5, wildcardPrefixCount: 1, color: '#b45cff' },
+  mythic: { key: 'mythic', title: 'Nihil', order: 6, wildcardPrefixCount: 0, color: '#f4c542' }
 };
+const OMEGA_NIHIL_COLOR = '#ef4136';
 const RARITY_DEFINITIONS = makeRarityDefinitions();
 
 const server = http.createServer(async (req, res) => {
@@ -69,8 +70,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         hasBackup: Boolean(payload),
         exportTimestamp: payload?.exportTimestamp ?? null,
-        entityCount: payload?.archive?.entities?.length ?? 0,
-        recordCount: payload?.archive?.records?.length ?? 0,
+        entityCount: (payload?.archive?.entities?.length ?? 0) + (payload?.archive?.tags?.length ?? 0),
+        recordCount: (payload?.archive?.records?.length ?? 0) + (payload?.archive?.entries?.length ?? 0),
         mediaCount: payload?.media?.length ?? 0
       });
       return;
@@ -84,7 +85,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/records') {
       const payload = await readLatestPayload({ includeMediaData: false });
-      sendJSON(res, 200, payload ? recordsView(payload) : { threads: [], records: [] });
+      sendJSON(res, 200, payload ? recordsView(payload) : { sarosFamilies: [], tags: [], rarities: [], records: [] });
       return;
     }
 
@@ -122,53 +123,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/sync/thread') {
+    if (req.method === 'POST' && url.pathname === '/api/sync/state') {
       const body = await readBody(req);
       const payload = JSON.parse(body);
-      const result = await writeThreadPayload(payload);
-      console.log(`Stored thread ${result.threadID} in ${result.threadFolder}.`);
+      const result = await writeMirrorState(payload);
+      console.log(`Mirrored ${result.tagCount} tags and ${result.entryCount} entries.`);
       sendJSON(res, 200, { ok: true, ...result });
       return;
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/sync/record') {
+    if (req.method === 'POST' && url.pathname === '/api/sync/entry') {
       const body = await readBody(req);
       const payload = JSON.parse(body);
-      const result = await writeRecordPayload(payload);
-      console.log(`Stored record ${result.recordID} in ${result.recordFolder} with ${result.mediaCount} media files.`);
+      const result = await writeEntryUpload(payload);
+      console.log(`Stored entry ${result.entryID} with ${result.mediaCount} media files.`);
       sendJSON(res, 200, { ok: true, ...result });
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/api/backups') {
-      const body = await readBody(req);
-      const payload = JSON.parse(body);
-      await writeBackup(payload);
-      console.log(`Stored backup with ${payload.archive?.records?.length ?? 0} records and ${payload.media?.length ?? 0} media blobs.`);
-      sendJSON(res, 200, {
-        ok: true,
-        exportTimestamp: payload.exportTimestamp,
-        entityCount: payload.archive?.entities?.length ?? 0,
-        recordCount: payload.archive?.records?.length ?? 0,
-        mediaCount: payload.media?.length ?? 0
-      });
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/api/backups/delta') {
-      const body = await readBody(req);
-      const deltaPayload = JSON.parse(body);
-      await writeBackup(deltaPayload);
-      console.log(`Merged delta with ${deltaPayload.archive?.records?.length ?? 0} records and ${deltaPayload.media?.length ?? 0} media blobs.`);
-      sendJSON(res, 200, {
-        ok: true,
-        exportTimestamp: new Date().toISOString(),
-        addedRecordCount: deltaPayload.archive?.records?.length ?? 0,
-        addedMediaCount: deltaPayload.media?.length ?? 0,
-        entityCount: deltaPayload.archive?.entities?.length ?? 0,
-        recordCount: deltaPayload.archive?.records?.length ?? 0,
-        mediaCount: deltaPayload.media?.length ?? 0
-      });
       return;
     }
 
@@ -216,88 +185,118 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function writeBackup(payload) {
-  validatePayload(payload);
+async function writeMirrorState(payload) {
+  validateMirrorStatePayload(payload);
 
-  const groups = new Map((payload.archive?.threadGroups ?? []).map((group) => [group.id, group]));
-  const threads = new Map((payload.archive?.entities ?? []).map((thread) => [thread.id, thread]));
-  const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
+  const tagItems = payload.tags ?? [];
+  const tagIDs = new Set(tagItems
+    .map((item) => item?.tag ?? item)
+    .filter((tag) => tag?.id)
+    .map((tag) => String(tag.id)));
+  const entryIDs = new Set((payload.entryIDs ?? []).filter(Boolean).map(String));
 
-  for (const group of groups.values()) {
-    await writeGroupSnapshot(group);
-  }
-
-  for (const thread of threads.values()) {
-    await writeThreadPayload({
-      schemaVersion: 1,
-      appVersion: payload.appVersion,
-      uploadedAt: payload.exportTimestamp,
-      group: groups.get(thread.groupID) ?? null,
-      thread
-    });
-  }
-
-  for (const record of payload.archive?.records ?? []) {
-    const thread = threads.get(record.entityID);
-    if (!thread) continue;
-    const recordMedia = (record.mediaItems ?? [])
-      .map((item) => media.get(item.id))
-      .filter(Boolean);
-    await writeRecordPayload({
-      schemaVersion: 1,
-      appVersion: payload.appVersion,
-      uploadedAt: payload.exportTimestamp,
-      group: groups.get(thread.groupID) ?? null,
-      thread,
-      record,
-      media: recordMedia
-    });
-  }
-}
-
-function validatePayload(payload) {
-  if (!payload || payload.schemaVersion !== 1 || !payload.archive) {
-    throw new Error('Invalid Exeligmos sync payload.');
-  }
-}
-
-async function writeThreadPayload(payload) {
-  validateThreadPayload(payload);
-
-  if (payload.group) {
-    await writeGroupSnapshot(payload.group);
-  }
-
-  const threadDir = await threadDirectoryFor(payload.thread);
-  await fs.mkdir(path.join(threadDir, 'records'), { recursive: true });
-  await writeJSONAtomic(path.join(threadDir, 'thread.json'), payload.thread);
+  const tagResult = await mirrorTags(tagItems, tagIDs);
+  const entryResult = await pruneEntries(entryIDs);
 
   return {
-    threadID: payload.thread.id,
-    threadFolder: path.basename(threadDir)
+    tagCount: tagItems.length,
+    entryCount: entryIDs.size,
+    mediaCount: 0,
+    updatedTagCount: tagResult.updatedCount,
+    deletedTagCount: tagResult.deletedCount,
+    deletedEntryCount: entryResult.deletedCount
   };
 }
 
-async function writeRecordPayload(payload) {
-  validateRecordPayload(payload);
+function validateMirrorStatePayload(payload) {
+  if (!payload || payload.schemaVersion !== 1 || !Array.isArray(payload.tags) || !Array.isArray(payload.entryIDs)) {
+    throw new Error('Invalid Exeligmos state sync payload.');
+  }
+}
 
-  const threadResult = await writeThreadPayload({
-    schemaVersion: 1,
-    appVersion: payload.appVersion,
-    uploadedAt: payload.uploadedAt,
-    group: payload.group,
-    thread: payload.thread
-  });
+async function mirrorTags(items, tagIDs) {
+  const root = path.join(DATA_DIR, 'tags');
+  await fs.mkdir(root, { recursive: true });
 
-  const threadDir = path.join(DATA_DIR, 'threads', threadResult.threadFolder);
-  const recordDir = await recordDirectoryFor(threadDir, payload.record);
-  const mediaDir = path.join(recordDir, 'media');
-  await fs.mkdir(recordDir, { recursive: true });
+  let updatedCount = 0;
+  let deletedCount = 0;
+
+  for (const directory of await childDirectories(root)) {
+    const tag = await readJSONIfExists(path.join(directory, 'tag.json'));
+    if (tag?.id && !tagIDs.has(String(tag.id))) {
+      await fs.rm(directory, { recursive: true, force: true });
+      deletedCount += 1;
+    }
+  }
+
+  for (const item of items) {
+    const tag = item.tag ?? item;
+    if (!tag?.id) continue;
+    const tagDir = await tagDirectoryFor(tag);
+    await writeJSONAtomic(path.join(tagDir, 'tag.json'), tag);
+    updatedCount += 1;
+  }
+
+  return { updatedCount, deletedCount };
+}
+
+async function pruneEntries(entryIDs) {
+  const root = path.join(DATA_DIR, 'entries');
+  await fs.mkdir(root, { recursive: true });
+
+  let deletedCount = 0;
+
+  for (const directory of await childDirectories(root)) {
+    const entry = await readJSONIfExists(path.join(directory, 'entry.json'))
+      ?? await readJSONIfExists(path.join(directory, 'record.json'));
+    if (entry?.id && !entryIDs.has(String(entry.id))) {
+      await fs.rm(directory, { recursive: true, force: true });
+      deletedCount += 1;
+    }
+  }
+
+  return { deletedCount };
+}
+
+async function writeEntryUpload(payload) {
+  validateEntryUploadPayload(payload);
+
+  const entryDir = await entryDirectoryFor(payload.entry);
+  const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
+  const mediaMetadata = await writeEntryFolder(
+    entryDir,
+    payload.entry,
+    (payload.entry.mediaItems ?? []).map((item) => item.id),
+    media
+  );
+
+  return {
+    entryID: payload.entry.id,
+    entryFolder: path.basename(entryDir),
+    mediaCount: mediaMetadata.length
+  };
+}
+
+function validateEntryUploadPayload(payload) {
+  if (!payload || payload.schemaVersion !== 1 || !payload.entry?.id || !Array.isArray(payload.media)) {
+    throw new Error('Invalid Exeligmos entry sync payload.');
+  }
+}
+
+async function writeEntryFolder(entryDir, entry, mediaIDs, media) {
+  const mediaDir = path.join(entryDir, 'media');
+  await fs.mkdir(entryDir, { recursive: true });
   await fs.rm(mediaDir, { recursive: true, force: true });
   await fs.mkdir(mediaDir, { recursive: true });
 
   const mediaMetadata = [];
-  for (const blob of payload.media ?? []) {
+  const ids = mediaIDs?.length
+    ? mediaIDs
+    : (entry.mediaItems ?? []).map((item) => item.id);
+
+  for (const mediaID of ids) {
+    const blob = media.get(mediaID);
+    if (!blob) continue;
     const fileName = mediaFileName(blob);
     const destination = path.join(mediaDir, fileName);
     await fs.writeFile(destination, Buffer.from(blob.dataBase64 ?? '', 'base64'));
@@ -311,62 +310,47 @@ async function writeRecordPayload(payload) {
     });
   }
 
-  await writeJSONAtomic(path.join(recordDir, 'record.json'), payload.record);
-  await writeJSONAtomic(path.join(recordDir, 'media.json'), mediaMetadata);
-
-  return {
-    threadID: payload.thread.id,
-    threadFolder: threadResult.threadFolder,
-    recordID: payload.record.id,
-    recordFolder: path.basename(recordDir),
-    mediaCount: mediaMetadata.length
-  };
+  await writeJSONAtomic(path.join(entryDir, 'entry.json'), entry);
+  await writeJSONAtomic(path.join(entryDir, 'media.json'), mediaMetadata);
+  return mediaMetadata;
 }
 
-async function writeGroupSnapshot(group) {
-  if (!group?.id) return;
-  const groupDir = path.join(DATA_DIR, 'groups', safeFileName(group.id));
-  await fs.mkdir(groupDir, { recursive: true });
-  await writeJSONAtomic(path.join(groupDir, 'group.json'), group);
-}
-
-function validateThreadPayload(payload) {
-  if (!payload || payload.schemaVersion !== 1 || !payload.thread?.id) {
-    throw new Error('Invalid Exeligmos thread sync payload.');
-  }
-}
-
-function validateRecordPayload(payload) {
-  if (!payload || payload.schemaVersion !== 1 || !payload.thread?.id || !payload.record?.id) {
-    throw new Error('Invalid Exeligmos record sync payload.');
-  }
-}
-
-async function threadDirectoryFor(thread) {
-  const root = path.join(DATA_DIR, 'threads');
+async function tagDirectoryFor(tag) {
+  const root = path.join(DATA_DIR, 'tags');
   await fs.mkdir(root, { recursive: true });
 
-  const existing = await findChildDirectoryByJSON(root, 'thread.json', (value) => value?.id === thread.id);
+  const existing = await findChildDirectoryByJSON(root, 'tag.json', (value) => value?.id === tag.id);
   if (existing) return existing;
 
-  return path.join(root, threadFolderName(thread));
+  return path.join(root, safeFolderName(String(tag.id)));
 }
 
-async function recordDirectoryFor(threadDir, record) {
-  const root = path.join(threadDir, 'records');
+async function entryDirectoryFor(entry) {
+  const root = path.join(DATA_DIR, 'entries');
   await fs.mkdir(root, { recursive: true });
 
-  const existing = await findChildDirectoryByJSON(root, 'record.json', (value) => value?.id === record.id);
-  if (existing) return existing;
-
-  const base = recordFolderName(record);
+  const base = entryFolderName(entry);
   const preferred = path.join(root, base);
-  const preferredRecord = await readJSONIfExists(path.join(preferred, 'record.json'));
-  if (!preferredRecord || preferredRecord.id === record.id) {
+  const existing = await findChildDirectoryByJSON(root, 'entry.json', (value) => value?.id === entry.id);
+  if (existing) {
+    if (path.basename(existing) === base) return existing;
+
+    const preferredEntry = await readJSONIfExists(path.join(preferred, 'entry.json'));
+    if (!preferredEntry || preferredEntry.id === entry.id) {
+      await fs.rm(preferred, { recursive: true, force: true });
+      await fs.rename(existing, preferred);
+      return preferred;
+    }
+
+    return existing;
+  }
+
+  const preferredEntry = await readJSONIfExists(path.join(preferred, 'entry.json'));
+  if (!preferredEntry || preferredEntry.id === entry.id) {
     return preferred;
   }
 
-  return path.join(root, `${base}-${String(record.id).slice(0, 8)}`);
+  return path.join(root, `${base}-${String(entry.id).slice(0, 8)}`);
 }
 
 async function findChildDirectoryByJSON(root, fileName, predicate) {
@@ -390,13 +374,26 @@ async function findChildDirectoryByJSON(root, fileName, predicate) {
 
 async function readLatestPayload(options = {}) {
   const payload = await readFolderPayload(options);
-  const hasState = (payload.archive.threadGroups.length + payload.archive.entities.length + payload.archive.records.length) > 0;
+  const hasState = (
+    payload.archive.threadGroups.length
+    + payload.archive.entities.length
+    + payload.archive.records.length
+    + payload.archive.tags.length
+    + payload.archive.entries.length
+  ) > 0;
   return hasState ? payload : null;
 }
 
 async function readFolderPayload({ includeMediaData = false } = {}) {
   const threadGroups = await readGroupSnapshots();
-  const { entities, records, media, latestModifiedAt } = await readThreadSnapshots(includeMediaData);
+  const {
+    entities,
+    tags,
+    records,
+    entries,
+    media,
+    latestModifiedAt
+  } = await readJournalSnapshots(includeMediaData);
   const exportTimestamp = latestModifiedAt?.toISOString() ?? new Date().toISOString();
 
   return {
@@ -408,7 +405,9 @@ async function readFolderPayload({ includeMediaData = false } = {}) {
       exportTimestamp,
       threadGroups,
       entities,
-      records
+      records,
+      tags,
+      entries
     },
     media
   };
@@ -422,6 +421,147 @@ async function readGroupSnapshots() {
     if (group?.id) groups.push(group);
   }
   return groups.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+async function readJournalSnapshots(includeMediaData) {
+  const rootEntries = await readEntryRootSnapshots(includeMediaData);
+  const saros = await readSarosSnapshots(includeMediaData);
+  const legacy = await readThreadSnapshots(includeMediaData);
+  return mergeSnapshotSets(rootEntries, mergeSnapshotSets(saros, legacy));
+}
+
+async function readEntryRootSnapshots(includeMediaData) {
+  const entities = [];
+  const tags = [];
+  const records = [];
+  const entries = [];
+  const media = [];
+  let latestModifiedAt = null;
+
+  for (const tagDir of await childDirectories(path.join(DATA_DIR, 'tags'))) {
+    const tagFile = path.join(tagDir, 'tag.json');
+    const tag = await readJSONIfExists(tagFile);
+    if (!tag?.id) continue;
+    if (tag.source === 'thread' || tag.title) {
+      entities.push(tag);
+    } else {
+      tags.push(tag);
+    }
+    latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(tagFile));
+  }
+
+  for (const entryDir of await childDirectories(path.join(DATA_DIR, 'entries'))) {
+    const entryFile = path.join(entryDir, 'entry.json');
+    const entry = await readJSONIfExists(entryFile);
+    if (!entry?.id) continue;
+    entries.push(entry);
+    latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(entryFile));
+
+    const entryMedia = await readRecordMedia(entryDir, entry, includeMediaData);
+    media.push(...entryMedia);
+    for (const item of entryMedia) {
+      latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(path.join(DATA_DIR, item.relativePath)));
+    }
+  }
+
+  entities.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  tags.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  entries.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  return { entities, tags, records, entries, media, latestModifiedAt };
+}
+
+async function readSarosSnapshots(includeMediaData) {
+  const root = path.join(DATA_DIR, 'saros');
+  const entities = [];
+  const tags = [];
+  const records = [];
+  const entries = [];
+  const media = [];
+  let latestModifiedAt = null;
+
+  for (const sarosDir of await childDirectories(root)) {
+    const tagsRoot = path.join(sarosDir, 'tags');
+    for (const tagDir of await childDirectories(tagsRoot)) {
+      const tagFile = path.join(tagDir, 'tag.json');
+      const tag = await readJSONIfExists(tagFile);
+      if (!tag?.id) continue;
+      if (tag.source === 'thread' || tag.title) {
+        entities.push(tag);
+      } else {
+        tags.push(tag);
+      }
+      latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(tagFile));
+    }
+
+    const recordsRoot = path.join(sarosDir, 'records');
+    for (const recordDir of await childDirectories(recordsRoot)) {
+      const entryFile = path.join(recordDir, 'entry.json');
+      const entry = await readJSONIfExists(entryFile);
+      if (entry?.id) {
+        entries.push(entry);
+        latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(entryFile));
+
+        const entryMedia = await readRecordMedia(recordDir, entry, includeMediaData);
+        media.push(...entryMedia);
+        for (const item of entryMedia) {
+          latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(path.join(DATA_DIR, item.relativePath)));
+        }
+        continue;
+      }
+
+      const recordFile = path.join(recordDir, 'record.json');
+      const record = await readJSONIfExists(recordFile);
+      if (!record?.id) continue;
+      records.push(record);
+      latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(recordFile));
+
+      const recordMedia = await readRecordMedia(recordDir, record, includeMediaData);
+      media.push(...recordMedia);
+      for (const item of recordMedia) {
+        latestModifiedAt = maxDate(latestModifiedAt, await modifiedAt(path.join(DATA_DIR, item.relativePath)));
+      }
+    }
+  }
+
+  entities.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  tags.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  records.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  entries.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  return { entities, tags, records, entries, media, latestModifiedAt };
+}
+
+function mergeSnapshotSets(primary, secondary) {
+  const entities = new Map();
+  const tags = new Map();
+  const records = new Map();
+  const entries = new Map();
+  const media = new Map();
+
+  for (const entity of [...(secondary.entities ?? []), ...(primary.entities ?? [])]) {
+    if (entity?.id) entities.set(entity.id, entity);
+  }
+  for (const tag of [...(secondary.tags ?? []), ...(primary.tags ?? [])]) {
+    if (tag?.id) tags.set(tag.id, tag);
+  }
+  for (const record of [...(secondary.records ?? []), ...(primary.records ?? [])]) {
+    if (record?.id) records.set(record.id, record);
+  }
+  for (const entry of [...(secondary.entries ?? []), ...(primary.entries ?? [])]) {
+    if (entry?.id) entries.set(entry.id, entry);
+  }
+  for (const item of [...(secondary.media ?? []), ...(primary.media ?? [])]) {
+    if (item?.id) media.set(item.id, item);
+  }
+
+  const latestModifiedAt = maxDate(primary.latestModifiedAt, secondary.latestModifiedAt);
+  return {
+    entities: [...entities.values()].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    tags: [...tags.values()].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    records: [...records.values()].sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime()),
+    entries: [...entries.values()].sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime()),
+    media: [...media.values()],
+    latestModifiedAt
+  };
 }
 
 async function readThreadSnapshots(includeMediaData) {
@@ -456,7 +596,7 @@ async function readThreadSnapshots(includeMediaData) {
 
   entities.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   records.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
-  return { entities, records, media, latestModifiedAt };
+  return { entities, tags: [], records, entries: [], media, latestModifiedAt };
 }
 
 async function readRecordMedia(recordDir, record, includeMediaData) {
@@ -554,14 +694,86 @@ function maxDate(a, b) {
   return a > b ? a : b;
 }
 
-function threadFolderName(thread) {
-  const title = slug(thread.title || 'untitled');
-  const saros = Number.isFinite(Number(thread.saros)) ? `saros-${thread.saros}` : 'saros';
-  return safeFolderName(`${saros}-${title}-${String(thread.id).slice(0, 8)}`);
+function entryFolderName(entry) {
+  const timestamp = entryUnixTimestamp(entry);
+  const closest = closestSpikeForRecord(entry);
+  const saros = Number(closest?.saros ?? sarosFromRecord(entry));
+  const octalPhase = String(closest?.octalAddress || entry.octalAddress || 'phase')
+    .replace(/[^0-7]/g, '')
+    .slice(0, MAX_HARMONIC_DEPTH) || 'phase';
+  return safeFolderName(`${timestamp}_${Number.isFinite(saros) ? saros : 0}_${octalPhase}`);
 }
 
-function recordFolderName(record) {
-  return safeFolderName(record.octalAddress || unixOctal(record.eventDate) || String(record.id).slice(0, 8));
+function entryUnixTimestamp(entry) {
+  const explicit = Number(entry?.unixTimestamp);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.trunc(explicit);
+
+  const parsed = Date.parse(entry?.eventDate);
+  if (Number.isFinite(parsed)) return Math.trunc(parsed / 1000);
+
+  const created = Date.parse(entry?.createdAt);
+  if (Number.isFinite(created)) return Math.trunc(created / 1000);
+
+  return Math.trunc(Date.now() / 1000);
+}
+
+function closestSpikeForRecord(record) {
+  const rawSpikes = record?.context?.spikes ?? record?.spikes ?? [];
+  if (!Array.isArray(rawSpikes) || !rawSpikes.length) return null;
+
+  const eventTime = recordTimeMs(record);
+  return [...rawSpikes].sort((a, b) => {
+    const aTime = spikeTimeMs(a);
+    const bTime = spikeTimeMs(b);
+    return Math.abs(aTime - eventTime) - Math.abs(bTime - eventTime);
+  })[0] ?? null;
+}
+
+function recordTimeMs(record) {
+  const parsed = Date.parse(record?.eventDate);
+  if (Number.isFinite(parsed)) return parsed;
+  const unix = Number(record?.unixTimestamp);
+  if (Number.isFinite(unix)) return unix * 1000;
+  return 0;
+}
+
+function spikeTimeMs(spike) {
+  const unix = Number(spike?.unixTimestamp);
+  if (Number.isFinite(unix)) return unix * 1000;
+  const parsed = Date.parse(spike?.eventDate);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sarosFromRecord(record, thread = null) {
+  const spikeSaros = Number(closestSpikeForRecord(record)?.saros);
+  if (Number.isFinite(spikeSaros)) return spikeSaros;
+
+  const candidates = recordSarosNumbers(record, thread);
+  return candidates[0] ?? 0;
+}
+
+function recordSarosNumbers(record, thread = null) {
+  const values = [];
+  const add = (value) => {
+    const number = Number(value);
+    if (Number.isFinite(number) && !values.includes(number)) {
+      values.push(number);
+    }
+  };
+
+  const sourceSpikes = record?.context?.spikes ?? record?.spikes ?? [];
+  const eventTime = recordTimeMs(record);
+  for (const spike of [...sourceSpikes].sort((a, b) => {
+    const aTime = spikeTimeMs(a);
+    const bTime = spikeTimeMs(b);
+    return Math.abs(aTime - eventTime) - Math.abs(bTime - eventTime);
+  })) {
+    add(spike?.saros);
+  }
+
+  add(record?.saros);
+  add(thread?.saros);
+  return values;
 }
 
 function mediaFileName(blob) {
@@ -576,77 +788,34 @@ function storedRelativePath(filePath) {
 }
 
 function manifestView(payload) {
+  const tags = payload?.archive?.tags ?? [];
+  const entries = payload?.archive?.entries ?? [];
   return {
     ok: true,
     hasBackup: Boolean(payload),
     exportTimestamp: payload?.exportTimestamp ?? null,
     entityIDs: (payload?.archive?.entities ?? []).map((entity) => entity.id),
     recordIDs: (payload?.archive?.records ?? []).map((record) => record.id),
+    tagIDs: tags.map((tag) => tag.id),
+    entryIDs: entries.map((entry) => entry.id),
     mediaIDs: (payload?.media ?? []).map((blob) => blob.id)
   };
 }
 
 function recordsView(payload) {
   const entities = new Map((payload.archive.entities ?? []).map((entity) => [entity.id, entity]));
-  const groups = new Map((payload.archive.threadGroups ?? []).map((group) => [group.id, group]));
+  const tagsByID = new Map((payload.archive.tags ?? []).map((tag) => [tag.id, tag]));
+  const tagLookup = new Map([...entities, ...tagsByID]);
   const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
-  const records = [...(payload.archive.records ?? [])]
+  const legacyRecords = [...(payload.archive.records ?? [])]
+    .map((record) => webRecord(record, entities.get(record.entityID), tagLookup, media));
+  const entryRecords = [...(payload.archive.entries ?? [])]
+    .map((entry) => webRecord(entry, null, tagLookup, media));
+  const records = [...legacyRecords, ...entryRecords]
     .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime())
-    .map((record) => {
-      const entity = entities.get(record.entityID);
-      const group = entity?.groupID ? groups.get(entity.groupID) : null;
-      const rarity = rarityForRecord(record);
-      return {
-        id: record.id,
-        entityID: record.entityID,
-        entityTitle: entity?.title || 'Untitled thread',
-        entityEmoji: entity?.emoji ?? null,
-        groupID: group?.id ?? 'common',
-        groupName: group?.name || 'Common',
-        groupEmoji: group?.emoji || '○',
-        eventDate: record.eventDate,
-        emoji: record.emoji,
-        text: record.text,
-        saros: record.saros,
-        octalAddress: record.octalAddress,
-        harmonicDepth: record.harmonicDepth ?? 7,
-        rarity,
-        media: (record.mediaItems ?? []).map((item) => {
-          const blob = media.get(item.id);
-          const relativePath = blob?.relativePath || item.localPath;
-          return {
-            id: item.id,
-            type: item.type,
-            createdAt: item.createdAt,
-            contentType: blob?.contentType || contentTypeForPath(relativePath),
-            url: `/media/${encodePath(relativePath)}`
-          };
-        })
-      };
-    });
-  const threads = [...entities.values()]
-    .map((entity) => {
-      const threadRecords = records.filter((record) => record.entityID === entity.id);
-      const group = entity.groupID ? groups.get(entity.groupID) : null;
-      return {
-        id: entity.id,
-        title: entity.title || 'Untitled thread',
-        emoji: entity.emoji,
-        groupID: group?.id ?? 'common',
-        groupName: group?.name || 'Common',
-        saros: entity.saros,
-        recordCount: threadRecords.length,
-        latestRecordDate: threadRecords[0]?.eventDate ?? null,
-        records: threadRecords
-      };
-    })
-    .filter((thread) => thread.recordCount > 0)
-    .sort((a, b) => new Date(b.latestRecordDate).getTime() - new Date(a.latestRecordDate).getTime());
-  const groupFilters = groupedFilterOptions(records, 'groupID', (record) => ({
-    id: record.groupID,
-    name: record.groupName,
-    emoji: record.groupEmoji
-  }));
+    .filter(Boolean);
+  const sarosFamilies = sarosFilterOptions(records);
+  const tagFilters = tagFilterOptions(records);
   const rarityFilters = groupedFilterOptions(records, 'rarityKey', (record) => ({
     id: record.rarity.key,
     name: record.rarity.title,
@@ -662,14 +831,78 @@ function recordsView(payload) {
 
   return {
     exportTimestamp: payload.exportTimestamp,
-    entityCount: payload.archive.entities?.length ?? 0,
+    entityCount: (payload.archive.tags?.length ?? 0) + (payload.archive.entities?.length ?? 0),
     recordCount: records.length,
     mediaCount: payload.media?.length ?? 0,
-    threads,
-    groups: groupFilters,
+    sarosFamilies,
+    tags: tagFilters,
     rarities: rarityFilters,
     records
   };
+}
+
+function webRecord(record, entity, tagLookup, media) {
+  if (!record?.id) return null;
+  const spikes = recordSpikes(record, entity);
+  const rarity = rarityForRecord(record);
+  const sarosNumbers = recordSarosNumbers(record, entity);
+  const tags = recordTags(record, tagLookup);
+  const primarySpike = spikes[0];
+
+  return {
+    id: record.id,
+    entityID: record.entityID ?? null,
+    title: recordTitle(record, rarity),
+    entityTitle: entity?.title || entity?.name || 'Untitled tag',
+    entityEmoji: entity?.emoji ?? null,
+    tags,
+    eventDate: record.eventDate,
+    emoji: record.emoji,
+    text: record.text,
+    saros: sarosNumbers[0] ?? record.saros,
+    sarosNumbers,
+    octalAddress: primarySpike?.octalAddress ?? record.octalAddress,
+    harmonicDepth: primarySpike?.harmonicDepth ?? record.harmonicDepth ?? 7,
+    rarity,
+    spikes,
+    media: (record.mediaItems ?? []).map((item) => {
+      const blob = media.get(item.id);
+      const relativePath = blob?.relativePath || item.localPath;
+      return {
+        id: item.id,
+        type: item.type,
+        createdAt: item.createdAt,
+        contentType: blob?.contentType || contentTypeForPath(relativePath),
+        url: `/media/${encodePath(relativePath)}`
+      };
+    })
+  };
+}
+
+function sarosFilterOptions(records) {
+  const values = new Map();
+  for (const record of records) {
+    for (const saros of record.sarosNumbers ?? []) {
+      const key = String(saros);
+      const existing = values.get(key) ?? { id: key, saros, name: `Saros ${saros}`, count: 0 };
+      existing.count += 1;
+      values.set(key, existing);
+    }
+  }
+  return [...values.values()].sort((a, b) => Number(a.saros) - Number(b.saros));
+}
+
+function tagFilterOptions(records) {
+  const values = new Map();
+  for (const record of records) {
+    for (const tag of record.tags ?? []) {
+      const key = tag.filterID || tag.displayKey || tag.id;
+      const existing = values.get(key) ?? { ...tag, id: key, count: 0 };
+      existing.count += 1;
+      values.set(key, existing);
+    }
+  }
+  return [...values.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
 function groupedFilterOptions(records, key, mapper) {
@@ -687,11 +920,109 @@ function groupedFilterOptions(records, key, mapper) {
   return [...values.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
+function recordTitle(record, rarity) {
+  if (record?.context?.displayTitle) return record.context.displayTitle;
+  if (rarity?.isCommon) return 'Common';
+  return rarity?.title || 'Record';
+}
+
+function recordTags(record, entities) {
+  const tags = [];
+  const displayKeys = new Set();
+  const add = (entity) => {
+    if (!entity?.id) return;
+    const displayKey = tagDisplayKey(entity);
+    if (displayKeys.has(displayKey)) return;
+    displayKeys.add(displayKey);
+    tags.push({
+      id: entity.id,
+      filterID: displayKey,
+      displayKey,
+      name: entity.title || entity.name || `Saros ${entity.saros ?? ''}`.trim(),
+      emoji: entity.emoji || '◇',
+      saros: entity.saros ?? null
+    });
+  };
+
+  add(entities.get(record.entityID));
+
+  const saroses = new Set(recordSarosNumbers(record, entities.get(record.entityID)));
+  for (const entity of entities.values()) {
+    if (saroses.has(Number(entity.saros))) {
+      add(entity);
+    }
+  }
+
+  return tags;
+}
+
+function tagDisplayKey(entity) {
+  const source = entity.sourceEntityID || entity.sourceID;
+  if (source) return `source:${source}`;
+  const name = String(entity.title || entity.name || '').trim().toLowerCase();
+  const emoji = String(entity.emoji || '').trim();
+  return `${emoji}|${name}`;
+}
+
+function recordSpikes(record, entity = null) {
+  const sourceSpikes = record?.context?.spikes ?? record?.spikes;
+  if (Array.isArray(sourceSpikes) && sourceSpikes.length) {
+    const eventTime = recordTimeMs(record);
+    return sourceSpikes.map((spike) => {
+      const depth = clampedHarmonicDepth(spike.harmonicDepth ?? record.harmonicDepth);
+      const rarity = rarityForRawValue(spike.rarityRawValue)
+        ?? rarityForAddress(spike.octalAddress, depth);
+      const spikeTime = spikeTimeMs(spike);
+      return {
+        id: spike.id || `${spike.saros}-${spike.unixTimestamp ?? spike.eventDate ?? spike.octalAddress}`,
+        saros: Number(spike.saros),
+        unixTimestamp: spike.unixTimestamp ?? null,
+        octalAddress: spike.octalAddress || rarity.glyphAddress,
+        harmonicDepth: depth,
+        rarity,
+        distanceFromRecord: Math.abs(spikeTime - eventTime)
+      };
+    }).sort((a, b) => {
+      if (a.distanceFromRecord !== b.distanceFromRecord) {
+        return a.distanceFromRecord - b.distanceFromRecord;
+      }
+      return (b.rarity?.rank ?? 0) - (a.rarity?.rank ?? 0);
+    });
+  }
+
+  const depth = clampedHarmonicDepth(record.harmonicDepth ?? entity?.harmonicDepth);
+  const rarity = rarityForAddress(record.octalAddress, depth);
+  return [{
+    id: record.id,
+    saros: sarosFromRecord(record, entity),
+    octalAddress: record.octalAddress || rarity.glyphAddress,
+    harmonicDepth: depth,
+    rarity
+  }];
+}
+
 function rarityForRecord(record) {
+  const spikes = recordSpikes(record);
+  if (spikes.length > 1) {
+    return spikes.reduce((best, spike) => (
+      (spike.rarity?.rank ?? 0) > (best.rank ?? 0) ? spike.rarity : best
+    ), rarityDefinition('common'));
+  }
+
   const depth = clampedHarmonicDepth(record.harmonicDepth);
-  const pattern = repeatedSuffixPattern(record.octalAddress, depth);
+  return rarityForAddress(record.octalAddress, depth);
+}
+
+function rarityForAddress(octalAddress, depth) {
+  const pattern = repeatedSuffixPattern(octalAddress, depth);
   if (pattern.digit <= 0) return rarityDefinition('common');
   return rarityDefinitionForPattern(pattern.order, pattern.digit, depth);
+}
+
+function rarityForRawValue(rawValue) {
+  const key = canonicalRarityKey(rawValue);
+  if (RARITY_DEFINITIONS[key]) return RARITY_DEFINITIONS[key];
+  return null;
 }
 
 function rarityDefinition(key) {
@@ -741,10 +1072,14 @@ function makeRarityDefinitions() {
 
     for (let digit = 1; digit <= 7; digit += 1) {
       const title = `${RARITY_DIGIT_PREFIXES[digit]} ${base.title}`;
+      const color = base.key === 'mythic' && digit === 7
+        ? OMEGA_NIHIL_COLOR
+        : base.color;
       const definition = {
         ...base,
         key: `${base.key}-${digit}`,
         title,
+        color,
         rank: base.order * 8 + digit,
         repeatedDigit: digit,
         baseKey: base.key,
@@ -1084,14 +1419,17 @@ function pageHTML() {
   <style>
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #0b0d10; color: #f3f5f7; }
-    header { position: sticky; top: 0; z-index: 2; background: rgba(11,13,16,.94); backdrop-filter: blur(14px); padding: 18px 20px; border-bottom: 1px solid #222832; }
-    h1 { margin: 0 0 6px; font-size: 22px; }
+    header { position: sticky; top: 0; z-index: 2; background: rgba(11,13,16,.94); backdrop-filter: blur(14px); padding: 10px 20px; border-bottom: 1px solid #222832; }
+    .header-inner { max-width: 980px; margin: 0 auto; display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+    h1 { margin: 0; font-size: 15px; letter-spacing: .04em; text-transform: uppercase; }
     .meta { color: #95a0ad; font-size: 13px; }
     main { max-width: 980px; margin: 0 auto; padding: 18px 20px 40px; }
-    nav { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    nav { display: flex; gap: 8px; flex-wrap: wrap; }
     nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
-    .filters { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) minmax(150px, 220px); margin-bottom: 18px; }
-    .rarity-filter { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    .filters { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); margin-bottom: 18px; padding: 12px; border: 1px solid #222a34; border-radius: 12px; background: #0f141a; }
+    .filter-selects { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rarity-filter { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }
+    .rarity-filter::-webkit-scrollbar { display: none; }
     .rarity-filter button { display: inline-flex; align-items: center; gap: 7px; }
     .rarity-filter .rarity-glyph { width: 22px; height: 22px; flex: 0 0 22px; }
     .rarity-filter button.active .rarity-glyph { color: #071018; }
@@ -1100,10 +1438,13 @@ function pageHTML() {
     button.active { background: var(--rarity-color, #e8edf3); border-color: var(--rarity-color, #e8edf3); color: #071018; }
     select { min-width: 0; padding: 8px 10px; }
     .day { margin: 22px 0 10px; color: #8f98a3; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .record { display: grid; grid-template-columns: minmax(0, 1fr) 86px; gap: 14px; padding: 16px; margin-top: 10px; border: 1px solid #232a34; border-radius: 10px; background: #11151b; }
+    .record { display: grid; grid-template-columns: 54px minmax(0, 1fr) 72px; gap: 14px; padding: 16px; margin-top: 10px; border: 1px solid #232a34; border-radius: 10px; background: #11151b; }
     .record-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
     .title { font-weight: 800; font-size: 17px; }
     .sub { color: #9ca6b3; font-size: 13px; margin-top: 6px; }
+    .spikes { display: flex; gap: 12px; align-items: end; margin-top: 10px; flex-wrap: wrap; }
+    .spike { display: grid; gap: 3px; justify-items: center; color: #9ca6b3; font-size: 12px; }
+    .spike .glyph { width: 34px; height: 34px; }
     .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2d3946; border-radius: 999px; padding: 4px 8px; color: #c8d0d9; font-size: 12px; }
     .rarity { border-color: color-mix(in srgb, var(--rarity-color), transparent 45%); color: var(--rarity-color); background: color-mix(in srgb, var(--rarity-color), transparent 88%); }
     .record-side { display: grid; gap: 8px; justify-items: center; align-content: start; }
@@ -1111,7 +1452,9 @@ function pageHTML() {
     .glyph svg { width: 100%; height: 100%; display: block; overflow: visible; }
     .glyph path, .glyph polygon, .glyph circle { fill: currentColor; }
     .glyph-fallback { width: 72px; height: 72px; }
-    .emoji { font-size: 30px; line-height: 1; }
+    .emoji { font-size: 34px; line-height: 1; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .tag { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 24px; border-radius: 999px; background: #1b222c; font-size: 16px; }
     .text { margin-top: 10px; white-space: pre-wrap; color: #d8dde4; }
     .media { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
     .media img, .media video { width: 160px; height: 160px; object-fit: cover; border-radius: 8px; background: #050607; }
@@ -1124,9 +1467,13 @@ function pageHTML() {
     .lightbox img, .lightbox video { max-width: min(96vw, 1280px); max-height: 92vh; object-fit: contain; border-radius: 10px; box-shadow: 0 24px 80px rgba(0,0,0,.7); }
     .lightbox-close { position: absolute; top: 18px; right: 18px; width: 44px; height: 44px; border-radius: 999px; font-size: 20px; background: rgba(15,18,22,.78); }
     @media (max-width: 720px) {
+      header { padding: 10px 14px; }
+      .header-inner { align-items: flex-start; flex-direction: column; gap: 8px; }
       .filters { grid-template-columns: 1fr; }
-      .record { grid-template-columns: minmax(0, 1fr) 72px; }
+      .filter-selects { grid-template-columns: 1fr; }
+      .record { grid-template-columns: 48px minmax(0, 1fr) 56px; }
       .glyph { width: 64px; height: 64px; }
+      .spike .glyph { width: 30px; height: 30px; }
       .emoji { font-size: 26px; }
       audio { width: 100%; }
       .media img, .media video { width: calc(50vw - 34px); height: calc(50vw - 34px); }
@@ -1135,9 +1482,11 @@ function pageHTML() {
 </head>
 <body>
   <header>
-    <h1>Exeligmos Sync</h1>
-    <div class="meta" id="status">Loading synced folders...</div>
-    <nav><a href="/dataset">Dataset</a></nav>
+    <div class="header-inner">
+      <h1>Exeligmos Sync</h1>
+      <div class="meta" id="status">Loading synced folders...</div>
+      <nav><a href="/dataset">Dataset</a></nav>
+    </div>
   </header>
   <main id="records"></main>
   <div class="lightbox" id="lightbox" hidden>
@@ -1153,7 +1502,7 @@ function pageHTML() {
     const lightboxImage = document.getElementById('lightbox-image');
     const lightboxVideo = document.getElementById('lightbox-video');
     const lightboxClose = document.getElementById('lightbox-close');
-    const state = { rarity: 'all', thread: 'all', group: 'all', data: null };
+    const state = { rarity: 'all', saros: 'all', tag: 'all', data: null };
     const glyphFontCache = new Map();
 
     lightboxClose.addEventListener('click', closeMediaPreview);
@@ -1168,7 +1517,7 @@ function pageHTML() {
       .then((response) => response.json())
       .then((data) => {
         status.textContent = data.exportTimestamp
-          ? \`Folder state: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} threads · \${data.recordCount} records · \${data.mediaCount} media\`
+          ? \`Folder state: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} tags · \${data.recordCount} records · \${data.mediaCount} media\`
           : 'No synced records yet. Upload from the iOS app Settings screen.';
         state.data = data;
         renderPage();
@@ -1178,14 +1527,17 @@ function pageHTML() {
       });
 
     function renderPage() {
-      const data = state.data || { records: [], threads: [], groups: [], rarities: [] };
+      const data = state.data || { records: [], sarosFamilies: [], tags: [], rarities: [] };
       recordsEl.innerHTML = '';
 
       const filters = document.createElement('section');
       filters.className = 'filters';
       filters.append(renderRarityFilter(data.rarities || []));
-      filters.append(renderSelect('thread', 'Thread', data.threads || [], (thread) => \`\${thread.emoji || ''} \${thread.title || 'Untitled thread'} (\${thread.recordCount})\`));
-      filters.append(renderSelect('group', 'Group', data.groups || [], (group) => \`\${group.emoji || ''} \${group.name || 'Common'} (\${group.count})\`));
+      const filterSelects = document.createElement('div');
+      filterSelects.className = 'filter-selects';
+      filterSelects.append(renderSelect('saros', 'Saros', data.sarosFamilies || [], (family) => \`\${family.name} (\${family.count})\`));
+      filterSelects.append(renderSelect('tag', 'Tag', data.tags || [], (tag) => \`\${tag.emoji || ''} \${tag.name || 'Tag'} (\${tag.count})\`));
+      filters.append(filterSelects);
       recordsEl.appendChild(filters);
 
       const records = filteredRecords(data.records || []);
@@ -1241,7 +1593,7 @@ function pageHTML() {
 
       const all = document.createElement('option');
       all.value = 'all';
-      all.textContent = \`All \${label.toLowerCase()}s\`;
+      all.textContent = label === 'Saros' ? 'All Saros families' : \`All \${label.toLowerCase()}s\`;
       select.appendChild(all);
 
       for (const option of options) {
@@ -1262,8 +1614,8 @@ function pageHTML() {
     function filteredRecords(records) {
       return records.filter((record) => {
         if (state.rarity !== 'all' && record.rarity?.key !== state.rarity) return false;
-        if (state.thread !== 'all' && record.entityID !== state.thread) return false;
-        if (state.group !== 'all' && record.groupID !== state.group) return false;
+        if (state.saros !== 'all' && !(record.sarosNumbers || []).map(String).includes(state.saros)) return false;
+        if (state.tag !== 'all' && !(record.tags || []).some((tag) => (tag.filterID || tag.displayKey || tag.id) === state.tag)) return false;
         return true;
       });
     }
@@ -1271,26 +1623,30 @@ function pageHTML() {
     function renderRecord(record) {
       const node = document.createElement('article');
       node.className = 'record';
-      const body = document.createElement('div');
-      const side = document.createElement('div');
-      side.className = 'record-side';
-      side.appendChild(renderOctalGlyph(record.octalAddress, record.harmonicDepth || 7, record.rarity?.color || '#f3f5f7'));
       const emoji = document.createElement('div');
       emoji.className = 'emoji';
       emoji.textContent = record.emoji || '✦';
-      side.appendChild(emoji);
+      const body = document.createElement('div');
+      const side = document.createElement('div');
+      side.className = 'record-side';
+      const primarySpike = (record.spikes || [])[0] || record;
+      side.appendChild(renderOctalGlyph(
+        primarySpike.octalAddress || record.octalAddress,
+        primarySpike.harmonicDepth || record.harmonicDepth || 7,
+        primarySpike.rarity?.color || record.rarity?.color || '#f3f5f7'
+      ));
 
       const rarityBadge = record.rarity?.hasBadge
         ? \`<span class="badge rarity" title="\${escapeHTML(record.rarity.patternLabel || '')}" style="--rarity-color: \${escapeHTML(record.rarity.color || '#f3f5f7')}">\${escapeHTML(record.rarity.title)}</span>\`
         : '';
       body.innerHTML = \`
         <div class="record-head">
-          <div class="title">\${escapeHTML(record.entityTitle)}</div>
+          <div class="title" style="color: \${escapeHTML(record.rarity?.color || '#f3f5f7')}">\${escapeHTML(record.title || 'Record')}</div>
           \${rarityBadge}
-          <span class="badge">\${escapeHTML(record.groupEmoji || '○')} \${escapeHTML(record.groupName || 'Common')}</span>
         </div>
-        <div class="sub">\${new Date(record.eventDate).toLocaleString()} · Saros \${record.saros} · \${record.octalAddress}</div>
+        <div class="sub">\${new Date(record.eventDate).toLocaleString()} · \${(record.sarosNumbers || []).map((saros) => \`Saros \${saros}\`).join(' · ')}</div>
       \`;
+      body.appendChild(renderSpikeStrip(record.spikes || []));
       if (record.text) {
         const text = document.createElement('div');
         text.className = 'text';
@@ -1300,8 +1656,39 @@ function pageHTML() {
       if (record.media?.length) {
         body.appendChild(renderMedia(record.media));
       }
-      node.append(body, side);
+      if (record.tags?.length) {
+        const tags = document.createElement('div');
+        tags.className = 'tags';
+        for (const tag of record.tags) {
+          const tagNode = document.createElement('span');
+          tagNode.className = 'tag';
+          tagNode.title = tag.name || '';
+          tagNode.textContent = tag.emoji || '◇';
+          tags.appendChild(tagNode);
+        }
+        body.appendChild(tags);
+      }
+      node.append(emoji, body, side);
       return node;
+    }
+
+    function renderSpikeStrip(spikes) {
+      const wrap = document.createElement('div');
+      wrap.className = 'spikes';
+      for (const spike of spikes.slice(0, 4)) {
+        const node = document.createElement('div');
+        node.className = 'spike';
+        node.appendChild(renderOctalGlyph(
+          spike.octalAddress,
+          spike.harmonicDepth || 7,
+          spike.rarity?.color || '#f3f5f7'
+        ));
+        const label = document.createElement('div');
+        label.textContent = spike.saros || '';
+        node.appendChild(label);
+        wrap.appendChild(node);
+      }
+      return wrap;
     }
 
     function renderMedia(media) {
@@ -1628,10 +2015,6 @@ function safeFolderName(value) {
   return cleaned || 'item';
 }
 
-function slug(value) {
-  return safeFolderName(value).toLowerCase() || 'untitled';
-}
-
 function encodePath(value) {
   return safeRelativePath(value).split('/').map(encodeURIComponent).join('/');
 }
@@ -1660,12 +2043,6 @@ function extensionForContentType(contentType) {
   if (value.includes('mp4') && value.includes('audio')) return '.m4a';
   if (value.includes('caf')) return '.caf';
   return '';
-}
-
-function unixOctal(value) {
-  const time = new Date(value).getTime();
-  if (!Number.isFinite(time)) return '';
-  return Math.floor(time / 1000).toString(8);
 }
 
 function localAddresses() {

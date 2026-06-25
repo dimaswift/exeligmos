@@ -34,19 +34,24 @@ struct JournalEntryRow: View {
     var body: some View {
         let primeTint = primeTag.map { Color(hex: $0.tintHex, fallback: .white) }
 
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 14) {
             Text(JournalRecordMarkers.marker(from: entry.emoji))
-                .font(.system(size: 34))
-                .frame(width: 44, height: 48)
+                .font(.system(size: 36))
+                .frame(width: 48, height: 52, alignment: .top)
 
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    JournalWaveDirectionIcon(direction: context.direction, size: 18)
+                HStack(alignment: .center, spacing: 10) {
                     Text(primaryTitle)
                         .font(.headline)
                         .foregroundStyle(context.titleColor)
                         .lineLimit(1)
+                        .padding(.top, 2)
                     Spacer(minLength: 0)
+                    JournalClosestSarosPhaseGlyph(
+                        context: context,
+                        displayDepth: displayDepth,
+                        size: 40
+                    )
                 }
 
                 JournalSpikeGlyphStrip(
@@ -87,11 +92,12 @@ struct JournalEntryRow: View {
                     Text(JournalFormatters.dateTime.string(from: entry.eventDate))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
                     if let moonReading {
                         MoonPhaseGlyph(reading: moonReading)
                             .frame(width: 24, height: 24)
                     }
+                    Spacer(minLength: 8)
+                    JournalWaveDirectionIcon(direction: context.direction, size: 12)
                 }
             }
         }
@@ -176,27 +182,27 @@ struct JournalEntryDetailView: View {
                             .frame(width: 64, height: 64)
 
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                JournalWaveDirectionIcon(direction: displayedDirection, size: 22)
-                                Text(context.displayTitleWithoutSaros)
-                                    .font(.headline)
-                                    .foregroundStyle(context.titleColor)
-                            }
+                            Text(context.displayTitleWithoutSaros)
+                                .font(.headline)
+                                .foregroundStyle(context.titleColor)
                             if context.rarity != .common {
                                 FlipRarityBadge(rarity: context.rarity)
-                            }
-                            HStack(spacing: 10) {
-                                Text(JournalFormatters.dateTime.string(from: entry.eventDate))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                if let moonReading {
-                                    MoonPhaseGlyph(reading: moonReading)
-                                        .frame(width: 28, height: 28)
-                                }
                             }
                         }
 
                         Spacer(minLength: 0)
+
+                        VStack(spacing: 8) {
+                            JournalClosestSarosPhaseGlyph(
+                                context: context,
+                                displayDepth: displayDepth,
+                                size: 58
+                            )
+                            if let moonReading {
+                                MoonPhaseGlyph(reading: moonReading)
+                                    .frame(width: 40, height: 40)
+                            }
+                        }
                     }
 
                     JournalSpikeGlyphStrip(
@@ -205,6 +211,14 @@ struct JournalEntryDetailView: View {
                         size: 44,
                         highlightedSpikeID: context.closestSpike?.id
                     )
+
+                    HStack(alignment: .bottom) {
+                        Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        JournalWaveDirectionIcon(direction: displayedDirection, size: 14)
+                    }
                 }
                 .padding(.vertical, 4)
                 .background {
@@ -313,7 +327,7 @@ struct JournalEntryDetailView: View {
                 }
             }
         }
-        .navigationTitle("Entry")
+        .navigationTitle(context.displayTitleWithoutSaros)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -346,12 +360,12 @@ struct JournalEntryDetailView: View {
             localWaveDynamics = dynamics
         }
         .confirmationDialog("Delete this entry?", isPresented: $isDeleteConfirmationPresented, titleVisibility: .visible) {
-            Button("Delete Entry", role: .destructive) {
+            Button("Delete Record", role: .destructive) {
                 deleteEntry()
             }
             Button("Cancel", role: .cancel) {}
         }
-        .alert("Entry error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+        .alert("Record error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
@@ -1116,76 +1130,6 @@ private struct JournalTagEntriesView: View {
     }
 }
 
-struct JournalMigrationSettingsView: View {
-    @EnvironmentObject private var services: AppServices
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
-    @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
-    @Query(sort: \JournalEntry.createdAt, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
-
-    @State private var isMigrating = false
-    @State private var message = ""
-    @State private var errorMessage: String?
-
-    var body: some View {
-        Form {
-            Section("Current store") {
-                MetadataRow(title: "Old threads", value: "\(entities.count)")
-                MetadataRow(title: "Old records", value: "\(records.count)")
-                MetadataRow(title: "New tags", value: "\(tags.count)")
-                MetadataRow(title: "New entries", value: "\(entries.count)")
-            }
-
-            Section {
-                Button {
-                    Task { await migrate() }
-                } label: {
-                    if isMigrating {
-                        ProgressView()
-                    } else {
-                        Label("Migrate old records", systemImage: "arrow.triangle.branch")
-                    }
-                }
-                .disabled(isMigrating || (entities.isEmpty && records.isEmpty))
-
-                if !message.isEmpty {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } footer: {
-                Text("Migration derives the four surrounding Saros spikes from each old record timestamp. Old thread and record objects are kept as source data.")
-            }
-        }
-        .navigationTitle("Journal migration")
-        .alert("Migration failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
-    }
-
-    @MainActor
-    private func migrate() async {
-        isMigrating = true
-        defer { isMigrating = false }
-
-        do {
-            let summary = try services.journalMigrationService.migrate(
-                entities: entities,
-                records: records,
-                existingEntries: entries,
-                existingTags: tags,
-                modelContext: modelContext
-            )
-            message = "Inserted \(summary.insertedTags) tags and \(summary.insertedEntries) entries. Skipped \(summary.skippedEntries) existing entries."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
 private struct JournalTagEditorView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.dismiss) private var dismiss
@@ -1305,6 +1249,57 @@ private struct JournalTagDraft: Identifiable {
         self.isPrime = tag.isPrime
         self.colorHex = tag.tintHex
     }
+}
+
+private struct JournalClosestSarosPhaseGlyph: View {
+    @EnvironmentObject private var services: AppServices
+
+    let context: JournalEventContext
+    let displayDepth: Int
+    let size: CGFloat
+
+    @State private var phase: JournalSarosPhaseReference?
+
+    var body: some View {
+        ZStack {
+            if let phase {
+                OctalGlyph(
+                    value: displayAddress(for: phase),
+                    depth: displayDepth,
+                    style: phase.rarity.glyphStyle
+                )
+                .frame(width: size, height: size)
+                .accessibilityLabel("Saros \(phase.saros) current phase")
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: phaseTaskID) {
+            let context = context
+            let displayDepth = displayDepth
+            let contextService = services.sarosEventContextService
+            phase = await Task.detached(priority: .utility) { () -> JournalSarosPhaseReference? in
+                try? contextService.closestSarosPhase(
+                    for: context,
+                    harmonicDepth: displayDepth
+                )
+            }.value
+        }
+    }
+
+    private var phaseTaskID: String {
+        "\(context.unixTimestamp)-\(displayDepth)-\(context.closestSpike?.id ?? "none")"
+    }
+
+    private func displayAddress(for phase: JournalSarosPhaseReference) -> String {
+        JournalSettings.displayOctalAddress(
+            phase.octalAddress,
+            storedDepth: phase.harmonicDepth,
+            displayDepth: displayDepth
+        )
+    }
+
 }
 
 private struct JournalSpikeGlyphStrip: View {

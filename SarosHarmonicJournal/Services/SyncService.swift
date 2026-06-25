@@ -19,21 +19,19 @@ struct SyncMediaBlob: Codable, Identifiable {
     let dataBase64: String
 }
 
-struct SyncThreadPayload: Codable {
+struct SyncStatePayload: Codable {
     let schemaVersion: Int
     let appVersion: String
     let uploadedAt: Date
-    let group: ThreadGroupSnapshot?
-    let thread: TrackedEntitySnapshot
+    let tags: [JournalTagSnapshot]
+    let entryIDs: [UUID]
 }
 
-struct SyncRecordPayload: Codable {
+struct SyncEntryUploadPayload: Codable {
     let schemaVersion: Int
     let appVersion: String
     let uploadedAt: Date
-    let group: ThreadGroupSnapshot?
-    let thread: TrackedEntitySnapshot
-    let record: JournalRecordSnapshot
+    let entry: JournalEntrySnapshot
     let media: [SyncMediaBlob]
 }
 
@@ -64,6 +62,8 @@ struct SyncServerManifest: Codable, Hashable {
     let exportTimestamp: Date?
     let entityIDs: [UUID]
     let recordIDs: [UUID]
+    let tagIDs: [UUID]
+    let entryIDs: [UUID]
     let mediaIDs: [UUID]
 
     enum CodingKeys: String, CodingKey {
@@ -72,6 +72,8 @@ struct SyncServerManifest: Codable, Hashable {
         case exportTimestamp
         case entityIDs
         case recordIDs
+        case tagIDs
+        case entryIDs
         case mediaIDs
     }
 
@@ -81,6 +83,8 @@ struct SyncServerManifest: Codable, Hashable {
         exportTimestamp: Date?,
         entityIDs: [UUID],
         recordIDs: [UUID],
+        tagIDs: [UUID] = [],
+        entryIDs: [UUID] = [],
         mediaIDs: [UUID]
     ) {
         self.ok = ok
@@ -88,6 +92,8 @@ struct SyncServerManifest: Codable, Hashable {
         self.exportTimestamp = exportTimestamp
         self.entityIDs = entityIDs
         self.recordIDs = recordIDs
+        self.tagIDs = tagIDs
+        self.entryIDs = entryIDs
         self.mediaIDs = mediaIDs
     }
 
@@ -98,6 +104,8 @@ struct SyncServerManifest: Codable, Hashable {
         self.exportTimestamp = try? container.decodeIfPresent(Date.self, forKey: .exportTimestamp)
         self.entityIDs = Self.decodeUUIDs(from: container, forKey: .entityIDs)
         self.recordIDs = Self.decodeUUIDs(from: container, forKey: .recordIDs)
+        self.tagIDs = Self.decodeUUIDs(from: container, forKey: .tagIDs)
+        self.entryIDs = Self.decodeUUIDs(from: container, forKey: .entryIDs)
         self.mediaIDs = Self.decodeUUIDs(from: container, forKey: .mediaIDs)
     }
 
@@ -134,76 +142,41 @@ final class SyncService {
         }
     }
 
-    func push(
+    func pushEntries(
         to serverURLString: String,
-        entities: [TrackedEntity],
-        records: [JournalRecord],
-        groups: [ThreadGroup] = []
+        tags: [JournalTag],
+        entries: [JournalEntry]
     ) async throws -> SyncPushSummary {
-        let entityMap = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
-        let groupMap = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
-        var uploadedMediaCount = 0
-
-        for entity in entities {
-            try await uploadThread(entity, group: entity.groupID.flatMap { groupMap[$0] }, to: serverURLString)
-        }
-
-        for record in records {
-            guard let entity = entityMap[record.entityID] else { continue }
-            let group = entity.groupID.flatMap { groupMap[$0] }
-            uploadedMediaCount += try await uploadRecord(record, entity: entity, group: group, to: serverURLString)
-        }
-
-        return SyncPushSummary(entityCount: entities.count, recordCount: records.count, mediaCount: uploadedMediaCount)
+        let manifest = (try? await fetchManifest(from: serverURLString))
+        return try await pushMirrorState(
+            to: serverURLString,
+            tags: tags,
+            entries: entries,
+            manifest: manifest
+        )
     }
 
-    func pushMissingRecords(
+    func pushMissingEntries(
         to serverURLString: String,
-        entities: [TrackedEntity],
-        records: [JournalRecord],
-        groups: [ThreadGroup] = []
+        tags: [JournalTag],
+        entries: [JournalEntry]
     ) async throws -> SyncPushSummary {
-        let manifest = try await fetchManifest(from: serverURLString)
-        let uploadedRecordIDs = Set(manifest.recordIDs)
-        let missingRecords = records.filter { !uploadedRecordIDs.contains($0.id) }
-        let groupMap = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
-
-        for entity in entities {
-            try await uploadThread(entity, group: entity.groupID.flatMap { groupMap[$0] }, to: serverURLString)
-        }
-
-        guard !missingRecords.isEmpty else {
-            return SyncPushSummary(entityCount: 0, recordCount: 0, mediaCount: 0)
-        }
-
-        let entityMap = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
-        var uploadedMediaCount = 0
-        var uploadedRecordCount = 0
-
-        for record in missingRecords {
-            guard let entity = entityMap[record.entityID] else { continue }
-            let group = entity.groupID.flatMap { groupMap[$0] }
-            uploadedMediaCount += try await uploadRecord(record, entity: entity, group: group, to: serverURLString)
-            uploadedRecordCount += 1
-        }
-
-        return SyncPushSummary(
-            entityCount: entities.count,
-            recordCount: uploadedRecordCount,
-            mediaCount: uploadedMediaCount
+        try await pushEntries(
+            to: serverURLString,
+            tags: tags,
+            entries: entries
         )
     }
 
     @MainActor
-    func restoreLatest(
+    func restoreLatestEntries(
         from serverURLString: String,
         modelContext: ModelContext,
-        entities: [TrackedEntity],
-        records: [JournalRecord],
-        groups: [ThreadGroup] = []
+        tags: [JournalTag],
+        entries: [JournalEntry]
     ) async throws -> SyncRestoreSummary {
         let payload = try await fetchLatest(from: serverURLString)
-        return try restore(payload: payload, modelContext: modelContext, entities: entities, records: records, groups: groups)
+        return try restoreEntries(payload: payload, modelContext: modelContext, tags: tags, entries: entries)
     }
 
     func fetchLatest(from serverURLString: String) async throws -> SyncBackupPayload {
@@ -227,6 +200,57 @@ final class SyncService {
         return try decode(SyncServerManifest.self, from: data, context: "server manifest")
     }
 
+    private func pushMirrorState(
+        to serverURLString: String,
+        tags: [JournalTag],
+        entries: [JournalEntry],
+        manifest: SyncServerManifest?
+    ) async throws -> SyncPushSummary {
+        let uploadedEntryIDs = Set(manifest?.entryIDs ?? [])
+        let uploadedMediaIDs = Set(manifest?.mediaIDs ?? [])
+        let tagSnapshots = tags.map(JournalTagSnapshot.init(tag:))
+        let entryIDs = entries.map(\.id)
+
+        let statePayload = SyncStatePayload(
+            schemaVersion: 1,
+            appVersion: appVersion,
+            uploadedAt: Date(),
+            tags: tagSnapshots,
+            entryIDs: entryIDs
+        )
+        try await post(statePayload, to: serverURLString, path: "/api/sync/state")
+
+        var changedEntryIDs = Set<UUID>()
+        for entry in entries {
+            let mediaIDs = entry.mediaItems.map(\.id)
+            let hasMissingMedia = mediaIDs.contains { !uploadedMediaIDs.contains($0) }
+            if !uploadedEntryIDs.contains(entry.id) || hasMissingMedia {
+                changedEntryIDs.insert(entry.id)
+            }
+        }
+
+        let changedEntries = entries.filter { changedEntryIDs.contains($0.id) }
+        var uploadedMediaCount = 0
+        for entry in changedEntries {
+            let media = try mediaBlobs(for: entry)
+            uploadedMediaCount += media.count
+            let entryPayload = SyncEntryUploadPayload(
+                schemaVersion: 1,
+                appVersion: appVersion,
+                uploadedAt: Date(),
+                entry: JournalEntrySnapshot(entry: entry),
+                media: media
+            )
+            try await post(entryPayload, to: serverURLString, path: "/api/sync/entry")
+        }
+
+        return SyncPushSummary(
+            entityCount: tags.count,
+            recordCount: entries.count,
+            mediaCount: uploadedMediaCount
+        )
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, from data: Data, context: String) throws -> T {
         do {
             return try decoder.decode(type, from: data)
@@ -241,39 +265,6 @@ final class SyncService {
         }
     }
 
-    private func uploadThread(_ entity: TrackedEntity, group: ThreadGroup?, to serverURLString: String) async throws {
-        let payload = SyncThreadPayload(
-            schemaVersion: 1,
-            appVersion: appVersion,
-            uploadedAt: Date(),
-            group: group.map(ThreadGroupSnapshot.init(group:)),
-            thread: TrackedEntitySnapshot(entity: entity)
-        )
-
-        try await post(payload, to: serverURLString, path: "/api/sync/thread")
-    }
-
-    private func uploadRecord(
-        _ record: JournalRecord,
-        entity: TrackedEntity,
-        group: ThreadGroup?,
-        to serverURLString: String
-    ) async throws -> Int {
-        let media = try mediaBlobs(for: [record])
-        let payload = SyncRecordPayload(
-            schemaVersion: 1,
-            appVersion: appVersion,
-            uploadedAt: Date(),
-            group: group.map(ThreadGroupSnapshot.init(group:)),
-            thread: TrackedEntitySnapshot(entity: entity),
-            record: JournalRecordSnapshot(record: record),
-            media: media
-        )
-
-        try await post(payload, to: serverURLString, path: "/api/sync/record")
-        return media.count
-    }
-
     private func post<T: Encodable>(_ payload: T, to serverURLString: String, path: String) async throws {
         let url = try endpoint(serverURLString, path: path)
 
@@ -286,9 +277,9 @@ final class SyncService {
         try validate(response: response, data: data)
     }
 
-    private func mediaBlobs(for records: [JournalRecord]) throws -> [SyncMediaBlob] {
+    private func mediaBlobs(for entry: JournalEntry) throws -> [SyncMediaBlob] {
         var seenMediaIDs = Set<UUID>()
-        return try records.flatMap(\.mediaItems).compactMap { item -> SyncMediaBlob? in
+        return try entry.mediaItems.compactMap { item -> SyncMediaBlob? in
             guard seenMediaIDs.insert(item.id).inserted else { return nil }
 
             let url = MediaStorage.url(for: item)
@@ -308,50 +299,40 @@ final class SyncService {
         }
     }
 
-    private func restore(
+    private func restoreEntries(
         payload: SyncBackupPayload,
         modelContext: ModelContext,
-        entities: [TrackedEntity],
-        records: [JournalRecord],
-        groups: [ThreadGroup]
+        tags: [JournalTag],
+        entries: [JournalEntry]
     ) throws -> SyncRestoreSummary {
-        let existingGroups = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
-        let existingEntities = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
-        let existingRecords = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let existingTags = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
+        let existingEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         let restoredMedia = try restoreMedia(payload.media)
 
-        for snapshot in payload.archive.threadGroups {
-            if let group = existingGroups[snapshot.id] {
-                apply(snapshot, to: group)
+        for snapshot in payload.archive.tags {
+            if let tag = existingTags[snapshot.id] {
+                apply(snapshot, to: tag)
             } else {
-                modelContext.insert(ThreadGroup(snapshot: snapshot))
+                modelContext.insert(JournalTag(snapshot: snapshot))
             }
         }
 
-        for snapshot in payload.archive.entities {
-            if let entity = existingEntities[snapshot.id] {
-                apply(snapshot, to: entity)
-            } else {
-                modelContext.insert(TrackedEntity(snapshot: snapshot))
-            }
-        }
-
-        for snapshot in payload.archive.records {
+        for snapshot in payload.archive.entries {
             let mediaItems = snapshot.mediaItems.compactMap { item in
                 restoredMedia[item.id]
             }
 
-            if let record = existingRecords[snapshot.id] {
-                apply(snapshot, mediaItems: mediaItems, to: record)
+            if let entry = existingEntries[snapshot.id] {
+                apply(snapshot, mediaItems: mediaItems, to: entry)
             } else {
-                modelContext.insert(JournalRecord(snapshot: snapshot, mediaItems: mediaItems))
+                modelContext.insert(JournalEntry(snapshot: snapshot, mediaItems: mediaItems))
             }
         }
 
         try modelContext.save()
         return SyncRestoreSummary(
-            entityCount: payload.archive.entities.count,
-            recordCount: payload.archive.records.count,
+            entityCount: payload.archive.tags.count,
+            recordCount: payload.archive.entries.count,
             mediaCount: restoredMedia.count
         )
     }
@@ -380,47 +361,31 @@ final class SyncService {
         return restored
     }
 
-    private func apply(_ snapshot: TrackedEntitySnapshot, to entity: TrackedEntity) {
-        entity.createdAt = snapshot.createdAt
-        entity.updatedAt = snapshot.updatedAt
-        entity.title = snapshot.title
-        entity.anchorDate = snapshot.anchorDate
-        entity.saros = snapshot.saros
-        entity.harmonicDepth = snapshot.harmonicDepth
-        entity.emoji = snapshot.emoji
-        entity.photoLocalPath = snapshot.photoLocalPath
-        entity.notes = snapshot.notes
-        entity.groupID = snapshot.groupID
-        entity.nearestEclipseID = snapshot.nearestEclipseID
-        entity.birthOrAnchorEclipseDate = snapshot.birthOrAnchorEclipseDate
-        entity.notificationsEnabled = snapshot.notificationsEnabled
-        entity.notifyBeforeFlipMinutes = snapshot.notifyBeforeFlipMinutes
+    private func apply(_ snapshot: JournalTagSnapshot, to tag: JournalTag) {
+        tag.createdAt = snapshot.createdAt
+        tag.updatedAt = snapshot.updatedAt
+        tag.name = snapshot.name
+        tag.emoji = snapshot.emoji
+        tag.anchorDate = snapshot.anchorDate
+        tag.saros = snapshot.saros
+        tag.notes = snapshot.notes
+        tag.sourceEntityID = snapshot.sourceEntityID
+        tag.isPrime = snapshot.isPrime
+        tag.colorHex = snapshot.colorHex
     }
 
-    private func apply(_ snapshot: ThreadGroupSnapshot, to group: ThreadGroup) {
-        group.createdAt = snapshot.createdAt
-        group.updatedAt = snapshot.updatedAt
-        group.name = snapshot.name
-        group.emoji = snapshot.emoji
-        group.rarityRawValue = snapshot.rarityRawValue
-    }
-
-    private func apply(_ snapshot: JournalRecordSnapshot, mediaItems: [JournalMediaItem], to record: JournalRecord) {
-        record.entityID = snapshot.entityID
-        record.createdAt = snapshot.createdAt
-        record.eventDate = snapshot.eventDate
-        record.text = snapshot.text
-        record.emoji = snapshot.emoji
-        record.mediaItems = mediaItems
-        record.saros = snapshot.saros
-        record.harmonicDepth = snapshot.harmonicDepth
-        record.octalAddress = snapshot.octalAddress
-        record.binIndex = snapshot.binIndex
-        record.phase = snapshot.phase
-        record.triggerType = snapshot.triggerType
-        record.resonanceGroupID = snapshot.resonanceGroupID
-        record.latitude = snapshot.latitude
-        record.longitude = snapshot.longitude
+    private func apply(_ snapshot: JournalEntrySnapshot, mediaItems: [JournalMediaItem], to entry: JournalEntry) {
+        entry.createdAt = snapshot.createdAt
+        entry.eventDate = snapshot.eventDate
+        entry.unixTimestamp = snapshot.unixTimestamp
+        entry.text = snapshot.text
+        entry.emoji = snapshot.emoji
+        entry.mediaItems = mediaItems
+        entry.context = snapshot.context
+        entry.latitude = snapshot.latitude
+        entry.longitude = snapshot.longitude
+        entry.sourceRecordID = snapshot.sourceRecordID
+        entry.updatedAt = snapshot.updatedAt
     }
 
     private func endpoint(_ serverURLString: String, path: String) throws -> URL {
@@ -532,61 +497,39 @@ final class SyncService {
     }()
 }
 
-private extension TrackedEntity {
-    convenience init(snapshot: TrackedEntitySnapshot) {
-        self.init(
-            id: snapshot.id,
-            createdAt: snapshot.createdAt,
-            updatedAt: snapshot.updatedAt,
-            title: snapshot.title,
-            anchorDate: snapshot.anchorDate,
-            saros: snapshot.saros,
-            harmonicDepth: snapshot.harmonicDepth,
-            emoji: snapshot.emoji,
-            photoLocalPath: snapshot.photoLocalPath,
-            notes: snapshot.notes,
-            groupID: snapshot.groupID,
-            nearestEclipseID: snapshot.nearestEclipseID,
-            birthOrAnchorEclipseDate: snapshot.birthOrAnchorEclipseDate,
-            notificationsEnabled: snapshot.notificationsEnabled,
-            notifyBeforeFlipMinutes: snapshot.notifyBeforeFlipMinutes
-        )
-    }
-}
-
-private extension ThreadGroup {
-    convenience init(snapshot: ThreadGroupSnapshot) {
+private extension JournalTag {
+    convenience init(snapshot: JournalTagSnapshot) {
         self.init(
             id: snapshot.id,
             createdAt: snapshot.createdAt,
             updatedAt: snapshot.updatedAt,
             name: snapshot.name,
             emoji: snapshot.emoji,
-            rarity: FlipRarity(rawValue: snapshot.rarityRawValue) ?? .common
+            anchorDate: snapshot.anchorDate,
+            saros: snapshot.saros,
+            notes: snapshot.notes,
+            sourceEntityID: snapshot.sourceEntityID,
+            isPrime: snapshot.isPrime,
+            colorHex: snapshot.colorHex
         )
-        rarityRawValue = snapshot.rarityRawValue
     }
 }
 
-private extension JournalRecord {
-    convenience init(snapshot: JournalRecordSnapshot, mediaItems: [JournalMediaItem]) {
+private extension JournalEntry {
+    convenience init(snapshot: JournalEntrySnapshot, mediaItems: [JournalMediaItem]) {
         self.init(
             id: snapshot.id,
-            entityID: snapshot.entityID,
             createdAt: snapshot.createdAt,
+            updatedAt: snapshot.updatedAt,
             eventDate: snapshot.eventDate,
             text: snapshot.text,
             emoji: snapshot.emoji,
             mediaItems: mediaItems,
-            saros: snapshot.saros,
-            harmonicDepth: snapshot.harmonicDepth,
-            octalAddress: snapshot.octalAddress,
-            binIndex: snapshot.binIndex,
-            phase: snapshot.phase,
-            triggerType: snapshot.triggerType,
-            resonanceGroupID: snapshot.resonanceGroupID,
+            context: snapshot.context,
             latitude: snapshot.latitude,
-            longitude: snapshot.longitude
+            longitude: snapshot.longitude,
+            sourceRecordID: snapshot.sourceRecordID
         )
+        unixTimestamp = snapshot.unixTimestamp
     }
 }

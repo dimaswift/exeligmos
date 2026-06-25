@@ -7,6 +7,8 @@ struct SettingsView: View {
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \ThreadGroup.createdAt, order: .forward) private var threadGroups: [ThreadGroup]
     @Query(sort: \JournalRecord.createdAt, order: .reverse) private var records: [JournalRecord]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(sort: \CustomFlipEvent.date, order: .forward) private var customFlips: [CustomFlipEvent]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
@@ -55,14 +57,6 @@ struct SettingsView: View {
                     ThreadGroupSettingsView()
                 } label: {
                     Label("Groups", systemImage: "circle.grid.2x2")
-                }
-            }
-
-            Section("Journal") {
-                NavigationLink {
-                    JournalMigrationSettingsView()
-                } label: {
-                    Label("Migrate to entry calendar", systemImage: "arrow.triangle.branch")
                 }
             }
 
@@ -133,7 +127,7 @@ struct SettingsView: View {
                     if isSyncing {
                         ProgressView()
                     } else {
-                        Label("Upload all records", systemImage: "arrow.up.doc")
+                        Label("Sync phone state", systemImage: "arrow.up.doc")
                     }
                 }
                 .disabled(isSyncing)
@@ -141,12 +135,12 @@ struct SettingsView: View {
                 Button {
                     Task { await pushSyncDelta() }
                 } label: {
-                    Label("Sync new records now", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Sync phone state now", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(isSyncing)
 
                 Toggle(isOn: $autoSyncEnabled) {
-                    Label("Auto sync new records", systemImage: autoSyncEnabled ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
+                    Label("Auto sync phone state", systemImage: autoSyncEnabled ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
                 }
 
                 Button {
@@ -262,7 +256,7 @@ struct SettingsView: View {
         do {
             let status = try await services.syncService.checkStatus(from: syncServerURL)
             if let exportTimestamp = status.exportTimestamp, status.hasBackup {
-                syncMessage = "Server OK. Folder state \(exportTimestamp.formatted(date: .abbreviated, time: .shortened)): \(status.entityCount) threads, \(status.recordCount) records, \(status.mediaCount) media files."
+                syncMessage = "Server OK. Folder state \(exportTimestamp.formatted(date: .abbreviated, time: .shortened)): \(status.entityCount) tags, \(status.recordCount) records, \(status.mediaCount) media files."
             } else {
                 syncMessage = "Server OK. No records have been uploaded yet."
             }
@@ -277,13 +271,12 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            let summary = try await services.syncService.push(
+            let summary = try await services.syncService.pushEntries(
                 to: syncServerURL,
-                entities: entities,
-                records: records,
-                groups: threadGroups
+                tags: tags,
+                entries: entries
             )
-            syncMessage = "Uploaded \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files."
+            syncMessage = "Synced \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files."
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -295,17 +288,12 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            let summary = try await services.syncService.pushMissingRecords(
+            let summary = try await services.syncService.pushMissingEntries(
                 to: syncServerURL,
-                entities: entities,
-                records: records,
-                groups: threadGroups
+                tags: tags,
+                entries: entries
             )
-            if summary.recordCount == 0 {
-                syncMessage = "No new records to upload."
-            } else {
-                syncMessage = "Uploaded \(summary.recordCount) new records with \(summary.mediaCount) media files."
-            }
+            syncMessage = "Synced \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files."
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -317,14 +305,13 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            let summary = try await services.syncService.restoreLatest(
+            let summary = try await services.syncService.restoreLatestEntries(
                 from: syncServerURL,
                 modelContext: modelContext,
-                entities: entities,
-                records: records,
-                groups: threadGroups
+                tags: tags,
+                entries: entries
             )
-            syncMessage = "Restored \(summary.entityCount) threads, \(summary.recordCount) records, \(summary.mediaCount) media files from server folders."
+            syncMessage = "Restored \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files from server folders."
         } catch {
             errorMessage = error.localizedDescription
         }

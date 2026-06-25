@@ -81,6 +81,38 @@ final class SarosEventContextService {
         throw SarosEventContextError.noSpikes(date)
     }
 
+    func closestSarosPhase(
+        for context: JournalEventContext,
+        harmonicDepth rawHarmonicDepth: Int
+    ) throws -> JournalSarosPhaseReference {
+        guard let closestSpike = context.closestSpike else {
+            throw SarosEventContextError.noSpikes(context.eventDate)
+        }
+
+        let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        guard let interval = try eclipseService.previousAndNextEclipse(
+            saros: closestSpike.saros,
+            around: context.eventDate
+        ) else {
+            throw EclipseServiceError.sarosNotFound(closestSpike.saros)
+        }
+
+        let reading = try SarosClockCalculator.reading(
+            saros: closestSpike.saros,
+            previous: interval.previous,
+            next: interval.next,
+            now: context.eventDate,
+            harmonicDepth: harmonicDepth
+        )
+
+        return JournalSarosPhaseReference(
+            saros: closestSpike.saros,
+            octalAddress: reading.octalAddress,
+            harmonicDepth: reading.harmonicDepth,
+            rarityRawValue: reading.currentRarity.rawValue
+        )
+    }
+
     func waveformSpikes(
         around date: Date,
         harmonicDepth rawHarmonicDepth: Int = JournalSettings.supportedHarmonicDepth.upperBound,
@@ -281,6 +313,17 @@ struct JournalWaveDynamicsSnapshot {
     let slope: Double
     let momentum: Double
     let direction: JournalWaveDirection
+}
+
+struct JournalSarosPhaseReference: Equatable, Hashable {
+    let saros: Int
+    let octalAddress: String
+    let harmonicDepth: Int
+    let rarityRawValue: String
+
+    var rarity: FlipRarity {
+        FlipRarity(rawValue: rarityRawValue) ?? .common
+    }
 }
 
 struct JournalSplineWaveformSample: Equatable {

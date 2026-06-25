@@ -55,7 +55,6 @@
 		97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */; };
 		A1B2C3D4E5F607182930A101 /* JournalEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A104 /* JournalEntry.swift */; };
 		A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */; };
-		A1B2C3D4E5F607182930A103 /* JournalMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A106 /* JournalMigrationService.swift */; };
 		A1B2C3D4E5F607182930A107 /* JournalEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
 		C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */; };
@@ -154,7 +153,6 @@
 		9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseModels.swift; path = SarosHarmonicJournal/Domain/EclipseModels.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A104 /* JournalEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntry.swift; path = SarosHarmonicJournal/Data/JournalEntry.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosEventContextService.swift; path = SarosHarmonicJournal/Services/SarosEventContextService.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F607182930A106 /* JournalMigrationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalMigrationService.swift; path = SarosHarmonicJournal/Services/JournalMigrationService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryViews.swift; path = SarosHarmonicJournal/Views/JournalEntryViews.swift; sourceTree = "<group>"; };
 		ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosHarmonicJournalApp.swift; path = SarosHarmonicJournal/App/SarosHarmonicJournalApp.swift; sourceTree = "<group>"; };
 		BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = eclipse_times.db; path = SarosHarmonicJournal/Resources/SolarData/eclipse_times.db; sourceTree = "<group>"; };
@@ -257,7 +255,6 @@
 				3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */,
 				CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */,
 				C391FB837FAA81EF9A1D423F /* ExportService.swift */,
-				A1B2C3D4E5F607182930A106 /* JournalMigrationService.swift */,
 				C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */,
 				0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */,
 				0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */,
@@ -493,7 +490,6 @@
 				59227DED7F89BB1BEB194661 /* CPlusPlusEclipseService.swift in Sources */,
 				C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */,
 				72B907EA1B9D614611951BE9 /* ExportService.swift in Sources */,
-				A1B2C3D4E5F607182930A103 /* JournalMigrationService.swift in Sources */,
 				5A6D58421E75F58CB38EC48D /* LocalExportServer.swift in Sources */,
 				D931AE0271736D1F1208198B /* MediaStorage.swift in Sources */,
 				0C3B8821A71E4A6CB0F60123 /* MirrorReflectionProcessor.swift in Sources */,
