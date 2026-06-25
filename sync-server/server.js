@@ -114,9 +114,32 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/backups/latest') {
-      const payload = await readLatestPayload({ includeMediaData: true });
+      const payload = await readLatestPayload({ includeMediaData: false });
       if (!payload) {
         sendJSON(res, 404, { error: 'No synced records have been uploaded yet.' });
+        return;
+      }
+      sendJSON(res, 410, {
+        error: 'Bulk restore is no longer supported. Use /api/sync/state and /api/sync/entry/:id.'
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/sync/state') {
+      const payload = await readLatestPayload({ includeMediaData: false });
+      if (!payload) {
+        sendJSON(res, 404, { error: 'No synced records have been uploaded yet.' });
+        return;
+      }
+      sendJSON(res, 200, syncStateDownloadView(payload));
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/api/sync/entry/')) {
+      const entryID = decodeURIComponent(url.pathname.slice('/api/sync/entry/'.length));
+      const payload = await readEntryDownloadPayload(entryID);
+      if (!payload) {
+        sendJSON(res, 404, { error: `Entry ${entryID} was not found.` });
         return;
       }
       sendJSON(res, 200, payload);
@@ -274,6 +297,29 @@ async function writeEntryUpload(payload) {
     entryID: payload.entry.id,
     entryFolder: path.basename(entryDir),
     mediaCount: mediaMetadata.length
+  };
+}
+
+async function readEntryDownloadPayload(entryID) {
+  const normalizedID = String(entryID ?? '').trim();
+  if (!normalizedID) return null;
+
+  const entryDir = await findChildDirectoryByJSON(
+    path.join(DATA_DIR, 'entries'),
+    'entry.json',
+    (value) => String(value?.id) === normalizedID
+  );
+  if (!entryDir) return null;
+
+  const entry = await readJSONIfExists(path.join(entryDir, 'entry.json'));
+  if (!entry?.id) return null;
+
+  return {
+    schemaVersion: 1,
+    appVersion: 'folder-sync',
+    uploadedAt: new Date().toISOString(),
+    entry,
+    media: await readRecordMedia(entryDir, entry, true)
   };
 }
 
@@ -799,6 +845,18 @@ function manifestView(payload) {
     tagIDs: tags.map((tag) => tag.id),
     entryIDs: entries.map((entry) => entry.id),
     mediaIDs: (payload?.media ?? []).map((blob) => blob.id)
+  };
+}
+
+function syncStateDownloadView(payload) {
+  const tags = payload?.archive?.tags ?? [];
+  const entries = payload?.archive?.entries ?? [];
+  return {
+    schemaVersion: 1,
+    appVersion: payload?.appVersion ?? 'folder-sync',
+    exportTimestamp: payload?.exportTimestamp ?? null,
+    tags,
+    entryIDs: entries.map((entry) => entry.id).filter(Boolean)
   };
 }
 

@@ -35,6 +35,14 @@ struct SyncEntryUploadPayload: Codable {
     let media: [SyncMediaBlob]
 }
 
+struct SyncRestoreStatePayload: Codable {
+    let schemaVersion: Int
+    let appVersion: String
+    let exportTimestamp: Date?
+    let tags: [JournalTagSnapshot]
+    let entryIDs: [UUID]
+}
+
 struct SyncPushSummary: Hashable {
     let entityCount: Int
     let recordCount: Int
@@ -175,8 +183,14 @@ final class SyncService {
         tags: [JournalTag],
         entries: [JournalEntry]
     ) async throws -> SyncRestoreSummary {
-        let payload = try await fetchLatest(from: serverURLString)
-        return try restoreEntries(payload: payload, modelContext: modelContext, tags: tags, entries: entries)
+        let state = try await fetchRestoreState(from: serverURLString)
+        return try await restoreEntries(
+            state: state,
+            from: serverURLString,
+            modelContext: modelContext,
+            tags: tags,
+            entries: entries
+        )
     }
 
     func fetchLatest(from serverURLString: String) async throws -> SyncBackupPayload {
@@ -198,6 +212,20 @@ final class SyncService {
         let (data, response) = try await URLSession.shared.data(from: url)
         try validate(response: response, data: data)
         return try decode(SyncServerManifest.self, from: data, context: "server manifest")
+    }
+
+    func fetchRestoreState(from serverURLString: String) async throws -> SyncRestoreStatePayload {
+        let url = try endpoint(serverURLString, path: "/api/sync/state")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response: response, data: data)
+        return try decode(SyncRestoreStatePayload.self, from: data, context: "restore state")
+    }
+
+    func fetchEntryUploadPayload(id: UUID, from serverURLString: String) async throws -> SyncEntryUploadPayload {
+        let url = try endpoint(serverURLString, path: "/api/sync/entry/\(id.uuidString)")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response: response, data: data)
+        return try decode(SyncEntryUploadPayload.self, from: data, context: "entry \(id.uuidString)")
     }
 
     private func pushMirrorState(
@@ -299,25 +327,33 @@ final class SyncService {
         }
     }
 
+    @MainActor
     private func restoreEntries(
-        payload: SyncBackupPayload,
+        state: SyncRestoreStatePayload,
+        from serverURLString: String,
         modelContext: ModelContext,
         tags: [JournalTag],
         entries: [JournalEntry]
-    ) throws -> SyncRestoreSummary {
-        let existingTags = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
-        let existingEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-        let restoredMedia = try restoreMedia(payload.media)
+    ) async throws -> SyncRestoreSummary {
+        var existingTags = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
+        var existingEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        var restoredMediaCount = 0
+        var restoredEntryCount = 0
 
-        for snapshot in payload.archive.tags {
+        for snapshot in state.tags {
             if let tag = existingTags[snapshot.id] {
                 apply(snapshot, to: tag)
             } else {
-                modelContext.insert(JournalTag(snapshot: snapshot))
+                let tag = JournalTag(snapshot: snapshot)
+                modelContext.insert(tag)
+                existingTags[snapshot.id] = tag
             }
         }
 
-        for snapshot in payload.archive.entries {
+        for (index, entryID) in state.entryIDs.enumerated() {
+            let payload = try await fetchEntryUploadPayload(id: entryID, from: serverURLString)
+            let restoredMedia = try restoreMedia(payload.media)
+            let snapshot = payload.entry
             let mediaItems = snapshot.mediaItems.compactMap { item in
                 restoredMedia[item.id]
             }
@@ -325,15 +361,24 @@ final class SyncService {
             if let entry = existingEntries[snapshot.id] {
                 apply(snapshot, mediaItems: mediaItems, to: entry)
             } else {
-                modelContext.insert(JournalEntry(snapshot: snapshot, mediaItems: mediaItems))
+                let entry = JournalEntry(snapshot: snapshot, mediaItems: mediaItems)
+                modelContext.insert(entry)
+                existingEntries[snapshot.id] = entry
+            }
+
+            restoredEntryCount += 1
+            restoredMediaCount += restoredMedia.count
+
+            if index % 10 == 9 {
+                try modelContext.save()
             }
         }
 
         try modelContext.save()
         return SyncRestoreSummary(
-            entityCount: payload.archive.tags.count,
-            recordCount: payload.archive.entries.count,
-            mediaCount: restoredMedia.count
+            entityCount: state.tags.count,
+            recordCount: restoredEntryCount,
+            mediaCount: restoredMediaCount
         )
     }
 
