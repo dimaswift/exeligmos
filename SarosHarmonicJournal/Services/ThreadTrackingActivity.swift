@@ -9,6 +9,14 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let threadTitle: String
     let saros: Int
     let harmonicDepth: Int
+    let eventName: String?
+    let energyPercent: Double?
+    let momentum: Double?
+    let waveDirectionRawValue: String?
+    let waveformSamples: [Double]?
+    let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
+    let waveformStartDate: Date?
+    let waveformEndDate: Date?
     let glyph: String
     let rarityRawValue: String
     let rarityTitle: String
@@ -28,16 +36,29 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let nextFlipDate: Date?
 
     var deepLinkURL: URL? {
-        URL(string: "exeligmos://thread/\(threadID)")
+        if threadID == ThreadTrackingSharedStore.journalTrackingID {
+            return URL(string: "exeligmos://saros")
+        }
+        return URL(string: "exeligmos://thread/\(threadID)")
     }
 
     var recordURL: URL? {
-        URL(string: "exeligmos://record/\(threadID)")
+        if threadID == ThreadTrackingSharedStore.journalTrackingID {
+            return URL(string: "exeligmos://record")
+        }
+        return URL(string: "exeligmos://record/\(threadID)")
     }
+}
+
+struct TrackingWaveformSpikeMarker: Codable, Hashable {
+    let position: Double
+    let energy: Double
+    let colorHex: String
 }
 
 enum ThreadTrackingSharedStore {
     static let appGroupIdentifier = "group.com.exeligmos.sarosjournal"
+    static let journalTrackingID = "journal-live"
     static let snapshotKey = "trackedThread.snapshot"
     static let widgetKind = "TrackedThreadWidget"
     static let flipRolloverDelay: TimeInterval = 8
@@ -66,6 +87,15 @@ enum ThreadTrackingSharedStore {
 #if canImport(ActivityKit)
 struct ThreadTrackingAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
+        let saros: Int?
+        let eventName: String?
+        let energyPercent: Double?
+        let momentum: Double?
+        let waveDirectionRawValue: String?
+        let waveformSamples: [Double]?
+        let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
+        let waveformStartDate: Date?
+        let waveformEndDate: Date?
         let glyph: String
         let rarityRawValue: String
         let rarityTitle: String

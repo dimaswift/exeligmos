@@ -95,6 +95,7 @@ struct ThreadGroupSnapshot: Codable, Identifiable {
 
 struct JournalTagSnapshot: Codable, Identifiable {
     let id: UUID
+    let octalID: String?
     let createdAt: Date
     let updatedAt: Date
     let name: String
@@ -132,13 +133,21 @@ struct JournalEntrySnapshot: Codable, Identifiable {
     let updatedAt: Date
     let eventDate: Date
     let unixTimestamp: Int64
+    let version: Int?
     let text: String?
     let emoji: String?
     let mediaItems: [JournalMediaItem]
+    let tagIDs: [String]?
     let context: JournalEventContext
     let latitude: Double?
     let longitude: Double?
     let sourceRecordID: UUID?
+    let sourceDeviceID: String?
+    let sourceDeviceEmoji: String?
+    let sourceDeviceName: String?
+    let weatherCode: Int?
+    let weatherEmoji: String?
+    let temperatureC: Int?
 }
 
 final class ExportService {
@@ -471,6 +480,7 @@ extension JournalTagSnapshot {
     init(tag: JournalTag) {
         self.init(
             id: tag.id,
+            octalID: tag.compactID,
             createdAt: tag.createdAt,
             updatedAt: tag.updatedAt,
             name: tag.name,
@@ -534,13 +544,21 @@ extension JournalEntrySnapshot {
             updatedAt: entry.updatedAt,
             eventDate: entry.eventDate,
             unixTimestamp: entry.unixTimestamp,
+            version: entry.version,
             text: entry.text,
             emoji: entry.emoji,
             mediaItems: portableMediaItems,
+            tagIDs: entry.tagIDs,
             context: entry.context,
             latitude: entry.latitude,
             longitude: entry.longitude,
-            sourceRecordID: entry.sourceRecordID
+            sourceRecordID: entry.sourceRecordID,
+            sourceDeviceID: entry.sourceDeviceID,
+            sourceDeviceEmoji: entry.sourceDeviceEmoji,
+            sourceDeviceName: entry.sourceDeviceName,
+            weatherCode: entry.weatherCode,
+            weatherEmoji: entry.weatherEmoji,
+            temperatureC: entry.temperatureC
         )
     }
 }

@@ -16,6 +16,9 @@
 		0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */; };
 		0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5F7A9148B640C49830214B /* ThreadGroup.swift */; };
 		0F1A2B3C4D5E6F708192A001 /* RecordDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */; };
+		12345ABCDE12345ABCDE1234 /* JournalDeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */; };
+		12345ABCDE12345ABCDE1236 /* JournalEntryDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */; };
+		12345ABCDE12345ABCDE1238 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1239 /* WeatherService.swift */; };
 		1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */; };
 		1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */; };
 		1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */; };
@@ -109,6 +112,9 @@
 			0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomFlipEvent.swift; path = SarosHarmonicJournal/Data/CustomFlipEvent.swift; sourceTree = "<group>"; };
 			0E5F7A9148B640C49830214B /* ThreadGroup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadGroup.swift; path = SarosHarmonicJournal/Data/ThreadGroup.swift; sourceTree = "<group>"; };
 			0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecordDraft.swift; path = SarosHarmonicJournal/Data/RecordDraft.swift; sourceTree = "<group>"; };
+			12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalDeviceIdentity.swift; path = SarosHarmonicJournal/Data/JournalDeviceIdentity.swift; sourceTree = "<group>"; };
+			12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryDraft.swift; path = SarosHarmonicJournal/Data/JournalEntryDraft.swift; sourceTree = "<group>"; };
+			12345ABCDE12345ABCDE1239 /* WeatherService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WeatherService.swift; path = SarosHarmonicJournal/Services/WeatherService.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyResult.swift; path = SarosHarmonicJournal/Services/AnimacyResult.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScorer.swift; path = SarosHarmonicJournal/Services/AnimacyScorer.swift; sourceTree = "<group>"; };
 			1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScoreView.swift; path = SarosHarmonicJournal/Views/AnimacyScoreView.swift; sourceTree = "<group>"; };
@@ -236,6 +242,8 @@
 					710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
 				0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */,
 				0E5F7A9148B640C49830214B /* ThreadGroup.swift */,
+				12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */,
+				12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */,
 				A1B2C3D4E5F607182930A104 /* JournalEntry.swift */,
 				5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */,
 				0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */,
@@ -248,6 +256,7 @@
 				1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */,
 				1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */,
 				B20000000000000000000001 /* ImageSonificationEngine.swift */,
+				12345ABCDE12345ABCDE1239 /* WeatherService.swift */,
 				DAD000000000000000000002 /* MoonPhaseService.swift */,
 				A20000000000000000000002 /* ThreadLiveActivityService.swift */,
 				A20000000000000000000001 /* ThreadTrackingActivity.swift */,
@@ -471,6 +480,8 @@
 					CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
 				0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */,
 				0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */,
+				12345ABCDE12345ABCDE1234 /* JournalDeviceIdentity.swift in Sources */,
+				12345ABCDE12345ABCDE1236 /* JournalEntryDraft.swift in Sources */,
 				A1B2C3D4E5F607182930A101 /* JournalEntry.swift in Sources */,
 				97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */,
 				0F1A2B3C4D5E6F708192A001 /* RecordDraft.swift in Sources */,
@@ -483,6 +494,7 @@
 				1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */,
 				1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */,
 				B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */,
+				12345ABCDE12345ABCDE1238 /* WeatherService.swift in Sources */,
 				DAD000000000000000000001 /* MoonPhaseService.swift in Sources */,
 				A10000000000000000000002 /* ThreadLiveActivityService.swift in Sources */,
 				A10000000000000000000001 /* ThreadTrackingActivity.swift in Sources */,

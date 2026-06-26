@@ -46,9 +46,21 @@ final class SarosEventContextService {
         }
 
         let metrics = Self.waveMetrics(at: date, spikes: selectedSpikes)
+        let closestSpike = selectedSpikes.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+        let closestPhase = closestSpike.flatMap {
+            try? closestSarosPhase(
+                at: date,
+                closestSpike: $0,
+                harmonicDepth: harmonicDepth
+            )
+        }
+
         return JournalEventContext(
             unixTimestamp: Int64(date.timeIntervalSince1970.rounded(.towardZero)),
             spikes: selectedSpikes,
+            closestSarosPhase: closestPhase,
             energy: metrics.energy,
             energyPercent: metrics.energyPercent,
             slope: metrics.slope,
@@ -90,9 +102,21 @@ final class SarosEventContextService {
         }
 
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        return try closestSarosPhase(
+            at: context.eventDate,
+            closestSpike: closestSpike,
+            harmonicDepth: harmonicDepth
+        )
+    }
+
+    private func closestSarosPhase(
+        at date: Date,
+        closestSpike: JournalSpikeReference,
+        harmonicDepth: Int
+    ) throws -> JournalSarosPhaseReference {
         guard let interval = try eclipseService.previousAndNextEclipse(
             saros: closestSpike.saros,
-            around: context.eventDate
+            around: date
         ) else {
             throw EclipseServiceError.sarosNotFound(closestSpike.saros)
         }
@@ -101,7 +125,7 @@ final class SarosEventContextService {
             saros: closestSpike.saros,
             previous: interval.previous,
             next: interval.next,
-            now: context.eventDate,
+            now: date,
             harmonicDepth: harmonicDepth
         )
 
@@ -315,7 +339,7 @@ struct JournalWaveDynamicsSnapshot {
     let direction: JournalWaveDirection
 }
 
-struct JournalSarosPhaseReference: Equatable, Hashable {
+struct JournalSarosPhaseReference: Codable, Equatable, Hashable {
     let saros: Int
     let octalAddress: String
     let harmonicDepth: Int

@@ -62,6 +62,7 @@ struct JournalSpikeReference: Codable, Hashable, Identifiable {
 struct JournalEventContext: Codable, Hashable {
     let unixTimestamp: Int64
     let spikes: [JournalSpikeReference]
+    let closestSarosPhase: JournalSarosPhaseReference?
     let energy: Double
     let energyPercent: Double
     let slope: Double
@@ -129,41 +130,67 @@ final class JournalEntry {
     var updatedAt: Date
     var eventDate: Date
     var unixTimestamp: Int64
+    var version: Int = 1
 
     var text: String?
     var emoji: String?
     var mediaItemsJSON: Data
     var contextJSON: Data
+    var tagIDsRawValue: String?
+    var tagIDsJSON: Data?
 
     var latitude: Double?
     var longitude: Double?
     var sourceRecordID: UUID?
+    var sourceDeviceID: String?
+    var sourceDeviceEmoji: String?
+    var sourceDeviceName: String?
+    var weatherCode: Int?
+    var weatherEmoji: String?
+    var temperatureC: Int?
 
     init(
         id: UUID = UUID(),
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         eventDate: Date,
+        version: Int = 1,
         text: String? = nil,
         emoji: String? = nil,
         mediaItems: [JournalMediaItem] = [],
         context: JournalEventContext,
+        tagIDs: [String] = [],
         latitude: Double? = nil,
         longitude: Double? = nil,
-        sourceRecordID: UUID? = nil
+        sourceRecordID: UUID? = nil,
+        sourceDeviceID: String? = nil,
+        sourceDeviceEmoji: String? = nil,
+        sourceDeviceName: String? = nil,
+        weatherCode: Int? = nil,
+        weatherEmoji: String? = nil,
+        temperatureC: Int? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.eventDate = eventDate
         self.unixTimestamp = Int64(eventDate.timeIntervalSince1970.rounded(.towardZero))
+        self.version = max(version, 1)
         self.text = text
         self.emoji = emoji
         self.mediaItemsJSON = (try? JSONEncoder().encode(mediaItems)) ?? Data()
         self.contextJSON = (try? JSONEncoder().encode(context)) ?? Data()
+        self.tagIDsRawValue = Self.encodeTagIDs(tagIDs)
+        self.tagIDsJSON = nil
         self.latitude = latitude
         self.longitude = longitude
         self.sourceRecordID = sourceRecordID
+        self.sourceDeviceID = sourceDeviceID
+        self.sourceDeviceEmoji = sourceDeviceEmoji
+        self.sourceDeviceName = sourceDeviceName
+        self.weatherCode = weatherCode
+        self.weatherEmoji = weatherEmoji
+        self.temperatureC = temperatureC
     }
 
     var mediaItems: [JournalMediaItem] {
@@ -186,6 +213,35 @@ final class JournalEntry {
             updatedAt = Date()
         }
     }
+
+    var tagIDs: [String] {
+        get {
+            if let tagIDsRawValue {
+                return Self.decodeTagIDs(tagIDsRawValue)
+            }
+            guard let tagIDsJSON,
+                  let decoded = try? JSONDecoder().decode([String].self, from: tagIDsJSON)
+            else { return [] }
+            return Self.normalizedTagIDs(decoded)
+        }
+        set {
+            tagIDsRawValue = Self.encodeTagIDs(newValue)
+            updatedAt = Date()
+        }
+    }
+
+    private static func encodeTagIDs(_ tagIDs: [String]) -> String {
+        normalizedTagIDs(tagIDs).joined(separator: ",")
+    }
+
+    private static func decodeTagIDs(_ rawValue: String) -> [String] {
+        normalizedTagIDs(rawValue.split(separator: ",").map(String.init))
+    }
+
+    private static func normalizedTagIDs(_ tagIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return tagIDs.compactMap { JournalTag.normalizedOctalID($0) }.filter { seen.insert($0).inserted }
+    }
 }
 
 extension JournalEventContext {
@@ -193,6 +249,7 @@ extension JournalEventContext {
         JournalEventContext(
             unixTimestamp: Int64(date.timeIntervalSince1970.rounded(.towardZero)),
             spikes: [],
+            closestSarosPhase: nil,
             energy: 0,
             energyPercent: 0,
             slope: 0,
@@ -217,6 +274,7 @@ final class JournalTag {
     var sourceEntityID: UUID?
     var isPrimeRawValue: Bool?
     var colorHex: String?
+    var octalID: String?
 
     init(
         id: UUID = UUID(),
@@ -229,7 +287,8 @@ final class JournalTag {
         notes: String? = nil,
         sourceEntityID: UUID? = nil,
         isPrime: Bool = false,
-        colorHex: String = "#FFFFFF"
+        colorHex: String = "#FFFFFF",
+        octalID: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -242,6 +301,7 @@ final class JournalTag {
         self.sourceEntityID = sourceEntityID
         self.isPrimeRawValue = isPrime
         self.colorHex = colorHex
+        self.octalID = Self.normalizedOctalID(octalID)
     }
 
     var displayName: String {
@@ -261,8 +321,97 @@ final class JournalTag {
         colorHex?.nilIfBlank ?? "#FFFFFF"
     }
 
+    var compactID: String {
+        Self.normalizedOctalID(octalID) ?? Self.fallbackOctalID(for: id)
+    }
+
+    var displayCompactID: String {
+        compactID
+    }
+
+    func ensureCompactID(existing tags: [JournalTag]) {
+        let normalized = Self.normalizedOctalID(octalID)
+        let candidate = normalized ?? compactID
+        let duplicatesExistingID = tags.contains { tag in
+            tag.id != id && tag.compactID == candidate
+        }
+        if !duplicatesExistingID {
+            octalID = candidate
+        } else {
+            let used = Set(tags.filter { $0.id != id }.map(\.compactID))
+            octalID = Self.nextAvailableOctalID(used: used)
+        }
+    }
+
+    @discardableResult
+    static func ensureUniqueCompactIDs(in tags: [JournalTag]) -> Bool {
+        var used = Set<String>()
+        var changed = false
+
+        for tag in tags.sorted(by: stableSort) {
+            let candidate = normalizedOctalID(tag.octalID) ?? fallbackOctalID(for: tag.id)
+            if !used.contains(candidate) {
+                if tag.octalID != candidate {
+                    tag.octalID = candidate
+                    changed = true
+                }
+                used.insert(candidate)
+                continue
+            }
+
+            let replacement = nextAvailableOctalID(used: used)
+            if tag.octalID != replacement {
+                tag.octalID = replacement
+                changed = true
+            }
+            used.insert(replacement)
+        }
+
+        return changed
+    }
+
+    static func compactIDOrderMap(for tags: [JournalTag]) -> [String: Int] {
+        var order: [String: Int] = [:]
+        for (index, tag) in tags.enumerated() where order[tag.compactID] == nil {
+            order[tag.compactID] = index
+        }
+        return order
+    }
+
     func touch() {
         updatedAt = Date()
+    }
+
+    static func normalizedOctalID(_ rawValue: String?) -> String? {
+        let digits = (rawValue ?? "").filter { "01234567".contains($0) }
+        guard !digits.isEmpty, let value = Int(digits, radix: 8), (0..<512).contains(value) else {
+            return nil
+        }
+        return String(value, radix: 8).leftPadded(toLength: 3, withPad: "0")
+    }
+
+    static func nextAvailableOctalID(used: Set<String>) -> String {
+        for value in 0..<512 {
+            let candidate = String(value, radix: 8).leftPadded(toLength: 3, withPad: "0")
+            if !used.contains(candidate) {
+                return candidate
+            }
+        }
+        return "777"
+    }
+
+    private static func fallbackOctalID(for id: UUID) -> String {
+        let sum = id.uuidString.unicodeScalars.reduce(0) { value, scalar in
+            (value &* 31 &+ Int(scalar.value)) % 512
+        }
+        return String(sum, radix: 8).leftPadded(toLength: 3, withPad: "0")
+    }
+
+    private static func stableSort(_ lhs: JournalTag, _ rhs: JournalTag) -> Bool {
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt < rhs.createdAt
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 }
 

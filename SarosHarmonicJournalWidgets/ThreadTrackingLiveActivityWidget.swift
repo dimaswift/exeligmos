@@ -12,7 +12,7 @@ struct ThreadTrackingLiveActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    LiveTrackingGlyphView(context: context, size: 64)
+                    LiveTrackingGlyphView(context: context, size: 58)
                 }
 
                 DynamicIslandExpandedRegion(.center) {
@@ -24,7 +24,7 @@ struct ThreadTrackingLiveActivityWidget: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    LiveTrackingTimerView(context: context, compact: false)
+                    LiveTrackingWaveTimerView(context: context)
                 }
             } compactLeading: {
                 LiveTrackingGlyphView(context: context, size: 24)
@@ -39,7 +39,10 @@ struct ThreadTrackingLiveActivityWidget: Widget {
     }
 
     private func deepLinkURL(for threadID: String) -> URL? {
-        URL(string: "exeligmos://thread/\(threadID)")
+        if threadID == ThreadTrackingSharedStore.journalTrackingID {
+            return URL(string: "exeligmos://saros")
+        }
+        return URL(string: "exeligmos://thread/\(threadID)")
     }
 }
 
@@ -63,26 +66,26 @@ private struct ThreadTrackingLockScreenView: View {
                 color: color,
                 secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
             )
-            .frame(width: 68, height: 68)
+            .frame(width: 66, height: 66)
             .offset(x: 4, y: 4)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(context.attributes.threadTitle)
+                Text(payload.displayEventName)
                     .font(.headline)
                     .lineLimit(1)
-                HStack(spacing: 5) {
-                    WidgetRarityGlyphIcon(
-                        rawValue: payload.rarityRawValue,
-                        harmonicDepth: context.attributes.harmonicDepth,
-                        color: color,
-                        size: 16
-                    )
-                    Text(payload.rarityTitle)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                HStack(spacing: 10) {
+                    Text(payload.energyText)
+                    Text(payload.momentumText)
                 }
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
+                WidgetWaveformSegmentView(
+                    samples: payload.waveformSamples ?? [],
+                    spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                    color: color,
+                    currentPosition: payload.waveformPosition(at: now)
+                )
+                .frame(height: 40)
                 TrackingCountdownText(
                     payload: payload,
                     now: now,
@@ -128,24 +131,14 @@ private struct LiveTrackingCenterView: View {
             let color = Color(hexString: payload.rarityColorHex)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(context.attributes.threadTitle)
+                Text(payload.displayEventName)
                     .font(.headline)
                     .lineLimit(1)
-                Text(payload.rarityOrderLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 HStack(spacing: 5) {
-                    WidgetRarityGlyphIcon(
-                        rawValue: payload.rarityRawValue,
-                        harmonicDepth: context.attributes.harmonicDepth,
-                        color: color,
-                        size: 14
-                    )
-                    Text(payload.rarityTitle)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                    Text(payload.energyText)
+                    Text(payload.momentumText)
                 }
-                .font(.caption2.weight(.semibold))
+                .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
             }
             .padding(.leading, 8)
@@ -171,6 +164,28 @@ private struct LiveTrackingRarityIconView: View {
     }
 }
 
+private struct LiveTrackingWaveTimerView: View {
+    let context: ActivityViewContext<ThreadTrackingAttributes>
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let payload = context.state.displayPayload(at: timeline.date)
+            let color = Color(hexString: payload.rarityColorHex)
+
+            VStack(alignment: .leading, spacing: 6) {
+                WidgetWaveformSegmentView(
+                    samples: payload.waveformSamples ?? [],
+                    spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                    color: color,
+                    currentPosition: payload.waveformPosition(at: timeline.date)
+                )
+                .frame(height: 42)
+                LiveTrackingTimerView(context: context, compact: false)
+            }
+        }
+    }
+}
+
 private struct LiveTrackingTimerView: View {
     let context: ActivityViewContext<ThreadTrackingAttributes>
     let compact: Bool
@@ -179,11 +194,6 @@ private struct LiveTrackingTimerView: View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             VStack(alignment: .leading, spacing: compact ? 0 : 6) {
-                if !compact {
-                    Text("Next flip")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
                 TrackingCountdownText(
                     payload: payload,
                     now: timeline.date,

@@ -4,11 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.EXELIGMOS_SYNC_DATA || path.join(__dirname, 'data');
 const PORT = Number(process.env.PORT || 8787);
-const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 2 * 1024 * 1024 * 1024);
+const NODE_STRING_LIMIT_BYTES = 0x1fffffe8;
+const CONFIGURED_MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 256 * 1024 * 1024);
+const MAX_BODY_BYTES = Math.min(CONFIGURED_MAX_BODY_BYTES, NODE_STRING_LIMIT_BYTES - 1024 * 1024);
 const OCTAL_GLYPH_BUNDLE =
   process.env.OCTAL_GLYPH_BUNDLE ||
   '/Users/dimas/projects/octal-glyph-gen/octal-glyph.js';
@@ -33,11 +36,20 @@ const RARITY_BASES = {
 };
 const OMEGA_NIHIL_COLOR = '#ef4136';
 const RARITY_DEFINITIONS = makeRarityDefinitions();
+const ONLINE_WINDOW_MS = 45_000;
+const DEVICE_BROADCAST_INTERVAL_MS = 15_000;
+
+await fs.mkdir(DATA_DIR, { recursive: true });
+const syncDB = new DatabaseSync(path.join(DATA_DIR, 'sync.sqlite'));
+initSyncDatabase();
+const eventStreams = new Set();
+const lastDeviceBroadcasts = new Map();
 
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     console.log(`${new Date().toISOString()} ${req.method} ${url.pathname}`);
+    const requestDevice = registerDeviceForRequest(req, url);
 
     if (req.method === 'OPTIONS') {
       send(res, 204, 'text/plain', '');
@@ -51,6 +63,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && (url.pathname === '/dataset' || url.pathname === '/dataset.html')) {
       send(res, 200, 'text/html; charset=utf-8', datasetPageHTML());
+      return;
+    }
+
+    if (req.method === 'GET' && (url.pathname === '/channels' || url.pathname === '/channels.html')) {
+      send(res, 200, 'text/html; charset=utf-8', channelsPageHTML());
       return;
     }
 
@@ -85,7 +102,99 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/records') {
       const payload = await readLatestPayload({ includeMediaData: false });
-      sendJSON(res, 200, payload ? recordsView(payload) : { sarosFamilies: [], tags: [], rarities: [], records: [] });
+      sendJSON(res, 200, payload ? recordsView(payload, url.searchParams) : emptyRecordsView());
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/devices') {
+      sendJSON(res, 200, devicesView());
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/channels') {
+      sendJSON(res, 200, devicesView());
+      return;
+    }
+
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/channels/')) {
+      const channelID = decodeURIComponent(url.pathname.slice('/api/channels/'.length));
+      const result = blockChannel(channelID);
+      broadcastEvent({ type: 'channels-updated', devices: devicesView().devices });
+      sendJSON(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === 'POST' && (url.pathname === '/api/devices/register' || url.pathname === '/api/channels/register')) {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      sendJSON(res, 200, { ok: true, channel: deviceView(deviceRow(requestDevice.id)), device: deviceView(deviceRow(requestDevice.id)) });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/events/stream') {
+      serveEventStream(res);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/events/pending') {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      sendJSON(res, 200, { events: pendingEventsForDevice(requestDevice.id) });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/events/ack') {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      const body = await readBody(req);
+      const payload = JSON.parse(body);
+      acknowledgeEvents(requestDevice.id, payload.eventIDs ?? []);
+      sendJSON(res, 200, { ok: true, receivedCount: payload.eventIDs?.length ?? 0 });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/commands/pending') {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      sendJSON(res, 200, { commands: pendingCommandsForChannel(requestDevice.id) });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commands/ack') {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      const body = await readBody(req);
+      const payload = JSON.parse(body);
+      acknowledgeCommands(requestDevice.id, payload.commandIDs ?? []);
+      sendJSON(res, 200, { ok: true, receivedCount: payload.commandIDs?.length ?? 0 });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commands/batch') {
+      if (!requestDevice) {
+        sendJSON(res, 400, { error: 'Missing X-Exeligmos-Device-ID header.' });
+        return;
+      }
+      if (rejectBlockedChannel(res, requestDevice)) return;
+      const body = await readBody(req);
+      const payload = JSON.parse(body);
+      const result = await processCommandBatch(payload, requestDevice);
+      sendJSON(res, 200, { ok: true, ...result });
       return;
     }
 
@@ -156,10 +265,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/sync/entry') {
+      if (requestDevice && rejectBlockedChannel(res, requestDevice)) return;
       const body = await readBody(req);
       const payload = JSON.parse(body);
-      const result = await writeEntryUpload(payload);
+      const result = await writeEntryUpload(payload, requestDevice);
       console.log(`Stored entry ${result.entryID} with ${result.mediaCount} media files.`);
+      sendJSON(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname.startsWith('/api/sync/entry/') && url.pathname.endsWith('/delete')) {
+      if (requestDevice && rejectBlockedChannel(res, requestDevice)) return;
+      const entryID = decodeURIComponent(url.pathname.slice('/api/sync/entry/'.length, -'/delete'.length));
+      const result = await deleteEntryFolder(entryID, requestDevice);
+      console.log(`Deleted entry ${entryID}: ${result.deleted ? 'removed' : 'not present'}.`);
       sendJSON(res, 200, { ok: true, ...result });
       return;
     }
@@ -192,34 +311,527 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 async function readBody(req) {
+  const contentLength = Number(req.headers['content-length'] ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    const error = new Error(
+      `Request body is ${formatBytes(contentLength)}, larger than the JSON relay limit of ${formatBytes(MAX_BODY_BYTES)}.`
+    );
+    error.code = 'BODY_TOO_LARGE';
+    throw error;
+  }
+
   let size = 0;
   const chunks = [];
 
   for await (const chunk of req) {
     size += chunk.length;
     if (size > MAX_BODY_BYTES) {
-      const error = new Error(`Request body is larger than ${formatBytes(MAX_BODY_BYTES)}. Set MAX_BODY_BYTES to raise the limit.`);
+      const error = new Error(
+        `Request body is ${formatBytes(size)}, larger than the JSON relay limit of ${formatBytes(MAX_BODY_BYTES)}.`
+      );
       error.code = 'BODY_TOO_LARGE';
+      req.destroy();
       throw error;
     }
     chunks.push(chunk);
   }
 
-  return Buffer.concat(chunks).toString('utf8');
+  try {
+    return Buffer.concat(chunks, size).toString('utf8');
+  } catch (error) {
+    if (error?.code === 'ERR_STRING_TOO_LONG') {
+      const bodyError = new Error(
+        `Request body is too large to parse as JSON. The current relay limit is ${formatBytes(MAX_BODY_BYTES)}.`
+      );
+      bodyError.code = 'BODY_TOO_LARGE';
+      throw bodyError;
+    }
+    throw error;
+  }
+}
+
+function initSyncDatabase() {
+  syncDB.exec(`
+    CREATE TABLE IF NOT EXISTS devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      last_ip TEXT,
+      user_agent TEXT
+    );
+    CREATE TABLE IF NOT EXISTS blocked_channels (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      emoji TEXT,
+      deleted_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      entry_id TEXT,
+      source_device_id TEXT,
+      source_device_emoji TEXT,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS event_receipts (
+      event_id INTEGER NOT NULL,
+      device_id TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      PRIMARY KEY (event_id, device_id)
+    );
+    CREATE TABLE IF NOT EXISTS commands (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      source_channel_id TEXT,
+      source_channel_emoji TEXT,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      processed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS command_receipts (
+      command_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      PRIMARY KEY (command_id, channel_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_event_receipts_device ON event_receipts(device_id);
+    CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands(created_at);
+    CREATE INDEX IF NOT EXISTS idx_command_receipts_channel ON command_receipts(channel_id);
+  `);
+}
+
+function registerDeviceForRequest(req, url) {
+  const rawID = req.headers['x-exeligmos-device-id'] ?? url.searchParams.get('deviceID');
+  const id = normalizeDeviceID(rawID);
+  if (!id) return null;
+  const blocked = blockedChannelRow(id);
+  if (blocked) {
+    return {
+      id,
+      name: blocked.name ?? `Device ${id}`,
+      emoji: blocked.emoji ?? '◇',
+      blocked: true
+    };
+  }
+
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const name = cleanText(decodeHeaderText(req.headers['x-exeligmos-device-name'] ?? url.searchParams.get('deviceName')), `Device ${id}`);
+  const emoji = cleanText(decodeHeaderText(req.headers['x-exeligmos-device-emoji'] ?? url.searchParams.get('deviceEmoji')), '◇');
+  const ip = String(req.socket?.remoteAddress ?? '');
+  const userAgent = String(req.headers['user-agent'] ?? '');
+  const previous = deviceRow(id);
+
+  syncDB.prepare(`
+    INSERT INTO devices (id, name, emoji, first_seen, last_seen, last_ip, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      emoji = excluded.emoji,
+      last_seen = excluded.last_seen,
+      last_ip = excluded.last_ip,
+      user_agent = excluded.user_agent
+  `).run(id, name, emoji, now, now, ip, userAgent);
+
+  const lastBroadcast = lastDeviceBroadcasts.get(id) ?? 0;
+  const profileChanged = !previous || previous.name !== name || previous.emoji !== emoji;
+  if (profileChanged || nowDate.getTime() - lastBroadcast >= DEVICE_BROADCAST_INTERVAL_MS) {
+    lastDeviceBroadcasts.set(id, nowDate.getTime());
+    broadcastEvent({ type: 'device-seen', device: deviceView(deviceRow(id)) });
+  }
+  return { id, name, emoji };
+}
+
+function rejectBlockedChannel(res, requestDevice) {
+  if (!requestDevice?.blocked) return false;
+  sendJSON(res, 403, { error: `Channel ${requestDevice.id} has been removed from this relay.` });
+  return true;
+}
+
+function normalizeDeviceID(value) {
+  const id = String(value ?? '').trim().toUpperCase();
+  return /^[A-Z]{5}$/.test(id) ? id : null;
+}
+
+function cleanText(value, fallback) {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+}
+
+function decodeHeaderText(value) {
+  if (value == null) return value;
+  const text = String(value);
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+function deviceRow(id) {
+  return syncDB.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+}
+
+function devicesView() {
+  return {
+    devices: syncDB.prepare('SELECT * FROM devices ORDER BY last_seen DESC').all().map(deviceView),
+    blockedDevices: syncDB.prepare('SELECT * FROM blocked_channels ORDER BY deleted_at DESC').all().map(blockedChannelView)
+  };
+}
+
+function blockedChannelRow(id) {
+  return syncDB.prepare('SELECT * FROM blocked_channels WHERE id = ?').get(id);
+}
+
+function blockedChannelView(row) {
+  return {
+    id: row?.id ?? '',
+    name: row?.name ?? '',
+    emoji: row?.emoji ?? '◇',
+    deletedAt: row?.deleted_at ?? null
+  };
+}
+
+function blockChannel(rawID) {
+  const id = normalizeDeviceID(rawID);
+  if (!id) return { deleted: false, reason: 'Invalid channel id.' };
+  const current = deviceRow(id);
+  const blocked = blockedChannelRow(id);
+  const now = new Date().toISOString();
+  const name = current?.name ?? blocked?.name ?? `Device ${id}`;
+  const emoji = current?.emoji ?? blocked?.emoji ?? '◇';
+  syncDB.prepare(`
+    INSERT INTO blocked_channels (id, name, emoji, deleted_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      emoji = excluded.emoji,
+      deleted_at = excluded.deleted_at
+  `).run(id, name, emoji, now);
+  syncDB.prepare('DELETE FROM devices WHERE id = ?').run(id);
+  lastDeviceBroadcasts.delete(id);
+  return { deleted: Boolean(current), channel: blockedChannelView(blockedChannelRow(id)) };
+}
+
+function deviceView(row) {
+  const lastSeenTime = Date.parse(row?.last_seen ?? 0);
+  return {
+    id: row?.id ?? '',
+    name: row?.name ?? '',
+    emoji: row?.emoji ?? '◇',
+    firstSeen: row?.first_seen ?? null,
+    lastSeen: row?.last_seen ?? null,
+    online: Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime <= ONLINE_WINDOW_MS
+  };
+}
+
+function appendSyncEvent(type, entryID, sourceDevice, payload = {}) {
+  const now = new Date().toISOString();
+  const sourceID = sourceDevice?.id ?? null;
+  const sourceEmoji = sourceDevice?.emoji ?? null;
+  const result = syncDB.prepare(`
+    INSERT INTO events (type, entry_id, source_device_id, source_device_emoji, payload_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(type, entryID ?? null, sourceID, sourceEmoji, JSON.stringify({ entryID, ...payload }), now);
+  const eventID = Number(result.lastInsertRowid);
+  if (sourceID) {
+    acknowledgeEvents(sourceID, [eventID]);
+  }
+  const event = eventView(syncDB.prepare('SELECT * FROM events WHERE id = ?').get(eventID));
+  broadcastEvent({ type, event });
+  return event;
+}
+
+function pendingEventsForDevice(deviceID) {
+  return syncDB.prepare(`
+    SELECT e.*
+    FROM events e
+    LEFT JOIN event_receipts r ON r.event_id = e.id AND r.device_id = ?
+    WHERE r.event_id IS NULL
+    ORDER BY e.id ASC
+    LIMIT 200
+  `).all(deviceID).map(eventView);
+}
+
+function acknowledgeEvents(deviceID, eventIDs) {
+  const ids = [...new Set((eventIDs ?? []).map(Number).filter(Number.isFinite))];
+  if (!ids.length) return;
+  const now = new Date().toISOString();
+  const statement = syncDB.prepare(`
+    INSERT OR REPLACE INTO event_receipts (event_id, device_id, received_at)
+    VALUES (?, ?, ?)
+  `);
+  for (const eventID of ids) {
+    statement.run(eventID, deviceID, now);
+  }
+}
+
+function eventView(row) {
+  let payload = {};
+  try {
+    payload = JSON.parse(row?.payload_json ?? '{}');
+  } catch {
+    payload = {};
+  }
+  return {
+    id: Number(row?.id ?? 0),
+    type: row?.type ?? '',
+    entryID: row?.entry_id ?? payload.entryID ?? null,
+    sourceDeviceID: row?.source_device_id ?? null,
+    sourceDeviceEmoji: row?.source_device_emoji ?? null,
+    createdAt: row?.created_at ?? null,
+    payload
+  };
+}
+
+async function processCommandBatch(payload, sourceChannel) {
+  if (!payload || payload.schemaVersion !== 1 || !Array.isArray(payload.commands)) {
+    throw new Error('Invalid Exeligmos command batch payload.');
+  }
+
+  const processedCommandIDs = [];
+  for (const rawCommand of payload.commands) {
+    const command = normalizeRelayCommand(rawCommand, sourceChannel);
+    if (!command) continue;
+
+    const existing = syncDB.prepare('SELECT id FROM commands WHERE id = ?').get(command.id);
+    if (!existing) {
+      await applyRelayCommand(command);
+      syncDB.prepare(`
+        INSERT INTO commands (id, type, subject_id, source_channel_id, source_channel_emoji, payload_json, created_at, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        command.id,
+        command.type,
+        command.subjectID,
+        command.sourceChannelID,
+        command.sourceChannelEmoji,
+        JSON.stringify(commandLogPayload(command)),
+        command.createdAt,
+        new Date().toISOString()
+      );
+      broadcastEvent({ type: 'command-submitted', command: commandView(commandRow(command.id)) });
+    }
+
+    acknowledgeCommands(sourceChannel.id, [command.id]);
+    processedCommandIDs.push(command.id);
+  }
+
+  return {
+    processedCommandIDs,
+    processedCount: processedCommandIDs.length
+  };
+}
+
+function normalizeRelayCommand(rawCommand, sourceChannel) {
+  const id = String(rawCommand?.id ?? '').trim();
+  const type = String(rawCommand?.type ?? '').trim();
+  const subjectID = String(rawCommand?.subjectID ?? rawCommand?.subject_id ?? '').trim();
+  if (!id || !type || !subjectID) return null;
+
+  return {
+    id,
+    schemaVersion: Number(rawCommand.schemaVersion ?? 1),
+    type,
+    subjectID,
+    sourceChannelID: sourceChannel?.id ?? rawCommand.sourceChannelID ?? null,
+    sourceChannelEmoji: sourceChannel?.emoji ?? rawCommand.sourceChannelEmoji ?? null,
+    createdAt: normalizeDateString(rawCommand.createdAt),
+    payload: rawCommand.payload ?? {}
+  };
+}
+
+async function applyRelayCommand(command) {
+  switch (command.type) {
+    case 'entry-upsert': {
+      const upload = command.payload?.entryUpload;
+      if (!upload?.entry?.id) throw new Error(`Entry upsert command ${command.id} is missing entry payload.`);
+      await writeEntryUpload(upload, null, { emitEvent: false });
+      break;
+    }
+    case 'entry-delete': {
+      const entryID = command.payload?.entryID ?? command.subjectID;
+      await deleteEntryFolder(entryID, null, { emitEvent: false });
+      break;
+    }
+    case 'tag-upsert': {
+      const tag = command.payload?.tag;
+      if (!tag?.id) throw new Error(`Tag upsert command ${command.id} is missing tag payload.`);
+      await mirrorTags([tag]);
+      break;
+    }
+    case 'tag-delete': {
+      const tagID = command.payload?.tagID ?? command.subjectID;
+      await deleteTagFolder(tagID);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function pendingCommandsForChannel(channelID) {
+  return syncDB.prepare(`
+    SELECT c.*
+    FROM commands c
+    LEFT JOIN command_receipts r ON r.command_id = c.id AND r.channel_id = ?
+    WHERE r.command_id IS NULL
+    ORDER BY c.rowid ASC
+    LIMIT 200
+  `).all(channelID).map(commandView);
+}
+
+function acknowledgeCommands(channelID, commandIDs) {
+  const ids = [...new Set((commandIDs ?? []).map((id) => String(id ?? '').trim()).filter(Boolean))];
+  if (!ids.length) return;
+  const now = new Date().toISOString();
+  const statement = syncDB.prepare(`
+    INSERT OR REPLACE INTO command_receipts (command_id, channel_id, received_at)
+    VALUES (?, ?, ?)
+  `);
+  for (const commandID of ids) {
+    statement.run(commandID, channelID, now);
+  }
+}
+
+function commandRow(id) {
+  return syncDB.prepare('SELECT * FROM commands WHERE id = ?').get(id);
+}
+
+function commandView(row) {
+  const type = row?.type ?? '';
+  const subjectID = row?.subject_id ?? '';
+  if (type === 'entry-upsert') {
+    const payload = parseSmallCommandPayload(row);
+    return {
+      id: row?.id ?? '',
+      schemaVersion: 1,
+      type,
+      subjectID,
+      sourceChannelID: row?.source_channel_id ?? null,
+      sourceChannelEmoji: row?.source_channel_emoji ?? null,
+      createdAt: row?.created_at ?? null,
+      payload: {
+        entryID: payload.entryID ?? subjectID,
+        entryVersion: payload.entryVersion ?? null
+      }
+    };
+  }
+  if (type === 'entry-delete') {
+    return {
+      id: row?.id ?? '',
+      schemaVersion: 1,
+      type,
+      subjectID,
+      sourceChannelID: row?.source_channel_id ?? null,
+      sourceChannelEmoji: row?.source_channel_emoji ?? null,
+      createdAt: row?.created_at ?? null,
+      payload: { entryID: subjectID }
+    };
+  }
+  if (type === 'tag-delete') {
+    return {
+      id: row?.id ?? '',
+      schemaVersion: 1,
+      type,
+      subjectID,
+      sourceChannelID: row?.source_channel_id ?? null,
+      sourceChannelEmoji: row?.source_channel_emoji ?? null,
+      createdAt: row?.created_at ?? null,
+      payload: { tagID: subjectID }
+    };
+  }
+
+  let payload = {};
+  try {
+    payload = JSON.parse(row?.payload_json ?? '{}');
+  } catch {
+    payload = {};
+  }
+  return {
+    id: row?.id ?? '',
+    schemaVersion: 1,
+    type: row?.type ?? '',
+    subjectID: row?.subject_id ?? '',
+    sourceChannelID: row?.source_channel_id ?? null,
+    sourceChannelEmoji: row?.source_channel_emoji ?? null,
+    createdAt: row?.created_at ?? null,
+    payload
+  };
+}
+
+function commandLogPayload(command) {
+  switch (command.type) {
+    case 'entry-upsert':
+      return {
+        entryID: command.payload?.entryUpload?.entry?.id ?? command.payload?.entryID ?? command.subjectID,
+        entryVersion: command.payload?.entryUpload?.entry?.version ?? command.payload?.entryVersion ?? null
+      };
+    case 'entry-delete':
+      return {
+        entryID: command.payload?.entryID ?? command.subjectID
+      };
+    case 'tag-delete':
+      return {
+        tagID: command.payload?.tagID ?? command.subjectID
+      };
+    default:
+      return command.payload ?? {};
+  }
+}
+
+function parseSmallCommandPayload(row) {
+  const json = String(row?.payload_json ?? '{}');
+  if (json.length > 4096) return {};
+  try {
+    return JSON.parse(json);
+  } catch {
+    return {};
+  }
+}
+
+function normalizeDateString(value) {
+  const parsed = Date.parse(value ?? '');
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date().toISOString();
+}
+
+function serveEventStream(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.write(`data: ${JSON.stringify({ type: 'connected', devices: devicesView().devices })}\n\n`);
+  eventStreams.add(res);
+  res.on('close', () => {
+    eventStreams.delete(res);
+  });
+}
+
+function broadcastEvent(event) {
+  const data = `data: ${JSON.stringify(event)}\n\n`;
+  for (const stream of [...eventStreams]) {
+    try {
+      stream.write(data);
+    } catch {
+      eventStreams.delete(stream);
+    }
+  }
 }
 
 async function writeMirrorState(payload) {
   validateMirrorStatePayload(payload);
 
   const tagItems = payload.tags ?? [];
-  const tagIDs = new Set(tagItems
-    .map((item) => item?.tag ?? item)
-    .filter((tag) => tag?.id)
-    .map((tag) => String(tag.id)));
   const entryIDs = new Set((payload.entryIDs ?? []).filter(Boolean).map(String));
 
-  const tagResult = await mirrorTags(tagItems, tagIDs);
-  const entryResult = await pruneEntries(entryIDs);
+  const tagResult = await mirrorTags(tagItems);
 
   return {
     tagCount: tagItems.length,
@@ -227,7 +839,7 @@ async function writeMirrorState(payload) {
     mediaCount: 0,
     updatedTagCount: tagResult.updatedCount,
     deletedTagCount: tagResult.deletedCount,
-    deletedEntryCount: entryResult.deletedCount
+    deletedEntryCount: 0
   };
 }
 
@@ -237,20 +849,12 @@ function validateMirrorStatePayload(payload) {
   }
 }
 
-async function mirrorTags(items, tagIDs) {
+async function mirrorTags(items) {
   const root = path.join(DATA_DIR, 'tags');
   await fs.mkdir(root, { recursive: true });
 
   let updatedCount = 0;
-  let deletedCount = 0;
-
-  for (const directory of await childDirectories(root)) {
-    const tag = await readJSONIfExists(path.join(directory, 'tag.json'));
-    if (tag?.id && !tagIDs.has(String(tag.id))) {
-      await fs.rm(directory, { recursive: true, force: true });
-      deletedCount += 1;
-    }
-  }
+  const deletedCount = 0;
 
   for (const item of items) {
     const tag = item.tag ?? item;
@@ -263,27 +867,14 @@ async function mirrorTags(items, tagIDs) {
   return { updatedCount, deletedCount };
 }
 
-async function pruneEntries(entryIDs) {
-  const root = path.join(DATA_DIR, 'entries');
-  await fs.mkdir(root, { recursive: true });
-
-  let deletedCount = 0;
-
-  for (const directory of await childDirectories(root)) {
-    const entry = await readJSONIfExists(path.join(directory, 'entry.json'))
-      ?? await readJSONIfExists(path.join(directory, 'record.json'));
-    if (entry?.id && !entryIDs.has(String(entry.id))) {
-      await fs.rm(directory, { recursive: true, force: true });
-      deletedCount += 1;
-    }
-  }
-
-  return { deletedCount };
-}
-
-async function writeEntryUpload(payload) {
+async function writeEntryUpload(payload, sourceDevice = null, options = {}) {
   validateEntryUploadPayload(payload);
 
+  const existingEntryDir = await findChildDirectoryByJSON(
+    path.join(DATA_DIR, 'entries'),
+    'entry.json',
+    (value) => value?.id === payload.entry.id
+  );
   const entryDir = await entryDirectoryFor(payload.entry);
   const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
   const mediaMetadata = await writeEntryFolder(
@@ -292,12 +883,55 @@ async function writeEntryUpload(payload) {
     (payload.entry.mediaItems ?? []).map((item) => item.id),
     media
   );
+  const isNewEntry = !existingEntryDir;
+  if (isNewEntry && options.emitEvent !== false) {
+    appendSyncEvent('record-posted', payload.entry.id, sourceDevice, {
+      sourceDeviceID: sourceDevice?.id ?? payload.entry.sourceDeviceID ?? null,
+      sourceDeviceEmoji: sourceDevice?.emoji ?? payload.entry.sourceDeviceEmoji ?? null
+    });
+  }
 
   return {
     entryID: payload.entry.id,
     entryFolder: path.basename(entryDir),
-    mediaCount: mediaMetadata.length
+    mediaCount: mediaMetadata.length,
+    eventCreated: isNewEntry
   };
+}
+
+async function deleteEntryFolder(entryID, sourceDevice = null, options = {}) {
+  const normalizedID = String(entryID ?? '').trim();
+  if (!normalizedID) return { entryID: normalizedID, deleted: false, eventCreated: false };
+  const entryDir = await findChildDirectoryByJSON(
+    path.join(DATA_DIR, 'entries'),
+    'entry.json',
+    (value) => String(value?.id) === normalizedID
+  );
+  if (entryDir) {
+    await fs.rm(entryDir, { recursive: true, force: true });
+  }
+  if (options.emitEvent !== false) {
+    appendSyncEvent('record-deleted', normalizedID, sourceDevice);
+  }
+  return {
+    entryID: normalizedID,
+    deleted: Boolean(entryDir),
+    eventCreated: options.emitEvent !== false
+  };
+}
+
+async function deleteTagFolder(tagID) {
+  const normalizedID = String(tagID ?? '').trim();
+  if (!normalizedID) return { tagID: normalizedID, deleted: false };
+  const tagDir = await findChildDirectoryByJSON(
+    path.join(DATA_DIR, 'tags'),
+    'tag.json',
+    (value) => String(value?.id) === normalizedID
+  );
+  if (tagDir) {
+    await fs.rm(tagDir, { recursive: true, force: true });
+  }
+  return { tagID: normalizedID, deleted: Boolean(tagDir) };
 }
 
 async function readEntryDownloadPayload(entryID) {
@@ -860,38 +1494,41 @@ function syncStateDownloadView(payload) {
   };
 }
 
-function recordsView(payload) {
+function recordsView(payload, searchParams = new URLSearchParams()) {
   const entities = new Map((payload.archive.entities ?? []).map((entity) => [entity.id, entity]));
   const tagsByID = new Map((payload.archive.tags ?? []).map((tag) => [tag.id, tag]));
   const tagLookup = new Map([...entities, ...tagsByID]);
+  for (const tag of payload.archive.tags ?? []) {
+    if (tag.octalID) tagLookup.set(String(tag.octalID), tag);
+  }
   const media = new Map((payload.media ?? []).map((blob) => [blob.id, blob]));
+  const devices = new Map(devicesView().devices.map((device) => [device.id, device]));
   const legacyRecords = [...(payload.archive.records ?? [])]
-    .map((record) => webRecord(record, entities.get(record.entityID), tagLookup, media));
+    .map((record) => webRecord(record, entities.get(record.entityID), tagLookup, media, devices));
   const entryRecords = [...(payload.archive.entries ?? [])]
-    .map((entry) => webRecord(entry, null, tagLookup, media));
-  const records = [...legacyRecords, ...entryRecords]
+    .map((entry) => webRecord(entry, null, tagLookup, media, devices));
+  const allRecords = [...legacyRecords, ...entryRecords]
     .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime())
     .filter(Boolean);
-  const sarosFamilies = sarosFilterOptions(records);
-  const tagFilters = tagFilterOptions(records);
-  const rarityFilters = groupedFilterOptions(records, 'rarityKey', (record) => ({
-    id: record.rarity.key,
-    name: record.rarity.title,
-    rank: record.rarity.rank,
-    color: record.rarity.color,
-    baseKey: record.rarity.baseKey,
-    repeatedDigit: record.rarity.repeatedDigit,
-    hasBadge: record.rarity.hasBadge,
-    isCommon: record.rarity.isCommon,
-    glyphAddress: record.rarity.glyphAddress,
-    patternLabel: record.rarity.patternLabel
-  })).sort((a, b) => a.rank - b.rank);
+  const sarosFamilies = sarosFilterOptions(allRecords);
+  const tagFilters = tagFilterOptions(allRecords);
+  const deviceFilters = deviceFilterOptions(allRecords);
+  const rarityFilters = compactRarityFilters(allRecords);
+  const filteredRecords = filterWebRecords(allRecords, searchParams);
+  const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 25, 1), 100);
+  const offset = Math.max(Number(searchParams.get('offset')) || 0, 0);
+  const records = filteredRecords.slice(offset, offset + limit);
 
   return {
     exportTimestamp: payload.exportTimestamp,
     entityCount: (payload.archive.tags?.length ?? 0) + (payload.archive.entities?.length ?? 0),
-    recordCount: records.length,
+    recordCount: filteredRecords.length,
+    totalCount: filteredRecords.length,
+    nextOffset: offset + records.length,
+    hasMore: offset + records.length < filteredRecords.length,
     mediaCount: payload.media?.length ?? 0,
+    devices: devicesView().devices,
+    deviceFilters,
     sarosFamilies,
     tags: tagFilters,
     rarities: rarityFilters,
@@ -899,13 +1536,68 @@ function recordsView(payload) {
   };
 }
 
-function webRecord(record, entity, tagLookup, media) {
+function emptyRecordsView() {
+  return {
+    exportTimestamp: null,
+    entityCount: 0,
+    recordCount: 0,
+    totalCount: 0,
+    nextOffset: 0,
+    hasMore: false,
+    mediaCount: 0,
+    devices: devicesView().devices,
+    deviceFilters: [],
+    sarosFamilies: [],
+    tags: [],
+    rarities: compactRarityFilters([]),
+    records: []
+  };
+}
+
+function filterWebRecords(records, searchParams) {
+  const rarity = searchParams.get('rarity') || 'all';
+  const saros = searchParams.get('saros') || 'all';
+  const tag = searchParams.get('tag') || 'all';
+  const device = searchParams.get('device') || 'all';
+  const date = searchParams.get('date') || '';
+  const range = dateRangeForFilter(date);
+
+  return records.filter((record) => {
+    if (rarity !== 'all' && record.rarity?.baseKey !== rarity) return false;
+    if (saros !== 'all' && !(record.sarosNumbers || []).map(String).includes(saros)) return false;
+    if (tag !== 'all' && !(record.tags || []).some((item) => (item.filterID || item.displayKey || item.id) === tag)) return false;
+    if (device !== 'all' && record.sourceDevice?.id !== device) return false;
+    if (range) {
+      const time = new Date(record.eventDate).getTime();
+      if (!Number.isFinite(time) || time < range.start || time >= range.end) return false;
+    }
+    return true;
+  });
+}
+
+function dateRangeForFilter(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return null;
+  const start = new Date(`${value}T00:00:00.000Z`).getTime();
+  if (!Number.isFinite(start)) return null;
+  return { start, end: start + 86_400_000 };
+}
+
+function webRecord(record, entity, tagLookup, media, devices = new Map()) {
   if (!record?.id) return null;
   const spikes = recordSpikes(record, entity);
   const rarity = rarityForRecord(record);
   const sarosNumbers = recordSarosNumbers(record, entity);
   const tags = recordTags(record, tagLookup);
   const primarySpike = spikes[0];
+  const closestSarosPhase = currentSarosPhaseForRecord(record, primarySpike);
+  const sourceDevice = record.sourceDeviceID
+    ? devices.get(record.sourceDeviceID) ?? {
+      id: record.sourceDeviceID,
+      name: record.sourceDeviceName || `Device ${record.sourceDeviceID}`,
+      emoji: record.sourceDeviceEmoji || '◇',
+      online: false
+    }
+    : null;
 
   return {
     id: record.id,
@@ -916,12 +1608,17 @@ function webRecord(record, entity, tagLookup, media) {
     tags,
     eventDate: record.eventDate,
     emoji: record.emoji,
+    sourceDevice,
     text: record.text,
     saros: sarosNumbers[0] ?? record.saros,
     sarosNumbers,
-    octalAddress: primarySpike?.octalAddress ?? record.octalAddress,
-    harmonicDepth: primarySpike?.harmonicDepth ?? record.harmonicDepth ?? 7,
+    octalAddress: closestSarosPhase?.octalAddress ?? primarySpike?.octalAddress ?? record.octalAddress,
+    harmonicDepth: closestSarosPhase?.harmonicDepth ?? primarySpike?.harmonicDepth ?? record.harmonicDepth ?? 7,
+    closestSarosPhase,
     rarity,
+    weatherCode: record.weatherCode ?? null,
+    weatherEmoji: record.weatherEmoji ?? null,
+    temperatureC: record.temperatureC ?? null,
     spikes,
     media: (record.mediaItems ?? []).map((item) => {
       const blob = media.get(item.id);
@@ -935,6 +1632,33 @@ function webRecord(record, entity, tagLookup, media) {
       };
     })
   };
+}
+
+function currentSarosPhaseForRecord(record, fallbackSpike = null) {
+  const raw = record?.context?.closestSarosPhase ?? record?.closestSarosPhase;
+  if (!raw?.octalAddress) return fallbackSpike;
+  const depth = clampedHarmonicDepth(raw.harmonicDepth ?? fallbackSpike?.harmonicDepth);
+  const rarity = rarityForRawValue(raw.rarityRawValue)
+    ?? rarityForAddress(raw.octalAddress, depth);
+  return {
+    id: `phase-${raw.saros ?? fallbackSpike?.saros ?? ''}-${raw.octalAddress}`,
+    saros: Number(raw.saros ?? fallbackSpike?.saros),
+    octalAddress: raw.octalAddress,
+    harmonicDepth: depth,
+    rarity
+  };
+}
+
+function compactRarityFilters(records) {
+  const filters = [
+    { id: 'epic', name: 'Duplex', color: RARITY_BASES.epic.color, order: 4 },
+    { id: 'legendary', name: 'Simplex', color: RARITY_BASES.legendary.color, order: 5 },
+    { id: 'mythic', name: 'Nihil', color: RARITY_BASES.mythic.color, order: 6 }
+  ];
+  return filters.map((filter) => ({
+    ...filter,
+    count: records.filter((record) => record.rarity?.baseKey === filter.id).length
+  }));
 }
 
 function sarosFilterOptions(records) {
@@ -963,6 +1687,18 @@ function tagFilterOptions(records) {
   return [...values.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
+function deviceFilterOptions(records) {
+  const values = new Map();
+  for (const record of records) {
+    const device = record.sourceDevice;
+    if (!device?.id) continue;
+    const existing = values.get(device.id) ?? { ...device, count: 0 };
+    existing.count += 1;
+    values.set(device.id, existing);
+  }
+  return [...values.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
 function groupedFilterOptions(records, key, mapper) {
   const values = new Map();
   for (const record of records) {
@@ -987,9 +1723,9 @@ function recordTitle(record, rarity) {
 function recordTags(record, entities) {
   const tags = [];
   const displayKeys = new Set();
-  const add = (entity) => {
+  const add = (entity, explicitID = null) => {
     if (!entity?.id) return;
-    const displayKey = tagDisplayKey(entity);
+    const displayKey = explicitID || tagDisplayKey(entity);
     if (displayKeys.has(displayKey)) return;
     displayKeys.add(displayKey);
     tags.push({
@@ -998,17 +1734,14 @@ function recordTags(record, entities) {
       displayKey,
       name: entity.title || entity.name || `Saros ${entity.saros ?? ''}`.trim(),
       emoji: entity.emoji || '◇',
+      octalID: entity.octalID || explicitID || null,
       saros: entity.saros ?? null
     });
   };
 
-  add(entities.get(record.entityID));
-
-  const saroses = new Set(recordSarosNumbers(record, entities.get(record.entityID)));
-  for (const entity of entities.values()) {
-    if (saroses.has(Number(entity.saros))) {
-      add(entity);
-    }
+  for (const tagID of record.tagIDs ?? []) {
+    const key = String(tagID);
+    add(entities.get(key), key);
   }
 
   return tags;
@@ -1484,28 +2217,39 @@ function pageHTML() {
     main { max-width: 980px; margin: 0 auto; padding: 18px 20px 40px; }
     nav { display: flex; gap: 8px; flex-wrap: wrap; }
     nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+    .dashboard { display: grid; gap: 10px; margin-bottom: 14px; padding: 12px; border: 1px solid #222a34; border-radius: 12px; background: #0f141a; }
+    .dashboard-title { color: #95a0ad; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .devices { display: flex; gap: 8px; flex-wrap: wrap; }
+    .device { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #2b3541; border-radius: 999px; color: #d7dde5; background: #121820; }
+    .device.online { border-color: #28d66b; }
+    .device-dot { width: 8px; height: 8px; border-radius: 999px; background: #66717d; }
+    .device.online .device-dot { background: #28d66b; }
+    .device-id { color: #95a0ad; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     .filters { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); margin-bottom: 18px; padding: 12px; border: 1px solid #222a34; border-radius: 12px; background: #0f141a; }
-    .filter-selects { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .filter-selects { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .rarity-filter { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }
     .rarity-filter::-webkit-scrollbar { display: none; }
     .rarity-filter button { display: inline-flex; align-items: center; gap: 7px; }
     .rarity-filter .rarity-glyph { width: 22px; height: 22px; flex: 0 0 22px; }
     .rarity-filter button.active .rarity-glyph { color: #071018; }
-    button, select { color: #f3f5f7; background: #121820; border: 1px solid #2b3541; border-radius: 8px; font: inherit; font-size: 13px; }
+    button, select, input { color: #f3f5f7; background: #121820; border: 1px solid #2b3541; border-radius: 8px; font: inherit; font-size: 13px; }
     button { padding: 8px 10px; cursor: pointer; white-space: nowrap; }
     button.active { background: var(--rarity-color, #e8edf3); border-color: var(--rarity-color, #e8edf3); color: #071018; }
-    select { min-width: 0; padding: 8px 10px; }
+    select, input { min-width: 0; padding: 8px 10px; }
     .day { margin: 22px 0 10px; color: #8f98a3; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .record { display: grid; grid-template-columns: 54px minmax(0, 1fr) 72px; gap: 14px; padding: 16px; margin-top: 10px; border: 1px solid #232a34; border-radius: 10px; background: #11151b; }
     .record-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
     .title { font-weight: 800; font-size: 17px; }
     .sub { color: #9ca6b3; font-size: 13px; margin-top: 6px; }
+    .weather { display: inline-flex; align-items: center; gap: 6px; color: #c8d0d9; font-size: 13px; margin-top: 8px; }
+    .source-device { display: inline-flex; align-items: center; gap: 4px; color: #95a0ad; }
     .spikes { display: flex; gap: 12px; align-items: end; margin-top: 10px; flex-wrap: wrap; }
     .spike { display: grid; gap: 3px; justify-items: center; color: #9ca6b3; font-size: 12px; }
     .spike .glyph { width: 34px; height: 34px; }
     .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2d3946; border-radius: 999px; padding: 4px 8px; color: #c8d0d9; font-size: 12px; }
     .rarity { border-color: color-mix(in srgb, var(--rarity-color), transparent 45%); color: var(--rarity-color); background: color-mix(in srgb, var(--rarity-color), transparent 88%); }
-    .record-side { display: grid; gap: 8px; justify-items: center; align-content: start; }
+    .record-side { display: flex; flex-direction: column; gap: 8px; align-items: center; min-height: 100%; }
+    .record-source { align-self: flex-end; font-size: 28px; margin-top: auto; }
     .glyph { width: 76px; height: 76px; display: grid; place-items: center; color: var(--rarity-color, #f3f5f7); }
     .glyph svg { width: 100%; height: 100%; display: block; overflow: visible; }
     .glyph path, .glyph polygon, .glyph circle { fill: currentColor; }
@@ -1520,6 +2264,7 @@ function pageHTML() {
     .media-preview:focus-visible { outline: 2px solid #2f9bff; outline-offset: 3px; }
     audio { width: 260px; }
     .empty { color: #95a0ad; padding: 40px 0; text-align: center; }
+    .load-more { width: 100%; margin-top: 18px; padding: 12px; }
     .lightbox[hidden] { display: none; }
     .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.86); backdrop-filter: blur(12px); }
     .lightbox img, .lightbox video { max-width: min(96vw, 1280px); max-height: 92vh; object-fit: contain; border-radius: 10px; box-shadow: 0 24px 80px rgba(0,0,0,.7); }
@@ -1543,10 +2288,16 @@ function pageHTML() {
     <div class="header-inner">
       <h1>Exeligmos Sync</h1>
       <div class="meta" id="status">Loading synced folders...</div>
-      <nav><a href="/dataset">Dataset</a></nav>
+      <nav><a href="/channels">Channels</a><a href="/dataset">Dataset</a></nav>
     </div>
   </header>
-  <main id="records"></main>
+  <main>
+    <section class="dashboard">
+      <div class="dashboard-title">Devices</div>
+      <div class="devices" id="devices"></div>
+    </section>
+    <section id="records"></section>
+  </main>
   <div class="lightbox" id="lightbox" hidden>
     <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close media preview">X</button>
     <img id="lightbox-image" alt="">
@@ -1556,11 +2307,12 @@ function pageHTML() {
   <script>
     const status = document.getElementById('status');
     const recordsEl = document.getElementById('records');
+    const devicesEl = document.getElementById('devices');
     const lightbox = document.getElementById('lightbox');
     const lightboxImage = document.getElementById('lightbox-image');
     const lightboxVideo = document.getElementById('lightbox-video');
     const lightboxClose = document.getElementById('lightbox-close');
-    const state = { rarity: 'all', saros: 'all', tag: 'all', data: null };
+    const state = { rarity: 'all', saros: 'all', tag: 'all', device: 'all', date: '', data: null, records: [], offset: 0, limit: 25, hasMore: false, loading: false };
     const glyphFontCache = new Map();
 
     lightboxClose.addEventListener('click', closeMediaPreview);
@@ -1571,18 +2323,89 @@ function pageHTML() {
       if (event.key === 'Escape' && !lightbox.hidden) closeMediaPreview();
     });
 
-    fetch('/api/records')
-      .then((response) => response.json())
-      .then((data) => {
-        status.textContent = data.exportTimestamp
-          ? \`Folder state: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} tags · \${data.recordCount} records · \${data.mediaCount} media\`
-          : 'No synced records yet. Upload from the iOS app Settings screen.';
-        state.data = data;
-        renderPage();
-      })
-      .catch((error) => {
-        status.textContent = error.message;
+    loadRecords();
+    connectEventStream();
+
+    function loadRecords({ reset = true } = {}) {
+      if (state.loading) return;
+      state.loading = true;
+      const offset = reset ? 0 : state.offset;
+      const params = new URLSearchParams({
+        limit: String(state.limit),
+        offset: String(offset),
+        rarity: state.rarity,
+        saros: state.saros,
+        tag: state.tag,
+        device: state.device
       });
+      if (state.date) params.set('date', state.date);
+
+      fetch(\`/api/records?\${params.toString()}\`)
+        .then((response) => response.json())
+        .then((data) => {
+          status.textContent = data.exportTimestamp
+            ? \`Folder state: \${new Date(data.exportTimestamp).toLocaleString()} · \${data.entityCount} tags · \${data.recordCount} records · \${data.mediaCount} media\`
+            : 'No synced records yet. Upload from the iOS app Settings screen.';
+          state.data = data;
+          state.records = reset ? (data.records || []) : [...state.records, ...(data.records || [])];
+          state.offset = data.nextOffset || state.records.length;
+          state.hasMore = Boolean(data.hasMore);
+          renderDevices(data.devices || []);
+          renderPage();
+        })
+        .catch((error) => {
+          status.textContent = error.message;
+        })
+        .finally(() => {
+          state.loading = false;
+        });
+    }
+
+    function connectEventStream() {
+      const stream = new EventSource('/api/events/stream');
+      stream.onmessage = (message) => {
+        const event = JSON.parse(message.data || '{}');
+        if (event.devices) {
+          renderDevices(event.devices);
+        }
+        if (event.type === 'device-seen') {
+          loadDevices();
+        }
+        if (event.type === 'record-posted' || event.type === 'record-deleted' || event.type === 'command-submitted') {
+          loadRecords();
+        }
+      };
+      stream.onerror = () => {
+        status.textContent = 'Realtime stream disconnected. Reconnecting...';
+      };
+    }
+
+    function loadDevices() {
+      fetch('/api/devices')
+        .then((response) => response.json())
+        .then((data) => renderDevices(data.devices || []))
+        .catch(() => {});
+    }
+
+    function renderDevices(devices) {
+      devicesEl.innerHTML = '';
+      if (!devices.length) {
+        devicesEl.innerHTML = '<span class="sub">No app devices have checked in yet.</span>';
+        return;
+      }
+      for (const device of devices) {
+        const node = document.createElement('span');
+        node.className = \`device \${device.online ? 'online' : ''}\`;
+        node.title = device.lastSeen ? \`Last seen \${new Date(device.lastSeen).toLocaleString()}\` : '';
+        node.innerHTML = \`
+          <span class="device-dot"></span>
+          <span>\${escapeHTML(device.emoji || '◇')}</span>
+          <strong>\${escapeHTML(device.name || 'Device')}</strong>
+          <span class="device-id">\${escapeHTML(device.id || '')}</span>
+        \`;
+        devicesEl.appendChild(node);
+      }
+    }
 
     function renderPage() {
       const data = state.data || { records: [], sarosFamilies: [], tags: [], rarities: [] };
@@ -1595,10 +2418,12 @@ function pageHTML() {
       filterSelects.className = 'filter-selects';
       filterSelects.append(renderSelect('saros', 'Saros', data.sarosFamilies || [], (family) => \`\${family.name} (\${family.count})\`));
       filterSelects.append(renderSelect('tag', 'Tag', data.tags || [], (tag) => \`\${tag.emoji || ''} \${tag.name || 'Tag'} (\${tag.count})\`));
+      filterSelects.append(renderSelect('device', 'Device', data.deviceFilters || [], (device) => \`\${device.emoji || ''} \${device.name || device.id} (\${device.count})\`));
+      filterSelects.append(renderDateFilter());
       filters.append(filterSelects);
       recordsEl.appendChild(filters);
 
-      const records = filteredRecords(data.records || []);
+      const records = state.records || [];
       if (!records.length) {
         recordsEl.insertAdjacentHTML('beforeend', '<div class="empty">No records match these filters.</div>');
         return;
@@ -1616,6 +2441,15 @@ function pageHTML() {
         }
         recordsEl.appendChild(renderRecord(record));
       }
+
+      if (state.hasMore) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'load-more';
+        button.textContent = 'Load more';
+        button.addEventListener('click', () => loadRecords({ reset: false }));
+        recordsEl.appendChild(button);
+      }
     }
 
     function renderRarityFilter(rarities) {
@@ -1625,21 +2459,17 @@ function pageHTML() {
       all.type = 'button';
       all.textContent = 'All';
       all.className = state.rarity === 'all' ? 'active' : '';
-      all.addEventListener('click', () => { state.rarity = 'all'; renderPage(); });
+      all.addEventListener('click', () => { state.rarity = 'all'; loadRecords({ reset: true }); });
       wrap.appendChild(all);
 
       for (const rarity of rarities) {
         const button = document.createElement('button');
         button.type = 'button';
-        if (rarity.hasBadge) {
-          button.appendChild(renderRarityGlyph(rarity));
-        }
         button.appendChild(document.createTextNode(\`\${rarity.name} \${rarity.count}\`));
-        if (rarity.isCommon) button.dataset.common = 'true';
-        button.title = rarity.patternLabel || rarity.name;
+        button.title = rarity.name;
         button.style.setProperty('--rarity-color', rarity.color || '#e8edf3');
         button.className = state.rarity === rarity.id ? 'active' : '';
-        button.addEventListener('click', () => { state.rarity = rarity.id; renderPage(); });
+        button.addEventListener('click', () => { state.rarity = rarity.id; loadRecords({ reset: true }); });
         wrap.appendChild(button);
       }
       return wrap;
@@ -1664,18 +2494,21 @@ function pageHTML() {
       select.value = state[kind];
       select.addEventListener('change', () => {
         state[kind] = select.value;
-        renderPage();
+        loadRecords({ reset: true });
       });
       return select;
     }
 
-    function filteredRecords(records) {
-      return records.filter((record) => {
-        if (state.rarity !== 'all' && record.rarity?.key !== state.rarity) return false;
-        if (state.saros !== 'all' && !(record.sarosNumbers || []).map(String).includes(state.saros)) return false;
-        if (state.tag !== 'all' && !(record.tags || []).some((tag) => (tag.filterID || tag.displayKey || tag.id) === state.tag)) return false;
-        return true;
+    function renderDateFilter() {
+      const input = document.createElement('input');
+      input.type = 'date';
+      input.value = state.date || '';
+      input.setAttribute('aria-label', 'Date');
+      input.addEventListener('change', () => {
+        state.date = input.value || '';
+        loadRecords({ reset: true });
       });
+      return input;
     }
 
     function renderRecord(record) {
@@ -1688,11 +2521,19 @@ function pageHTML() {
       const side = document.createElement('div');
       side.className = 'record-side';
       const primarySpike = (record.spikes || [])[0] || record;
+      const topGlyph = record.closestSarosPhase || primarySpike;
       side.appendChild(renderOctalGlyph(
-        primarySpike.octalAddress || record.octalAddress,
-        primarySpike.harmonicDepth || record.harmonicDepth || 7,
-        primarySpike.rarity?.color || record.rarity?.color || '#f3f5f7'
+        topGlyph.octalAddress || record.octalAddress,
+        topGlyph.harmonicDepth || record.harmonicDepth || 7,
+        topGlyph.rarity?.color || record.rarity?.color || '#f3f5f7'
       ));
+      if (record.sourceDevice?.emoji) {
+        const source = document.createElement('div');
+        source.className = 'record-source';
+        source.title = record.sourceDevice.name || record.sourceDevice.id || '';
+        source.textContent = record.sourceDevice.emoji;
+        side.appendChild(source);
+      }
 
       const rarityBadge = record.rarity?.hasBadge
         ? \`<span class="badge rarity" title="\${escapeHTML(record.rarity.patternLabel || '')}" style="--rarity-color: \${escapeHTML(record.rarity.color || '#f3f5f7')}">\${escapeHTML(record.rarity.title)}</span>\`
@@ -1702,7 +2543,8 @@ function pageHTML() {
           <div class="title" style="color: \${escapeHTML(record.rarity?.color || '#f3f5f7')}">\${escapeHTML(record.title || 'Record')}</div>
           \${rarityBadge}
         </div>
-        <div class="sub">\${new Date(record.eventDate).toLocaleString()} · \${(record.sarosNumbers || []).map((saros) => \`Saros \${saros}\`).join(' · ')}</div>
+        <div class="sub">\${new Date(record.eventDate).toLocaleString()}</div>
+        \${renderWeather(record)}
       \`;
       body.appendChild(renderSpikeStrip(record.spikes || []));
       if (record.text) {
@@ -1728,6 +2570,15 @@ function pageHTML() {
       }
       node.append(emoji, body, side);
       return node;
+    }
+
+    function renderWeather(record) {
+      const parts = [];
+      if (record.weatherEmoji) parts.push(escapeHTML(record.weatherEmoji));
+      if (record.temperatureC !== null && record.temperatureC !== undefined) {
+        parts.push(\`\${escapeHTML(record.temperatureC)}°C\`);
+      }
+      return parts.length ? \`<div class="weather">\${parts.join(' ')}</div>\` : '';
     }
 
     function renderSpikeStrip(spikes) {
@@ -1893,6 +2744,151 @@ function pageHTML() {
 
     function escapeHTML(value) {
       return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function channelsPageHTML() {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exeligmos Channels</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #0b0d10; color: #f3f5f7; }
+    header { position: sticky; top: 0; z-index: 2; background: rgba(11,13,16,.94); backdrop-filter: blur(14px); padding: 12px 20px; border-bottom: 1px solid #222832; }
+    .header-inner, main { max-width: 920px; margin: 0 auto; }
+    .header-inner { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+    h1 { margin: 0; font-size: 16px; letter-spacing: .04em; text-transform: uppercase; }
+    nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    nav a { color: #f3f5f7; text-decoration: none; background: #1b222c; border: 1px solid #2d3946; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+    main { padding: 20px; display: grid; gap: 18px; }
+    section { border: 1px solid #222a34; border-radius: 14px; background: #0f141a; overflow: hidden; }
+    .section-title { padding: 13px 14px; color: #95a0ad; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid #222a34; }
+    .list { display: grid; }
+    .row { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px; border-bottom: 1px solid #202832; }
+    .row:last-child { border-bottom: 0; }
+    .emoji { font-size: 28px; width: 42px; height: 42px; display: grid; place-items: center; background: #171e27; border: 1px solid #2a3541; border-radius: 12px; }
+    .name { font-weight: 800; }
+    .meta { color: #95a0ad; font-size: 13px; margin-top: 3px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; color: #95a0ad; font-size: 13px; margin-top: 5px; }
+    .dot { width: 8px; height: 8px; border-radius: 999px; background: #66717d; }
+    .online .dot { background: #28d66b; }
+    button { color: #ff6b6b; background: rgba(255, 107, 107, .1); border: 1px solid rgba(255, 107, 107, .35); border-radius: 10px; padding: 8px 11px; font: inherit; font-weight: 700; cursor: pointer; }
+    button:hover { background: rgba(255, 107, 107, .18); }
+    .empty { padding: 16px; color: #95a0ad; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Channels</h1>
+      <nav><a href="/">Feed</a><a href="/dataset">Dataset</a></nav>
+    </div>
+  </header>
+  <main>
+    <section>
+      <div class="section-title">Active</div>
+      <div class="list" id="active"></div>
+    </section>
+    <section>
+      <div class="section-title">Deleted</div>
+      <div class="list" id="deleted"></div>
+    </section>
+  </main>
+  <script>
+    const activeEl = document.getElementById('active');
+    const deletedEl = document.getElementById('deleted');
+
+    loadChannels();
+    const stream = new EventSource('/api/events/stream');
+    stream.onmessage = (message) => {
+      const event = JSON.parse(message.data || '{}');
+      if (event.type === 'device-seen' || event.type === 'channels-updated') loadChannels();
+    };
+
+    function loadChannels() {
+      fetch('/api/channels')
+        .then((response) => response.json())
+        .then((data) => {
+          renderActive(data.devices || []);
+          renderDeleted(data.blockedDevices || []);
+        })
+        .catch(() => {
+          activeEl.innerHTML = '<div class="empty">Channels unavailable.</div>';
+        });
+    }
+
+    function renderActive(devices) {
+      activeEl.innerHTML = '';
+      if (!devices.length) {
+        activeEl.innerHTML = '<div class="empty">No active channels.</div>';
+        return;
+      }
+      for (const device of devices) {
+        const row = document.createElement('div');
+        row.className = \`row \${device.online ? 'online' : ''}\`;
+        row.innerHTML = \`
+          <div class="emoji">\${escapeHTML(device.emoji || '◇')}</div>
+          <div>
+            <div class="name">\${escapeHTML(device.name || 'Channel')}</div>
+            <div class="meta">\${escapeHTML(device.id || '')}</div>
+            <div class="status"><span class="dot"></span><span>\${device.online ? 'online' : 'last seen ' + formatDate(device.lastSeen)}</span></div>
+          </div>
+          <button type="button">Delete</button>
+        \`;
+        row.querySelector('button').addEventListener('click', () => deleteChannel(device));
+        activeEl.appendChild(row);
+      }
+    }
+
+    function renderDeleted(devices) {
+      deletedEl.innerHTML = '';
+      if (!devices.length) {
+        deletedEl.innerHTML = '<div class="empty">No deleted channels.</div>';
+        return;
+      }
+      for (const device of devices) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = \`
+          <div class="emoji">\${escapeHTML(device.emoji || '◇')}</div>
+          <div>
+            <div class="name">\${escapeHTML(device.name || 'Channel')}</div>
+            <div class="meta">\${escapeHTML(device.id || '')}</div>
+            <div class="status">deleted \${formatDate(device.deletedAt)}</div>
+          </div>
+          <span></span>
+        \`;
+        deletedEl.appendChild(row);
+      }
+    }
+
+    function deleteChannel(device) {
+      if (!confirm(\`Delete and block channel \${device.name || device.id}?\`)) return;
+      fetch(\`/api/channels/\${encodeURIComponent(device.id)}\`, { method: 'DELETE' })
+        .then((response) => response.json())
+        .then(loadChannels)
+        .catch(loadChannels);
+    }
+
+    function formatDate(value) {
+      if (!value) return 'never';
+      return new Date(value).toLocaleString();
+    }
+
+    function escapeHTML(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      }[char]));
     }
   </script>
 </body>

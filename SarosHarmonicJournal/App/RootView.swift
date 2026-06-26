@@ -106,10 +106,15 @@ struct RootView: View {
 
         switch url.host {
         case "record":
-            guard let entityID = entityID(from: url) else { return }
-            openRecordCapture(for: entityID)
+            if let entityID = entityID(from: url) {
+                openRecordCapture(for: entityID)
+            } else {
+                selectedTab = .record
+            }
         case "thread":
             selectedTab = .clock
+        case "saros":
+            selectedTab = .saros
         default:
             break
         }
@@ -163,8 +168,12 @@ private struct RecordCaptureRequest: Identifiable {
 
 private struct FeedView: View {
     @EnvironmentObject private var services: AppServices
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
 
     @State private var selectedRarity: FlipRarity?
     @State private var selectedDirection: JournalWaveDirection?
@@ -176,8 +185,9 @@ private struct FeedView: View {
     @State private var selectedAnomalisticBin: Int?
     @State private var selectedDraconicBin: Int?
     @State private var selectedEntry: JournalEntry?
-    @State private var isCreatingEntry = false
+    @State private var captureRequest: FeedCaptureRequest?
     @State private var isFilterPresented = false
+    @State private var syncErrorMessage: String?
 
     private var filteredEntries: [JournalEntry] {
         entries.filter { entry in
@@ -213,9 +223,9 @@ private struct FeedView: View {
     }
 
     private var primeColorsBySaros: [Int: Color] {
-        Dictionary(uniqueKeysWithValues: tags.filter(\.isPrime).map {
-            ($0.saros, Color(hex: $0.tintHex, fallback: .white))
-        })
+        tags.filter(\.isPrime).reduce(into: [Int: Color]()) { colors, tag in
+            colors[tag.saros] = colors[tag.saros] ?? Color(hex: tag.tintHex, fallback: .white)
+        }
     }
 
     var body: some View {
@@ -252,6 +262,9 @@ private struct FeedView: View {
         }
         .navigationTitle("Feed")
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await refreshFromRelay()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -262,7 +275,11 @@ private struct FeedView: View {
                 .accessibilityLabel("Filter feed")
 
                 Button {
-                    isCreatingEntry = true
+                    if let draft = entryDrafts.first {
+                        captureRequest = .draft(draft)
+                    } else {
+                        captureRequest = .template(.random)
+                    }
                 } label: {
                     Image(systemName: "record.circle")
                 }
@@ -272,9 +289,14 @@ private struct FeedView: View {
         .navigationDestination(item: $selectedEntry) { entry in
             JournalEntryDetailView(entry: entry, tags: tags)
         }
-        .sheet(isPresented: $isCreatingEntry) {
+        .sheet(item: $captureRequest) { request in
             NavigationStack {
-                JournalEntryCaptureView(recordStartedAt: Date())
+                switch request {
+                case .template(let template):
+                    JournalEntryCaptureView(recordStartedAt: Date(), template: template)
+                case .draft(let draft):
+                    JournalEntryCaptureView(draft: draft)
+                }
             }
         }
         .sheet(isPresented: $isFilterPresented) {
@@ -292,6 +314,27 @@ private struct FeedView: View {
                     primeColorsBySaros: primeColorsBySaros
                 )
             }
+        }
+        .alert("Sync failed", isPresented: Binding(get: { syncErrorMessage != nil }, set: { _ in syncErrorMessage = nil })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(syncErrorMessage ?? "")
+        }
+    }
+
+    @MainActor
+    private func refreshFromRelay() async {
+        guard syncServerURL.nilIfBlank != nil else { return }
+        do {
+            _ = try await services.syncService.synchronizeEntries(
+                with: syncServerURL,
+                modelContext: modelContext,
+                tags: tags,
+                entries: entries,
+                commands: syncCommands
+            )
+        } catch {
+            syncErrorMessage = error.localizedDescription
         }
     }
 
@@ -320,6 +363,20 @@ private struct FeedView: View {
             return "Yesterday"
         }
         return JournalFormatters.date.string(from: day)
+    }
+}
+
+private enum FeedCaptureRequest: Identifiable {
+    case template(JournalTemplateSeed)
+    case draft(JournalEntryDraft)
+
+    var id: String {
+        switch self {
+        case .template(let template):
+            "template-\(template.id)"
+        case .draft(let draft):
+            "draft-\(draft.id.uuidString)"
+        }
     }
 }
 
@@ -1059,82 +1116,59 @@ enum AppDeepLinkStore {
 
 private struct AutoSyncObserver: View {
     @EnvironmentObject private var services: AppServices
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
-    @AppStorage(JournalSettings.autoSyncEnabledKey) private var autoSyncEnabled = false
 
     @State private var isSyncing = false
     @State private var lastCheckedFingerprint = ""
 
     private var syncFingerprint: String {
-        "\(autoSyncEnabled ? "1" : "0")|\(syncServerURL)|\(tagFingerprint)|\(entryFingerprint)"
+        "\(syncServerURL)|\(commandFingerprint)"
     }
 
-    private var tagFingerprint: String {
-        tags.map { tag in
-            "\(tag.id.uuidString):\(tag.updatedAt.timeIntervalSince1970):\(tag.name):\(tag.emoji):\(tag.saros):\(tag.colorHex ?? "")"
-        }.joined(separator: ",")
-    }
-
-    private var entryFingerprint: String {
-        entries.map { entry in
-            let mediaIDs = entry.mediaItems.map { $0.id.uuidString }.joined(separator: "+")
-            return "\(entry.id.uuidString):\(entry.updatedAt.timeIntervalSince1970):\(entry.eventDate.timeIntervalSince1970):\(mediaIDs)"
-        }.joined(separator: ",")
+    private var commandFingerprint: String {
+        syncCommands
+            .filter(\.isPending)
+            .map { "\($0.id.uuidString):\($0.updatedAt.timeIntervalSince1970):\($0.typeRawValue):\($0.subjectID)" }
+            .joined(separator: ",")
     }
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
             .task(id: syncFingerprint) {
-                await scheduleAutoSync()
-            }
-            .onChange(of: scenePhase) { _, phase in
-                guard phase == .active else { return }
-                Task {
-                    await scheduleAutoSync(force: true)
-                }
+                await pushPendingCommands()
             }
     }
 
     @MainActor
-    private func scheduleAutoSync(force: Bool = false) async {
+    private func pushPendingCommands() async {
         guard syncServerURL.nilIfBlank != nil else { return }
-
-        if !force {
-            try? await Task.sleep(nanoseconds: 850_000_000)
-        }
+        try? await Task.sleep(nanoseconds: 850_000_000)
         guard !Task.isCancelled else { return }
-
-        let hasPendingDataset = ((try? services.animacyDatasetQueue.summary().hasPendingUploads) ?? false)
-        guard autoSyncEnabled || hasPendingDataset else { return }
-
-        await syncIfNeeded(force: force || hasPendingDataset)
-    }
-
-    @MainActor
-    private func syncIfNeeded(force: Bool) async {
+        let hasPendingCommands = syncCommands.contains(where: \.isPending)
+        guard hasPendingCommands else { return }
         let fingerprint = syncFingerprint
-        guard force || lastCheckedFingerprint != fingerprint else { return }
+        guard lastCheckedFingerprint != fingerprint else { return }
         guard !isSyncing else { return }
 
         isSyncing = true
         defer { isSyncing = false }
 
         do {
-            if autoSyncEnabled, !entries.isEmpty {
-                _ = try await services.syncService.pushMissingEntries(
-                    to: syncServerURL,
-                    tags: tags,
-                    entries: entries
-                )
-            }
-            _ = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)
+            _ = try await services.syncService.pushPendingLocalCommands(
+                with: syncServerURL,
+                modelContext: modelContext,
+                tags: tags,
+                entries: entries,
+                commands: syncCommands
+            )
             lastCheckedFingerprint = fingerprint
         } catch {
-            // Keep auto sync quiet; manual sync controls surface detailed server errors.
+            // Keep background command sending quiet; manual refresh surfaces detailed relay errors.
         }
     }
 }
@@ -1173,18 +1207,40 @@ private struct LiveTrackingRolloverObserver: View {
     @MainActor
     private func rollOverIfNeeded(at date: Date) async {
         guard !isUpdating,
-              let snapshot = ThreadTrackingSharedStore.load(),
-              date >= snapshot.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay),
-              let entityID = UUID(uuidString: snapshot.threadID),
-              let entity = entities.first(where: { $0.id == entityID })
+              let snapshot = ThreadTrackingSharedStore.load()
         else {
             return
         }
+        let shouldRefreshForFlip = date >= snapshot.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay)
+        let shouldRefreshForWaveform = snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID
+            && snapshot.waveformEndDate.map { date >= $0 } == true
+        guard shouldRefreshForFlip || shouldRefreshForWaveform else { return }
 
         isUpdating = true
         defer { isUpdating = false }
 
         do {
+            if snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID {
+                let contextService = services.sarosEventContextService
+                let harmonicDepth = snapshot.harmonicDepth
+                let nextSnapshot = try await Task.detached(priority: .userInitiated) {
+                    try ThreadLiveActivityService.journalSnapshot(
+                        contextService: contextService,
+                        date: date,
+                        harmonicDepth: harmonicDepth
+                    )
+                }.value
+                guard shouldRefreshForWaveform || nextSnapshot.flipDate > snapshot.flipDate.addingTimeInterval(0.5) else { return }
+                try await ThreadLiveActivityService.start(snapshot: nextSnapshot)
+                return
+            }
+
+            guard let entityID = UUID(uuidString: snapshot.threadID),
+                  let entity = entities.first(where: { $0.id == entityID })
+            else {
+                return
+            }
+
             let reading = try services.clockService.reading(
                 saros: entity.saros,
                 date: date,

@@ -5,6 +5,15 @@ import ActivityKit
 #endif
 
 struct TrackingDisplayPayload {
+    let saros: Int?
+    let eventName: String?
+    let energyPercent: Double?
+    let momentum: Double?
+    let waveDirectionRawValue: String?
+    let waveformSamples: [Double]?
+    let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
+    let waveformStartDate: Date?
+    let waveformEndDate: Date?
     let glyph: String
     let rarityRawValue: String
     let rarityTitle: String
@@ -68,6 +77,15 @@ extension ThreadTrackingSnapshot {
            let nextRarityColorHex,
            let nextFlipDate {
             return TrackingDisplayPayload(
+                saros: saros,
+                eventName: nextRarityTitle,
+                energyPercent: energyPercent,
+                momentum: momentum,
+                waveDirectionRawValue: waveDirectionRawValue,
+                waveformSamples: waveformSamples,
+                waveformSpikeMarkers: waveformSpikeMarkers,
+                waveformStartDate: waveformStartDate,
+                waveformEndDate: waveformEndDate,
                 glyph: nextGlyph,
                 rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
@@ -81,6 +99,15 @@ extension ThreadTrackingSnapshot {
         }
 
         return TrackingDisplayPayload(
+            saros: saros,
+            eventName: eventName,
+            energyPercent: energyPercent,
+            momentum: momentum,
+            waveDirectionRawValue: waveDirectionRawValue,
+            waveformSamples: waveformSamples,
+            waveformSpikeMarkers: waveformSpikeMarkers,
+            waveformStartDate: waveformStartDate,
+            waveformEndDate: waveformEndDate,
             glyph: glyph,
             rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
@@ -107,6 +134,15 @@ extension ThreadTrackingAttributes.ContentState {
            let nextRarityColorHex,
            let nextFlipDate {
             return TrackingDisplayPayload(
+                saros: saros,
+                eventName: nextRarityTitle,
+                energyPercent: energyPercent,
+                momentum: momentum,
+                waveDirectionRawValue: waveDirectionRawValue,
+                waveformSamples: waveformSamples,
+                waveformSpikeMarkers: waveformSpikeMarkers,
+                waveformStartDate: waveformStartDate,
+                waveformEndDate: waveformEndDate,
                 glyph: nextGlyph,
                 rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
@@ -120,6 +156,15 @@ extension ThreadTrackingAttributes.ContentState {
         }
 
         return TrackingDisplayPayload(
+            saros: saros,
+            eventName: eventName,
+            energyPercent: energyPercent,
+            momentum: momentum,
+            waveDirectionRawValue: waveDirectionRawValue,
+            waveformSamples: waveformSamples,
+            waveformSpikeMarkers: waveformSpikeMarkers,
+            waveformStartDate: waveformStartDate,
+            waveformEndDate: waveformEndDate,
             glyph: glyph,
             rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
@@ -133,6 +178,138 @@ extension ThreadTrackingAttributes.ContentState {
     }
 }
 #endif
+
+struct WidgetWaveformSegmentView: View {
+    let samples: [Double]
+    var spikeMarkers: [TrackingWaveformSpikeMarker] = []
+    let color: Color
+    var showsCurrentMarker = true
+    var currentPosition: Double = 0.5
+
+    var body: some View {
+        Canvas { context, size in
+            guard samples.count > 1, size.width > 2, size.height > 2 else { return }
+
+            let clamped = samples.map { min(max($0, 0), 1) }
+            let markerMax = spikeMarkers.map { min(max($0.energy, 0), 1) }.max() ?? 0
+            let localMax = max(clamped.max() ?? 0, markerMax, 0.08)
+            let visualScale = max(1, min(3.6, 0.78 / localMax))
+            let visualValue: (Double) -> Double = { value in
+                min(max(value, 0) * visualScale, 1)
+            }
+            let step = size.width / CGFloat(clamped.count - 1)
+            let baselineY = size.height - 2
+            var line = Path()
+            var fill = Path()
+
+            for index in clamped.indices {
+                let x = CGFloat(index) * step
+                let y = baselineY - CGFloat(visualValue(clamped[index])) * (size.height - 5)
+                let point = CGPoint(x: x, y: y)
+                if index == clamped.startIndex {
+                    line.move(to: point)
+                    fill.move(to: CGPoint(x: x, y: baselineY))
+                    fill.addLine(to: point)
+                } else {
+                    line.addLine(to: point)
+                    fill.addLine(to: point)
+                }
+            }
+
+            fill.addLine(to: CGPoint(x: size.width, y: baselineY))
+            fill.closeSubpath()
+            context.fill(fill, with: .color(color.opacity(0.18)))
+            context.stroke(line, with: .color(color.opacity(0.92)), lineWidth: 1.4)
+
+            for marker in spikeMarkers {
+                let x = CGFloat(min(max(marker.position, 0), 1)) * size.width
+                let y = baselineY - CGFloat(visualValue(marker.energy)) * (size.height - 5)
+                let dotRect = CGRect(x: x - 3, y: y - 3, width: 6, height: 6)
+                context.fill(Path(ellipseIn: dotRect), with: .color(Color(hexString: marker.colorHex)))
+                context.stroke(Path(ellipseIn: dotRect.insetBy(dx: -1, dy: -1)), with: .color(.black.opacity(0.45)), lineWidth: 1)
+            }
+
+            if showsCurrentMarker {
+                let markerX = CGFloat(min(max(currentPosition, 0), 1)) * size.width
+                var marker = Path()
+                marker.move(to: CGPoint(x: markerX, y: 0))
+                marker.addLine(to: CGPoint(x: markerX, y: size.height))
+                context.stroke(marker, with: .color(.white.opacity(0.38)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+extension TrackingDisplayPayload {
+    var displayEventName: String {
+        eventName?.nilIfBlank ?? rarityTitle
+    }
+
+    var energyText: String {
+        guard let energyPercent else { return "E --" }
+        return "E \(Int((min(max(energyPercent, 0), 1) * 100).rounded()))%"
+    }
+
+    var momentumText: String {
+        guard let momentum else { return "M --" }
+        let percent = Int((min(max(momentum, -1), 1) * 100).rounded())
+        return percent > 0 ? "M +\(percent)%" : "M \(percent)%"
+    }
+
+    func waveformPosition(at date: Date) -> Double {
+        guard let waveformStartDate,
+              let waveformEndDate,
+              waveformEndDate > waveformStartDate
+        else {
+            return 0.5
+        }
+        return min(max(date.timeIntervalSince(waveformStartDate) / waveformEndDate.timeIntervalSince(waveformStartDate), 0), 1)
+    }
+}
+
+struct WidgetWaveDirectionIcon: View {
+    let rawValue: String?
+    var size: CGFloat = 13
+
+    var body: some View {
+        Image(systemName: symbolName)
+            .font(.system(size: size, weight: .bold))
+            .foregroundStyle(color)
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var symbolName: String {
+        switch rawValue {
+        case "ascending": "arrow.up"
+        case "descending": "arrow.down"
+        default: "minus"
+        }
+    }
+
+    private var color: Color {
+        switch rawValue {
+        case "ascending": .green
+        case "descending": .red
+        default: .white
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch rawValue {
+        case "ascending": "Ascending"
+        case "descending": "Descending"
+        default: "Flat"
+        }
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
 
 struct WidgetRarityGlyphIcon: View {
     let rawValue: String

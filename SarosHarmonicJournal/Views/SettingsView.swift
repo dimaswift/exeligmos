@@ -7,17 +7,20 @@ struct SettingsView: View {
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
-    @AppStorage(JournalSettings.autoSyncEnabledKey) private var autoSyncEnabled = false
+    @AppStorage(JournalSettings.deviceIDKey) private var deviceID = ""
+    @AppStorage(JournalSettings.deviceNameKey) private var deviceName = ""
+    @AppStorage(JournalSettings.deviceEmojiKey) private var deviceEmoji = ""
     @State private var diagnosticMessage = ""
     @State private var syncMessage = ""
     @State private var errorMessage: String?
     @State private var isSyncing = false
-    @State private var datasetSummary = AnimacyDatasetQueueSummary.empty
-    @State private var datasetMessage = ""
-    @State private var isUploadingDataset = false
+    @State private var deviceUpdateTask: Task<Void, Never>?
+    @State private var isStartingLiveTracking = false
+    @State private var liveTrackingMessage = ""
 
     var body: some View {
         Form {
@@ -49,6 +52,17 @@ struct SettingsView: View {
 
             Section("Notifications") {
                 Button {
+                    Task { await startLiveTracking() }
+                } label: {
+                    if isStartingLiveTracking {
+                        ProgressView()
+                    } else {
+                        Label("Live tracking", systemImage: "waveform.path.ecg")
+                    }
+                }
+                .disabled(isStartingLiveTracking)
+
+                Button {
                     Task {
                         await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                             eclipseService: services.eclipseService,
@@ -65,9 +79,29 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                if !liveTrackingMessage.isEmpty {
+                    Text(liveTrackingMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("LAN Sync") {
+                HStack {
+                    Text("Channel")
+                    Spacer()
+                    Text(deviceID)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                TextField("Channel name", text: $deviceName)
+                    .textInputAutocapitalization(.words)
+
+                TextField("Emoji", text: $deviceEmoji)
+                    .frame(maxWidth: 90)
+
                 TextField("http://192.168.1.10:8787", text: $syncServerURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -76,36 +110,18 @@ struct SettingsView: View {
                 Button {
                     Task { await testSyncServer() }
                 } label: {
-                    Label("Test server connection", systemImage: "network.badge.shield.half.filled")
+                    Label("Test relay connection", systemImage: "network.badge.shield.half.filled")
                 }
                 .disabled(isSyncing)
 
                 Button {
-                    Task { await pushSyncBackup() }
+                    Task { await syncWithServer() }
                 } label: {
                     if isSyncing {
                         ProgressView()
                     } else {
-                        Label("Sync phone state", systemImage: "arrow.up.doc")
+                        Label("Sync with relay", systemImage: "arrow.triangle.2.circlepath")
                     }
-                }
-                .disabled(isSyncing)
-
-                Button {
-                    Task { await pushSyncDelta() }
-                } label: {
-                    Label("Sync phone state now", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(isSyncing)
-
-                Toggle(isOn: $autoSyncEnabled) {
-                    Label("Auto sync phone state", systemImage: autoSyncEnabled ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
-                }
-
-                Button {
-                    Task { await restoreSyncBackup() }
-                } label: {
-                    Label("Restore from server folders", systemImage: "arrow.down.doc")
                 }
                 .disabled(isSyncing)
 
@@ -116,42 +132,21 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Animacy Dataset") {
-                MetadataRow(title: "Pending captures", value: "\(datasetSummary.pendingCaptureCount)")
-                MetadataRow(title: "Failed captures", value: "\(datasetSummary.failedCaptureCount)")
-                MetadataRow(title: "Completed captures", value: "\(datasetSummary.completedCaptureCount)")
-                MetadataRow(title: "Queued samples", value: "\(datasetSummary.pendingTransformationCount)")
-                MetadataRow(title: "Uploaded samples", value: "\(datasetSummary.completedTransformationCount)")
-
-                Button {
-                    Task { await uploadPendingDatasetCaptures() }
+            Section("Data") {
+                NavigationLink {
+                    AnimacyDatasetSettingsView()
                 } label: {
-                    if isUploadingDataset {
-                        ProgressView()
-                    } else {
-                        Label("Upload pending captures", systemImage: "arrow.up.circle")
-                    }
-                }
-                .disabled(isUploadingDataset || !datasetSummary.hasPendingUploads)
-
-                Button(role: .destructive) {
-                    clearCompletedDatasetCaptures()
-                } label: {
-                    Label("Clear completed uploads", systemImage: "trash")
-                }
-                .disabled(datasetSummary.completedCaptureCount == 0)
-
-                if !datasetMessage.isEmpty {
-                    Text(datasetMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Label("Animacy dataset", systemImage: "target")
                 }
             }
 
         }
         .navigationTitle("Settings")
         .task {
-            refreshDatasetSummary()
+            let device = JournalDevice.ensureIdentity()
+            deviceID = device.id
+            deviceName = device.name
+            deviceEmoji = device.emoji
         }
         .onChange(of: harmonicDepth) { _, newDepth in
             Task {
@@ -161,6 +156,12 @@ struct SettingsView: View {
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
             }
+        }
+        .onChange(of: deviceName) { _, _ in
+            scheduleDeviceProfileUpdate()
+        }
+        .onChange(of: deviceEmoji) { _, _ in
+            scheduleDeviceProfileUpdate()
         }
         .alert("Settings error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
@@ -187,54 +188,106 @@ struct SettingsView: View {
     }
 
     @MainActor
-    private func pushSyncBackup() async {
+    private func syncWithServer() async {
         isSyncing = true
         defer { isSyncing = false }
 
         do {
-            let summary = try await services.syncService.pushEntries(
-                to: syncServerURL,
-                tags: tags,
-                entries: entries
-            )
-            syncMessage = "Synced \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func pushSyncDelta() async {
-        isSyncing = true
-        defer { isSyncing = false }
-
-        do {
-            let summary = try await services.syncService.pushMissingEntries(
-                to: syncServerURL,
-                tags: tags,
-                entries: entries
-            )
-            syncMessage = "Synced \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func restoreSyncBackup() async {
-        isSyncing = true
-        defer { isSyncing = false }
-
-        do {
-            let summary = try await services.syncService.restoreLatestEntries(
-                from: syncServerURL,
+            let summary = try await services.syncService.synchronizeEntries(
+                with: syncServerURL,
                 modelContext: modelContext,
                 tags: tags,
-                entries: entries
+                entries: entries,
+                commands: syncCommands
             )
-            syncMessage = "Restored \(summary.entityCount) tags, \(summary.recordCount) records, \(summary.mediaCount) media files from server folders."
+            syncMessage = "Relayed \(summary.uploadedRecordCount + summary.restoredRecordCount) record commands, \(summary.restoredEntityCount) tag commands, \(summary.uploadedMediaCount + summary.restoredMediaCount) media files."
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleDeviceProfileUpdate() {
+        deviceUpdateTask?.cancel()
+        deviceUpdateTask = Task {
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            guard !Task.isCancelled, syncServerURL.nilIfBlank != nil else { return }
+            try? await services.syncService.registerChannel(to: syncServerURL)
+        }
+    }
+
+    @MainActor
+    private func startLiveTracking() async {
+        isStartingLiveTracking = true
+        defer { isStartingLiveTracking = false }
+
+        let contextService = services.sarosEventContextService
+        let depth = harmonicDepth
+
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try ThreadLiveActivityService.journalSnapshot(
+                    contextService: contextService,
+                    date: Date(),
+                    harmonicDepth: depth
+                )
+            }.value
+            try await ThreadLiveActivityService.start(snapshot: snapshot)
+            liveTrackingMessage = "Live tracking active: \(snapshot.eventName ?? snapshot.rarityTitle)."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+}
+
+private struct AnimacyDatasetSettingsView: View {
+    @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+
+    @State private var datasetSummary = AnimacyDatasetQueueSummary.empty
+    @State private var datasetMessage = ""
+    @State private var isUploadingDataset = false
+
+    var body: some View {
+        List {
+            Section {
+                MetadataRow(title: "Pending captures", value: "\(datasetSummary.pendingCaptureCount)")
+                MetadataRow(title: "Failed captures", value: "\(datasetSummary.failedCaptureCount)")
+                MetadataRow(title: "Completed captures", value: "\(datasetSummary.completedCaptureCount)")
+                MetadataRow(title: "Queued samples", value: "\(datasetSummary.pendingTransformationCount)")
+                MetadataRow(title: "Uploaded samples", value: "\(datasetSummary.completedTransformationCount)")
+            }
+
+            Section {
+                Button {
+                    Task { await uploadPendingDatasetCaptures() }
+                } label: {
+                    if isUploadingDataset {
+                        ProgressView()
+                    } else {
+                        Label("Upload pending captures", systemImage: "arrow.up.circle")
+                    }
+                }
+                .disabled(isUploadingDataset || !datasetSummary.hasPendingUploads)
+
+                Button(role: .destructive) {
+                    clearCompletedDatasetCaptures()
+                } label: {
+                    Label("Clear completed uploads", systemImage: "trash")
+                }
+                .disabled(datasetSummary.completedCaptureCount == 0)
+
+                if !datasetMessage.isEmpty {
+                    Text(datasetMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Animacy Dataset")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            refreshDatasetSummary()
         }
     }
 

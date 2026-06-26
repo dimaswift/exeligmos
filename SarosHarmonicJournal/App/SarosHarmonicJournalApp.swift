@@ -16,6 +16,8 @@ struct SarosHarmonicJournalApp: App {
                 JournalEntry.self,
                 JournalTag.self,
                 JournalTemplate.self,
+                JournalEntryDraft.self,
+                SyncLocalCommand.self,
                 RecordDraft.self,
                 CustomFlipEvent.self
             )

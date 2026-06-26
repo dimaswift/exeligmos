@@ -85,9 +85,9 @@ struct SarosGridView: View {
     private static let gridCapacity = 40
 
     private var primeColorsBySaros: [Int: Color] {
-        Dictionary(uniqueKeysWithValues: tags.filter(\.isPrime).map {
-            ($0.saros, Color(hex: $0.tintHex, fallback: .white))
-        })
+        tags.filter(\.isPrime).reduce(into: [Int: Color]()) { colors, tag in
+            colors[tag.saros] = colors[tag.saros] ?? Color(hex: tag.tintHex, fallback: .white)
+        }
     }
 
     private struct GridMetrics {
@@ -1881,7 +1881,7 @@ private struct SarosPhaseDetailView: View {
     @State private var selectedSynodicBin: Int?
     @State private var selectedAnomalisticBin: Int?
     @State private var selectedDraconicBin: Int?
-    @State private var spikesOnly = false
+    @State private var spikesOnly = true
 
     private var seriesEntries: [JournalEntry] {
         entries.filter { $0.context.sarosNumbers.contains(series.saros) }

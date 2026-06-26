@@ -19,8 +19,8 @@ struct JournalEntryRow: View {
     }
 
     private var matchingTags: [JournalTag] {
-        let saroses = Set(context.sarosNumbers)
-        return tags.filter { saroses.contains($0.saros) }
+        let tagIDs = Set(entry.tagIDs)
+        return tags.filter { tagIDs.contains($0.compactID) }
     }
 
     private var primeTag: JournalTag? {
@@ -29,6 +29,11 @@ struct JournalEntryRow: View {
 
     private var moonReading: MoonPhaseOctalReading? {
         try? services.moonPhaseService.octalReading(for: entry.eventDate, depth: 3)
+    }
+
+    private var remoteDeviceEmoji: String? {
+        guard entry.sourceDeviceID != JournalDevice.current().id else { return nil }
+        return entry.sourceDeviceEmoji?.nilIfBlank
     }
 
     var body: some View {
@@ -96,6 +101,10 @@ struct JournalEntryRow: View {
                         MoonPhaseGlyph(reading: moonReading)
                             .frame(width: 24, height: 24)
                     }
+                    if let remoteDeviceEmoji {
+                        Text(remoteDeviceEmoji)
+                            .font(.caption)
+                    }
                     Spacer(minLength: 8)
                     JournalWaveDirectionIcon(direction: context.direction, size: 12)
                 }
@@ -131,12 +140,15 @@ struct JournalEntryDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
 
     let entry: JournalEntry
     let tags: [JournalTag]
 
     @StateObject private var audioPlayer = JournalEntryAudioPlayer()
     @State private var isDeleteConfirmationPresented = false
+    @State private var isEditingEntry = false
     @State private var errorMessage: String?
     @State private var localWaveDynamics: JournalWaveDynamicsSnapshot?
 
@@ -157,8 +169,8 @@ struct JournalEntryDetailView: View {
     }
 
     private var matchingTags: [JournalTag] {
-        let saroses = Set(context.sarosNumbers)
-        return tags.filter { saroses.contains($0.saros) }
+        let tagIDs = Set(entry.tagIDs)
+        return tags.filter { tagIDs.contains($0.compactID) }
     }
 
     private var moonReading: MoonPhaseOctalReading? {
@@ -169,38 +181,50 @@ struct JournalEntryDetailView: View {
         matchingTags.first(where: \.isPrime)
     }
 
+    private var remoteDeviceEmoji: String? {
+        guard entry.sourceDeviceID != JournalDevice.current().id else { return nil }
+        return entry.sourceDeviceEmoji?.nilIfBlank
+    }
+
     var body: some View {
         let displayedDirection = localWaveDynamics?.direction ?? context.direction
         let displayedMomentum = localWaveDynamics?.momentum ?? context.effectiveMomentum
 
         List {
             Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
                         Text(JournalRecordMarkers.marker(from: entry.emoji))
-                            .font(.system(size: 54))
-                            .frame(width: 64, height: 64)
+                            .font(.system(size: 42))
+                            .frame(width: 50, height: 50)
 
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 5) {
                             Text(context.displayTitleWithoutSaros)
                                 .font(.headline)
                                 .foregroundStyle(context.titleColor)
                             if context.rarity != .common {
                                 FlipRarityBadge(rarity: context.rarity)
                             }
+                            Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         Spacer(minLength: 0)
 
-                        VStack(spacing: 8) {
+                        VStack(spacing: 5) {
                             JournalClosestSarosPhaseGlyph(
                                 context: context,
                                 displayDepth: displayDepth,
-                                size: 58
+                                size: 46
                             )
                             if let moonReading {
                                 MoonPhaseGlyph(reading: moonReading)
-                                    .frame(width: 40, height: 40)
+                                    .frame(width: 30, height: 30)
+                            }
+                            if let remoteDeviceEmoji {
+                                Text(remoteDeviceEmoji)
+                                    .font(.subheadline)
                             }
                         }
                     }
@@ -208,19 +232,16 @@ struct JournalEntryDetailView: View {
                     JournalSpikeGlyphStrip(
                         spikes: context.spikes,
                         displayDepth: displayDepth,
-                        size: 44,
+                        size: 34,
                         highlightedSpikeID: context.closestSpike?.id
                     )
 
-                    HStack(alignment: .bottom) {
-                        Text(JournalFormatters.dateTime.string(from: entry.eventDate))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    HStack {
                         Spacer(minLength: 0)
-                        JournalWaveDirectionIcon(direction: displayedDirection, size: 14)
+                        JournalWaveDirectionIcon(direction: displayedDirection, size: 11)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 2)
                 .background {
                     if let primeTag {
                         RoundedRectangle(cornerRadius: 8)
@@ -235,11 +256,6 @@ struct JournalEntryDetailView: View {
                 }
             }
 
-            Section("Waveform") {
-                JournalEntryWaveformView(context: context)
-                    .frame(height: 190)
-            }
-
             if !photos.isEmpty {
                 Section("Images") {
                     JournalEntryImageCarousel(items: photos)
@@ -251,8 +267,14 @@ struct JournalEntryDetailView: View {
             if !videos.isEmpty {
                 Section("Videos") {
                     ForEach(videos) { item in
-                        VideoPlayer(player: AVPlayer(url: MediaStorage.url(for: item)))
+                        let url = MediaStorage.url(for: item)
+                        VideoPlayer(player: AVPlayer(url: url))
                             .frame(height: 260)
+                            .contextMenu {
+                                ShareLink(item: url) {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                            }
                     }
                 }
             }
@@ -270,6 +292,29 @@ struct JournalEntryDetailView: View {
                         }
                     }
                 }
+            }
+
+            if entry.weatherCode != nil || entry.temperatureC != nil {
+                Section("Weather") {
+                    HStack {
+                        Text(entry.weatherEmoji ?? JournalWeatherCatalog.emoji(for: entry.weatherCode) ?? "🌡️")
+                            .font(.largeTitle)
+                        VStack(alignment: .leading) {
+                            if let option = JournalWeatherCatalog.option(for: entry.weatherCode) {
+                                Text(option.title)
+                            }
+                            if let temperatureC = entry.temperatureC {
+                                Text("\(temperatureC)°C")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section("Waveform") {
+                JournalEntryWaveformView(context: context)
+                    .frame(height: 190)
             }
 
             if !matchingTags.isEmpty {
@@ -298,32 +343,16 @@ struct JournalEntryDetailView: View {
             )
 
             Section("Metadata") {
+                MetadataRow(title: "Sync", value: syncStatusTitle)
+                MetadataRow(title: "Version", value: "\(entry.version)")
                 MetadataRow(title: "Unix timestamp", value: "\(entry.unixTimestamp)")
                 JournalDirectionMetadataRow(direction: displayedDirection)
                 MetadataRow(title: "Momentum", value: Self.momentumPercentText(displayedMomentum))
                 MetadataRow(title: "Energy", value: "\(Int((context.energyPercent * 100).rounded()))%")
                 MetadataRow(title: "Extremum", value: context.extremum.title)
                 MetadataRow(title: "Major period", value: context.majorPeriodSeconds.compactDuration)
-                if let moonMetadataReading {
-                    MetadataRow(title: "Moon glyph", value: moonMetadataReading.octalAddress)
-                    ForEach(moonMetadataReading.components) { component in
-                        MetadataRow(
-                            title: "Moon \(component.kind.displayName.lowercased())",
-                            value: component.detailOctalAddress
-                        )
-                        MetadataRow(
-                            title: "\(component.kind.displayName) bin",
-                            value: "\(component.digit)"
-                        )
-                        MetadataRow(
-                            title: "\(component.kind.displayName) previous",
-                            value: JournalFormatters.dateTime.string(from: component.cycleReading.previousEvent.date)
-                        )
-                        MetadataRow(
-                            title: "\(component.kind.displayName) next",
-                            value: JournalFormatters.dateTime.string(from: component.cycleReading.nextEvent.date)
-                        )
-                    }
+                if let sourceDeviceEmoji = entry.sourceDeviceEmoji?.nilIfBlank {
+                    MetadataRow(title: "Device", value: sourceDeviceEmoji)
                 }
             }
         }
@@ -331,12 +360,26 @@ struct JournalEntryDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isEditingEntry = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .accessibilityLabel("Edit entry")
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(role: .destructive) {
                     isDeleteConfirmationPresented = true
                 } label: {
                     Image(systemName: "trash")
                 }
                 .accessibilityLabel("Delete entry")
+            }
+        }
+        .sheet(isPresented: $isEditingEntry) {
+            NavigationStack {
+                JournalEntryCaptureView(editing: entry)
             }
         }
         .onDisappear {
@@ -380,6 +423,14 @@ struct JournalEntryDetailView: View {
         try? services.moonPhaseService.octalReading(for: entry.eventDate, depth: 8)
     }
 
+    private var syncStatusTitle: String {
+        syncCommands.contains { command in
+            command.isPending
+                && command.subjectID == entry.id.uuidString
+                && (command.type == .entryUpsert || command.type == .entryDelete)
+        } ? "Pending" : "Synced"
+    }
+
     private static func momentumPercentText(_ momentum: Double) -> String {
         let percent = Int((momentum * 100).rounded())
         if percent > 0 {
@@ -398,6 +449,12 @@ struct JournalEntryDetailView: View {
 
     private func deleteEntry() {
         audioPlayer.stop()
+        SyncLocalCommand.enqueue(
+            .entryDelete,
+            subjectID: entry.id.uuidString,
+            existing: syncCommands,
+            modelContext: modelContext
+        )
         let mediaItems = entry.mediaItems
         modelContext.delete(entry)
         do {
@@ -408,14 +465,20 @@ struct JournalEntryDetailView: View {
             errorMessage = error.localizedDescription
         }
     }
+
 }
 
 struct JournalEntryCaptureView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
 
     let recordStartedAt: Date
+    let existingDraft: JournalEntryDraft?
 
     @StateObject private var audioRecorder = AudioRecorder()
     @StateObject private var locationProvider = JournalEntryLocationProvider()
@@ -428,13 +491,48 @@ struct JournalEntryCaptureView: View {
     @State private var isLoadingPhoto = false
     @State private var isCameraPresented = false
     @State private var isSaving = false
+    @State private var isFetchingWeather = false
+    @State private var didSaveEntry = false
+    @State private var didPersistDraft = false
     @State private var errorMessage: String?
+    @State private var weatherCode: Int?
+    @State private var weatherEmoji: String?
+    @State private var temperatureC: Int?
+    @State private var weatherStatusMessage = ""
+    @State private var selectedTagIDs: Set<String> = []
+    @State private var isTagPickerPresented = false
+    @State private var removedMediaItems: [JournalMediaItem] = []
 
-    init(recordStartedAt: Date = Date(), template: JournalTemplateSeed = .random) {
-        self.recordStartedAt = recordStartedAt
-        _eventDate = State(initialValue: recordStartedAt)
-        _noteText = State(initialValue: template.text)
-        _emoji = State(initialValue: template.resolvedEmoji)
+    private let editingEntry: JournalEntry?
+
+    init(recordStartedAt: Date = Date(), template: JournalTemplateSeed = .random, draft: JournalEntryDraft? = nil) {
+        let startedAt = draft?.recordStartedAt ?? recordStartedAt
+        let lastWeather = JournalWeatherDefaults.current()
+        self.recordStartedAt = startedAt
+        self.existingDraft = draft
+        self.editingEntry = nil
+        _eventDate = State(initialValue: draft?.eventDate ?? startedAt)
+        _noteText = State(initialValue: draft?.text ?? template.text)
+        _emoji = State(initialValue: draft?.emoji ?? template.resolvedEmoji)
+        _mediaItems = State(initialValue: draft?.mediaItems ?? [])
+        _weatherCode = State(initialValue: draft?.weatherCode ?? lastWeather.code)
+        _weatherEmoji = State(initialValue: draft?.weatherEmoji ?? lastWeather.emoji)
+        _temperatureC = State(initialValue: draft?.temperatureC ?? lastWeather.temperatureC)
+        _selectedTagIDs = State(initialValue: Set(draft?.tagIDs ?? []))
+    }
+
+    init(editing entry: JournalEntry) {
+        self.recordStartedAt = entry.createdAt
+        self.existingDraft = nil
+        self.editingEntry = entry
+        _eventDate = State(initialValue: entry.eventDate)
+        _noteText = State(initialValue: entry.text ?? "")
+        _emoji = State(initialValue: entry.emoji ?? JournalRecordMarkers.random())
+        _mediaItems = State(initialValue: entry.mediaItems)
+        _weatherCode = State(initialValue: entry.weatherCode)
+        _weatherEmoji = State(initialValue: entry.weatherEmoji)
+        _temperatureC = State(initialValue: entry.temperatureC)
+        _selectedTagIDs = State(initialValue: Set(entry.tagIDs))
     }
 
     var body: some View {
@@ -532,6 +630,27 @@ struct JournalEntryCaptureView: View {
                 }
             }
 
+            Section("Weather") {
+                JournalWeatherCaptureSection(
+                    weatherCode: $weatherCode,
+                    weatherEmoji: $weatherEmoji,
+                    temperatureC: $temperatureC,
+                    isFetchingWeather: isFetchingWeather,
+                    statusMessage: weatherStatusMessage.nilIfBlank
+                ) {
+                    Task { await fetchCurrentWeather() }
+                }
+            }
+
+            Section("Tags") {
+                JournalSelectedTagsRow(
+                    tags: selectedTags,
+                    hasAvailableTags: !availableTags.isEmpty,
+                    onAdd: { isTagPickerPresented = true },
+                    onRemove: { tag in selectedTagIDs.remove(tag.compactID) }
+                )
+            }
+
             Section {
                 Button {
                     Task { await saveEntry() }
@@ -545,12 +664,28 @@ struct JournalEntryCaptureView: View {
                 .disabled(isSaving || isLoadingPhoto || context == nil)
             }
         }
-        .navigationTitle("Record")
+        .navigationTitle(editingEntry == nil ? "Record" : "Edit record")
+        .refreshable {
+            await refreshFromRelay()
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") {
+                    persistDraft()
                     dismiss()
                 }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task { await saveEntry() }
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Label("Save", systemImage: "tray.and.arrow.down")
+                    }
+                }
+                .disabled(isSaving || isLoadingPhoto || context == nil)
             }
         }
         .task {
@@ -565,15 +700,47 @@ struct JournalEntryCaptureView: View {
             mediaItems.append(item)
             _ = audioRecorder.consumeLastItem()
         }
+        .onDisappear {
+            guard editingEntry == nil else { return }
+            guard !didSaveEntry, !didPersistDraft else { return }
+            persistDraft()
+        }
         .fullScreenCover(isPresented: $isCameraPresented) {
             MirrorCameraView { media in
                 addCameraMedia(media)
+            }
+        }
+        .sheet(isPresented: $isTagPickerPresented) {
+            NavigationStack {
+                JournalTagPickerView(
+                    tags: availableTags,
+                    onSelect: { tag in
+                        selectedTagIDs.insert(tag.compactID)
+                        isTagPickerPresented = false
+                    }
+                )
             }
         }
         .alert("Record failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    @MainActor
+    private func refreshFromRelay() async {
+        guard syncServerURL.nilIfBlank != nil else { return }
+        do {
+            _ = try await services.syncService.synchronizeEntries(
+                with: syncServerURL,
+                modelContext: modelContext,
+                tags: tags,
+                entries: entries,
+                commands: syncCommands
+            )
+        } catch {
+            // Manual refresh should never trap the edit flow behind an alert.
         }
     }
 
@@ -620,6 +787,42 @@ struct JournalEntryCaptureView: View {
                 harmonicDepth: JournalSettings.canonicalHarmonicDepth
             )
             let coordinate = locationProvider.coordinate
+            let device = JournalDevice.current()
+            if let editingEntry {
+                editingEntry.createdAt = recordStartedAt
+                editingEntry.updatedAt = Date()
+                editingEntry.eventDate = eventDate
+                editingEntry.unixTimestamp = Int64(eventDate.timeIntervalSince1970.rounded(.towardZero))
+                editingEntry.version += 1
+                editingEntry.text = noteText.nilIfBlank
+                editingEntry.emoji = emoji.nilIfBlank ?? JournalRecordMarkers.random()
+                editingEntry.mediaItems = savedMedia
+                editingEntry.context = resolvedContext
+                editingEntry.tagIDs = sortedSelectedTagIDs
+                editingEntry.latitude = coordinate?.latitude ?? editingEntry.latitude
+                editingEntry.longitude = coordinate?.longitude ?? editingEntry.longitude
+                editingEntry.sourceDeviceID = device.id
+                editingEntry.sourceDeviceEmoji = device.emoji
+                editingEntry.sourceDeviceName = device.name
+                editingEntry.weatherCode = weatherCode
+                editingEntry.weatherEmoji = weatherEmoji
+                editingEntry.temperatureC = temperatureC
+                SyncLocalCommand.enqueue(
+                    .entryUpsert,
+                    subjectID: editingEntry.id.uuidString,
+                    existing: syncCommands,
+                    modelContext: modelContext
+                )
+                try modelContext.save()
+                for item in removedMediaItems {
+                    MediaStorage.delete(item)
+                }
+                didSaveEntry = true
+                JournalWeatherDefaults.save(code: weatherCode, emoji: weatherEmoji, temperatureC: temperatureC)
+                dismiss()
+                return
+            }
+
             let entry = JournalEntry(
                 createdAt: recordStartedAt,
                 updatedAt: Date(),
@@ -628,11 +831,29 @@ struct JournalEntryCaptureView: View {
                 emoji: emoji.nilIfBlank ?? JournalRecordMarkers.random(),
                 mediaItems: savedMedia,
                 context: resolvedContext,
+                tagIDs: sortedSelectedTagIDs,
                 latitude: coordinate?.latitude,
-                longitude: coordinate?.longitude
+                longitude: coordinate?.longitude,
+                sourceDeviceID: device.id,
+                sourceDeviceEmoji: device.emoji,
+                sourceDeviceName: device.name,
+                weatherCode: weatherCode,
+                weatherEmoji: weatherEmoji,
+                temperatureC: temperatureC
             )
             modelContext.insert(entry)
+            SyncLocalCommand.enqueue(
+                .entryUpsert,
+                subjectID: entry.id.uuidString,
+                existing: syncCommands,
+                modelContext: modelContext
+            )
+            if let existingDraft {
+                modelContext.delete(existingDraft)
+            }
             try modelContext.save()
+            didSaveEntry = true
+            JournalWeatherDefaults.save(code: weatherCode, emoji: weatherEmoji, temperatureC: temperatureC)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
@@ -659,6 +880,69 @@ struct JournalEntryCaptureView: View {
     }
 
     @MainActor
+    private func fetchCurrentWeather() async {
+        weatherStatusMessage = ""
+        guard let coordinate = locationProvider.coordinate else {
+            weatherStatusMessage = "Location unavailable."
+            return
+        }
+        isFetchingWeather = true
+        defer { isFetchingWeather = false }
+        do {
+            let reading = try await services.weatherService.currentWeather(at: coordinate)
+            weatherCode = reading.code
+            weatherEmoji = reading.emoji
+            temperatureC = reading.temperatureC
+            JournalWeatherDefaults.save(code: reading.code, emoji: reading.emoji, temperatureC: reading.temperatureC)
+            weatherStatusMessage = "Weather updated."
+        } catch {
+            weatherStatusMessage = "Weather unavailable."
+        }
+    }
+
+    @MainActor
+    private func persistDraft() {
+        guard editingEntry == nil else { return }
+        guard !didSaveEntry else { return }
+        let coordinate = locationProvider.coordinate
+        if let existingDraft {
+            existingDraft.update(
+                recordStartedAt: recordStartedAt,
+                eventDate: eventDate,
+                text: noteText.nilIfBlank,
+                emoji: emoji.nilIfBlank,
+                mediaItems: mediaItems,
+                tagIDs: sortedSelectedTagIDs,
+                latitude: coordinate?.latitude ?? existingDraft.latitude,
+                longitude: coordinate?.longitude ?? existingDraft.longitude,
+                weatherCode: weatherCode,
+                weatherEmoji: weatherEmoji,
+                temperatureC: temperatureC
+            )
+        } else {
+            modelContext.insert(JournalEntryDraft(
+                recordStartedAt: recordStartedAt,
+                eventDate: eventDate,
+                text: noteText.nilIfBlank,
+                emoji: emoji.nilIfBlank,
+                mediaItems: mediaItems,
+                tagIDs: sortedSelectedTagIDs,
+                latitude: coordinate?.latitude,
+                longitude: coordinate?.longitude,
+                weatherCode: weatherCode,
+                weatherEmoji: weatherEmoji,
+                temperatureC: temperatureC
+            ))
+        }
+        do {
+            try modelContext.save()
+            didPersistDraft = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func addCameraMedia(_ media: MirrorCameraCapturedMedia) {
         do {
             let item = try JournalPendingMediaAttachment(media: media).save()
@@ -671,22 +955,343 @@ struct JournalEntryCaptureView: View {
     @MainActor
     private func removeMedia(_ item: JournalMediaItem) {
         mediaItems.removeAll { $0.id == item.id }
-        MediaStorage.delete(item)
+        if editingEntry == nil {
+            MediaStorage.delete(item)
+        } else if !removedMediaItems.contains(where: { $0.id == item.id }) {
+            removedMediaItems.append(item)
+        }
+    }
+
+    private var sortedSelectedTagIDs: [String] {
+        let tagOrder = JournalTag.compactIDOrderMap(for: tags)
+        return selectedTagIDs
+            .compactMap(JournalTag.normalizedOctalID)
+            .sorted { lhs, rhs in
+                let lhsOrder = tagOrder[lhs] ?? Int.max
+                let rhsOrder = tagOrder[rhs] ?? Int.max
+                if lhsOrder != rhsOrder {
+                    return lhsOrder < rhsOrder
+                }
+                return lhs < rhs
+            }
+    }
+
+    private var selectedTags: [JournalTag] {
+        tags.filter { selectedTagIDs.contains($0.compactID) }
+    }
+
+    private var availableTags: [JournalTag] {
+        tags.filter { !selectedTagIDs.contains($0.compactID) }
+    }
+}
+
+private struct JournalSelectedTagsRow: View {
+    let tags: [JournalTag]
+    let hasAvailableTags: Bool
+    let onAdd: () -> Void
+    let onRemove: (JournalTag) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                if tags.isEmpty {
+                    Text("No tags")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(tags) { tag in
+                                Button {
+                                    onRemove(tag)
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text(tag.displayEmoji)
+                                        Text(tag.displayName)
+                                            .lineLimit(1)
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        Color(hex: tag.tintHex, fallback: .accentColor).opacity(0.18),
+                                        in: Capsule()
+                                    )
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(Color(hex: tag.tintHex, fallback: .accentColor).opacity(0.65), lineWidth: 1)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Remove tag \(tag.displayName)")
+                            }
+                        }
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    onAdd()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasAvailableTags)
+                .accessibilityLabel("Add tag")
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct JournalTagPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let tags: [JournalTag]
+    let onSelect: (JournalTag) -> Void
+
+    var body: some View {
+        Group {
+            if tags.isEmpty {
+                ContentUnavailableView("No tags available", systemImage: "tag")
+            } else {
+                List(tags) { tag in
+                    Button {
+                        onSelect(tag)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(tag.displayEmoji)
+                                .font(.title3)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(tag.displayName)
+                                    .foregroundStyle(.primary)
+                                Text(tag.displayCompactID)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Circle()
+                                .fill(Color(hex: tag.tintHex, fallback: .white))
+                                .frame(width: 12, height: 12)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .navigationTitle("Add tag")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+private struct JournalEntryEditDraft: Identifiable, Hashable {
+    let id: UUID
+    var eventDate: Date
+    var text: String
+    var emoji: String
+    var selectedTagIDs: Set<String>
+    var weatherCode: Int?
+    var weatherEmoji: String?
+    var temperatureC: Int?
+
+    init(entry: JournalEntry) {
+        self.id = entry.id
+        self.eventDate = entry.eventDate
+        self.text = entry.text ?? ""
+        self.emoji = entry.emoji ?? ""
+        self.selectedTagIDs = Set(entry.tagIDs)
+        self.weatherCode = entry.weatherCode
+        self.weatherEmoji = entry.weatherEmoji
+        self.temperatureC = entry.temperatureC
+    }
+
+    func sortedTagIDs(tags: [JournalTag]) -> [String] {
+        let order = JournalTag.compactIDOrderMap(for: tags)
+        return selectedTagIDs
+            .compactMap(JournalTag.normalizedOctalID)
+            .sorted { lhs, rhs in
+                let lhsOrder = order[lhs] ?? Int.max
+                let rhsOrder = order[rhs] ?? Int.max
+                if lhsOrder != rhsOrder {
+                    return lhsOrder < rhsOrder
+                }
+                return lhs < rhs
+            }
+    }
+}
+
+private struct JournalEntryEditView: View {
+    @EnvironmentObject private var services: AppServices
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+
+    let entry: JournalEntry
+    let tags: [JournalTag]
+    let onSave: (JournalEntryEditDraft) -> Void
+
+    @State private var draft: JournalEntryEditDraft
+    @State private var isTagPickerPresented = false
+    @State private var errorMessage: String?
+
+    init(
+        entry: JournalEntry,
+        draft: JournalEntryEditDraft,
+        tags: [JournalTag],
+        onSave: @escaping (JournalEntryEditDraft) -> Void
+    ) {
+        self.entry = entry
+        self.tags = tags
+        self.onSave = onSave
+        _draft = State(initialValue: draft)
+    }
+
+    var body: some View {
+        Form {
+            Section("Record") {
+                TextField("Emoji marker", text: $draft.emoji)
+                    .textContentType(.none)
+
+                TextEditor(text: $draft.text)
+                    .font(.body)
+                    .lineSpacing(4)
+                    .frame(minHeight: 180, maxHeight: 320)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            Section("Timing") {
+                DatePicker("Record date", selection: $draft.eventDate)
+                    .datePickerStyle(.compact)
+            }
+
+            Section("Weather") {
+                JournalWeatherCaptureSection(
+                    weatherCode: $draft.weatherCode,
+                    weatherEmoji: $draft.weatherEmoji,
+                    temperatureC: $draft.temperatureC,
+                    isFetchingWeather: false,
+                    fetchCurrentWeather: {}
+                )
+            }
+
+            Section("Tags") {
+                JournalSelectedTagsRow(
+                    tags: selectedTags,
+                    hasAvailableTags: !availableTags.isEmpty,
+                    onAdd: { isTagPickerPresented = true },
+                    onRemove: { tag in draft.selectedTagIDs.remove(tag.compactID) }
+                )
+            }
+        }
+        .navigationTitle("Edit record")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await refreshFromRelay()
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(draft)
+                    dismiss()
+                }
+            }
+        }
+        .sheet(isPresented: $isTagPickerPresented) {
+            NavigationStack {
+                JournalTagPickerView(
+                    tags: availableTags,
+                    onSelect: { tag in
+                        draft.selectedTagIDs.insert(tag.compactID)
+                        isTagPickerPresented = false
+                    }
+                )
+            }
+        }
+        .alert("Sync failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    @MainActor
+    private func refreshFromRelay() async {
+        guard syncServerURL.nilIfBlank != nil else { return }
+        do {
+            _ = try await services.syncService.synchronizeEntries(
+                with: syncServerURL,
+                modelContext: modelContext,
+                tags: tags,
+                entries: entries,
+                commands: syncCommands
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private var selectedTags: [JournalTag] {
+        tags.filter { draft.selectedTagIDs.contains($0.compactID) }
+    }
+
+    private var availableTags: [JournalTag] {
+        tags.filter { !draft.selectedTagIDs.contains($0.compactID) }
     }
 }
 
 struct JournalTemplatesView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTemplate.createdAt, order: .forward) private var templates: [JournalTemplate]
+    @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
 
     @State private var selectedTemplate: JournalTemplateSeed?
+    @State private var selectedEntryDraft: JournalEntryDraft?
+    @State private var pendingTemplate: JournalTemplateSeed?
+    @State private var isReplacingDraft = false
     @State private var draft: JournalTemplateDraft?
+
+    private var activeDraft: JournalEntryDraft? {
+        entryDrafts.first
+    }
 
     var body: some View {
         List {
+            if let activeDraft {
+                Section {
+                    Button {
+                        selectedEntryDraft = activeDraft
+                    } label: {
+                        Label("Resume draft", systemImage: "arrow.uturn.forward.circle")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                }
+            }
+
             Section {
                 Button {
-                    selectedTemplate = .random
+                    openTemplate(.random)
                 } label: {
                     JournalTemplateRow(
                         title: "Random",
@@ -698,7 +1303,7 @@ struct JournalTemplatesView: View {
 
                 ForEach(templates) { template in
                     Button {
-                        selectedTemplate = JournalTemplateSeed(template: template)
+                        openTemplate(JournalTemplateSeed(template: template))
                     } label: {
                         JournalTemplateRow(
                             title: template.displayName,
@@ -740,12 +1345,40 @@ struct JournalTemplatesView: View {
                 JournalEntryCaptureView(recordStartedAt: Date(), template: template)
             }
         }
+        .sheet(item: $selectedEntryDraft) { draft in
+            NavigationStack {
+                JournalEntryCaptureView(draft: draft)
+            }
+        }
         .sheet(item: $draft) { draft in
             NavigationStack {
                 JournalTemplateEditorView(draft: draft) { savedDraft in
                     saveTemplate(savedDraft)
                 }
             }
+        }
+        .confirmationDialog("Replace current draft?", isPresented: $isReplacingDraft, titleVisibility: .visible) {
+            Button("Delete Draft", role: .destructive) {
+                if let activeDraft {
+                    discardDraft(activeDraft)
+                }
+                selectedTemplate = pendingTemplate
+                pendingTemplate = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTemplate = nil
+            }
+        } message: {
+            Text("Opening a template starts a new entry and deletes the unsaved draft.")
+        }
+    }
+
+    private func openTemplate(_ template: JournalTemplateSeed) {
+        if activeDraft != nil {
+            pendingTemplate = template
+            isReplacingDraft = true
+        } else {
+            selectedTemplate = template
         }
     }
 
@@ -768,6 +1401,12 @@ struct JournalTemplatesView: View {
 
     private func deleteTemplate(_ template: JournalTemplate) {
         modelContext.delete(template)
+        try? modelContext.save()
+    }
+
+    private func discardDraft(_ draft: JournalEntryDraft) {
+        draft.mediaItems.forEach(MediaStorage.delete)
+        modelContext.delete(draft)
         try? modelContext.save()
     }
 }
@@ -869,6 +1508,146 @@ private struct JournalTemplateEditorView: View {
     }
 }
 
+private enum JournalWeatherDefaults {
+    static func current() -> (code: Int?, emoji: String?, temperatureC: Int?) {
+        let defaults = UserDefaults.standard
+        let code = defaults.object(forKey: JournalSettings.lastWeatherCodeKey) as? Int
+        let emoji = defaults.string(forKey: JournalSettings.lastWeatherEmojiKey)?.nilIfBlank
+        let temperatureC = defaults.object(forKey: JournalSettings.lastWeatherTemperatureKey) as? Int
+        return (code, emoji, temperatureC)
+    }
+
+    static func save(code: Int?, emoji: String?, temperatureC: Int?) {
+        let defaults = UserDefaults.standard
+        if let code {
+            defaults.set(code, forKey: JournalSettings.lastWeatherCodeKey)
+        } else {
+            defaults.removeObject(forKey: JournalSettings.lastWeatherCodeKey)
+        }
+
+        if let emoji = emoji?.nilIfBlank {
+            defaults.set(emoji, forKey: JournalSettings.lastWeatherEmojiKey)
+        } else {
+            defaults.removeObject(forKey: JournalSettings.lastWeatherEmojiKey)
+        }
+
+        if let temperatureC {
+            defaults.set(temperatureC, forKey: JournalSettings.lastWeatherTemperatureKey)
+        } else {
+            defaults.removeObject(forKey: JournalSettings.lastWeatherTemperatureKey)
+        }
+    }
+}
+
+private struct JournalWeatherCaptureSection: View {
+    @Binding var weatherCode: Int?
+    @Binding var weatherEmoji: String?
+    @Binding var temperatureC: Int?
+    let isFetchingWeather: Bool
+    var statusMessage: String? = nil
+    let fetchCurrentWeather: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(JournalWeatherCatalog.options) { option in
+                        Button {
+                            weatherCode = option.id
+                            weatherEmoji = option.emoji
+                        } label: {
+                            Text(option.emoji)
+                                .font(.title2)
+                                .frame(width: 44, height: 44)
+                                .background(
+                                    selectedWeatherOption?.id == option.id
+                                        ? Color.accentColor.opacity(0.24)
+                                        : Color.secondary.opacity(0.12),
+                                    in: Circle()
+                                )
+                                .overlay {
+                                    Circle()
+                                        .stroke(
+                                            selectedWeatherOption?.id == option.id ? Color.accentColor : Color.secondary.opacity(0.18),
+                                            lineWidth: selectedWeatherOption?.id == option.id ? 2 : 1
+                                        )
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(option.title)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    adjustTemperature(by: -1)
+                } label: {
+                    Image(systemName: "minus")
+                        .frame(width: 38, height: 38)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Decrease temperature")
+
+                TextField("°C", text: temperatureText)
+                    .keyboardType(.numbersAndPunctuation)
+                    .multilineTextAlignment(.center)
+                    .font(.title3.monospacedDigit())
+                    .frame(width: 86)
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    adjustTemperature(by: 1)
+                } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 38, height: 38)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Increase temperature")
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            Button {
+                fetchCurrentWeather()
+            } label: {
+                if isFetchingWeather {
+                    ProgressView()
+                } else {
+                    Label("Fetch current weather", systemImage: "location.magnifyingglass")
+                }
+            }
+            .disabled(isFetchingWeather)
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var selectedWeatherOption: JournalWeatherOption? {
+        JournalWeatherCatalog.option(for: weatherCode)
+    }
+
+    private var temperatureText: Binding<String> {
+        Binding {
+            temperatureC.map(String.init) ?? ""
+        } set: { value in
+            let filtered = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if filtered.isEmpty {
+                temperatureC = nil
+            } else if let number = Int(filtered) {
+                temperatureC = min(max(number, -40), 40)
+            }
+        }
+    }
+
+    private func adjustTemperature(by delta: Int) {
+        temperatureC = min(max((temperatureC ?? 0) + delta, -40), 40)
+    }
+}
+
 private struct JournalTemplateDraft: Identifiable {
     let id: UUID
     var name: String
@@ -891,11 +1670,15 @@ private struct JournalTemplateDraft: Identifiable {
 }
 
 struct TagsView: View {
+    @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
 
     @State private var draft: JournalTagDraft?
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
@@ -925,6 +1708,12 @@ struct TagsView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
+                            Text(tag.displayCompactID)
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.thinMaterial, in: Capsule())
                             Text("\(entryCount(for: tag))")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -952,6 +1741,9 @@ struct TagsView: View {
             }
         }
         .navigationTitle("Tags")
+        .refreshable {
+            await refreshFromRelay()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -969,13 +1761,35 @@ struct TagsView: View {
                 }
             }
         }
+        .alert("Tag update failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    @MainActor
+    private func refreshFromRelay() async {
+        guard syncServerURL.nilIfBlank != nil else { return }
+        do {
+            _ = try await services.syncService.synchronizeEntries(
+                with: syncServerURL,
+                modelContext: modelContext,
+                tags: tags,
+                entries: entries,
+                commands: syncCommands
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func entryCount(for tag: JournalTag) -> Int {
-        entries.filter { $0.context.sarosNumbers.contains(tag.saros) }.count
+        entries.filter { $0.tagIDs.contains(tag.compactID) }.count
     }
 
     private func saveTag(_ draft: JournalTagDraft) {
+        var tagsToRepair = tags
         if let existing = tags.first(where: { $0.id == draft.id }) {
             existing.name = draft.name.nilIfBlank ?? "Saros \(draft.saros)"
             existing.emoji = draft.emoji.nilIfBlank ?? "◇"
@@ -984,9 +1798,11 @@ struct TagsView: View {
             existing.notes = draft.notes.nilIfBlank
             existing.isPrime = draft.isPrime
             existing.colorHex = draft.colorHex
+            existing.octalID = JournalTag.normalizedOctalID(draft.octalID)
+            existing.ensureCompactID(existing: tags)
             existing.touch()
         } else {
-            modelContext.insert(JournalTag(
+            let tag = JournalTag(
                 id: draft.id,
                 name: draft.name.nilIfBlank ?? "Saros \(draft.saros)",
                 emoji: draft.emoji.nilIfBlank ?? "◇",
@@ -994,23 +1810,62 @@ struct TagsView: View {
                 saros: draft.saros,
                 notes: draft.notes.nilIfBlank,
                 isPrime: draft.isPrime,
-                colorHex: draft.colorHex
-            ))
+                colorHex: draft.colorHex,
+                octalID: draft.octalID
+            )
+            tag.ensureCompactID(existing: tags)
+            modelContext.insert(tag)
+            tagsToRepair.append(tag)
         }
-        try? modelContext.save()
+        _ = JournalTag.ensureUniqueCompactIDs(in: tagsToRepair)
+        SyncLocalCommand.enqueue(
+            .tagUpsert,
+            subjectID: draft.id.uuidString,
+            existing: syncCommands,
+            modelContext: modelContext
+        )
+        do {
+            try modelContext.save()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func deleteTags(at offsets: IndexSet) {
         for offset in offsets {
             deleteTag(tags[offset], save: false)
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func deleteTag(_ tag: JournalTag, save: Bool = true) {
+        let compactID = tag.compactID
+        for entry in entries where entry.tagIDs.contains(compactID) {
+            entry.tagIDs = entry.tagIDs.filter { $0 != compactID }
+            SyncLocalCommand.enqueue(
+                .entryUpsert,
+                subjectID: entry.id.uuidString,
+                existing: syncCommands,
+                modelContext: modelContext
+            )
+        }
+        SyncLocalCommand.enqueue(
+            .tagDelete,
+            subjectID: tag.id.uuidString,
+            existing: syncCommands,
+            modelContext: modelContext
+        )
         modelContext.delete(tag)
         if save {
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }
@@ -1038,7 +1893,7 @@ private struct JournalTagEntriesView: View {
         entries.filter { entry in
             let context = entry.context
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
-            let matchesTag = context.sarosNumbers.contains(tag.saros)
+            let matchesTag = entry.tagIDs.contains(tag.compactID)
             let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
             let matchesDirection = selectedDirection.map { context.direction == $0 } ?? true
             let matchesExtremum = selectedExtremum.map { context.extremum == $0 } ?? true
@@ -1144,6 +1999,13 @@ private struct JournalTagEditorView: View {
             Section("Tag") {
                 TextField("Name", text: $draft.name)
                 TextField("Emoji", text: $draft.emoji)
+                HStack {
+                    Text("ID")
+                    Spacer()
+                    Text(draft.displayOctalID)
+                        .font(.body.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
                 DatePicker("Anchor date", selection: $draft.anchorDate)
                 Toggle("Prime", isOn: $draft.isPrime)
                 ColorPicker("Tint", selection: Binding(
@@ -1215,6 +2077,7 @@ private struct JournalTagDraft: Identifiable {
     var emoji: String
     var anchorDate: Date
     var saros: Int
+    var octalID: String
     var notes: String
     var isPrime: Bool
     var colorHex: String
@@ -1225,6 +2088,7 @@ private struct JournalTagDraft: Identifiable {
         emoji: String = "◇",
         anchorDate: Date = Date(),
         saros: Int = 0,
+        octalID: String = "",
         notes: String = "",
         isPrime: Bool = false,
         colorHex: String = "#FFFFFF"
@@ -1234,6 +2098,7 @@ private struct JournalTagDraft: Identifiable {
         self.emoji = emoji
         self.anchorDate = anchorDate
         self.saros = saros
+        self.octalID = octalID
         self.notes = notes
         self.isPrime = isPrime
         self.colorHex = colorHex
@@ -1245,9 +2110,14 @@ private struct JournalTagDraft: Identifiable {
         self.emoji = tag.emoji
         self.anchorDate = tag.anchorDate
         self.saros = tag.saros
+        self.octalID = tag.compactID
         self.notes = tag.notes ?? ""
         self.isPrime = tag.isPrime
         self.colorHex = tag.tintHex
+    }
+
+    var displayOctalID: String {
+        JournalTag.normalizedOctalID(octalID) ?? "auto"
     }
 }
 
@@ -1826,9 +2696,16 @@ private struct JournalEntryImageCarousel: View {
     var body: some View {
         TabView {
             ForEach(items) { item in
+                let url = MediaStorage.url(for: item)
                 JournalAsyncMediaImage(item: item, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.secondarySystemBackground))
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        ShareLink(item: url) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    }
             }
         }
         .tabViewStyle(.page)

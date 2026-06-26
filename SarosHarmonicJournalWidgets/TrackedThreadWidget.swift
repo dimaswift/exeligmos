@@ -18,7 +18,14 @@ struct TrackedThreadProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<TrackedThreadEntry>) -> Void) {
         let snapshot = ThreadTrackingSharedStore.load()
         let entry = TrackedThreadEntry(date: .now, snapshot: snapshot)
-        let nextRefresh = snapshot?.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay) ?? Date.now.addingTimeInterval(30 * 60)
+        let now = Date.now
+        let refreshCandidates = [
+            snapshot?.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay),
+            snapshot?.waveformEndDate
+        ]
+            .compactMap { $0 }
+            .filter { $0 > now.addingTimeInterval(2) }
+        let nextRefresh = refreshCandidates.min() ?? now.addingTimeInterval(30 * 60)
         completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
     }
 }
@@ -30,8 +37,8 @@ struct TrackedThreadWidget: Widget {
         StaticConfiguration(kind: kind, provider: TrackedThreadProvider()) { entry in
             TrackedThreadWidgetView(entry: entry)
         }
-        .configurationDisplayName("Tracked Thread")
-        .description("Shows the glyph and countdown for the currently tracked thread.")
+        .configurationDisplayName("Live Tracking")
+        .description("Shows the live waveform, glyph, and countdown for the current Saros spike.")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
@@ -69,29 +76,38 @@ private struct TrackedThreadWidgetView: View {
         return Group {
             switch family {
             case .systemMedium:
-                HStack(spacing: 20) {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(payload.displayEventName)
+                            .font(.headline)
+                            .lineLimit(1)
+                        TrackingCountdownText(payload: payload, now: now, compact: false, recordURL: snapshot.recordURL)
+                            .font(.title3.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(color)
+                        HStack(spacing: 10) {
+                            Text(payload.energyText)
+                            Text(payload.momentumText)
+                        }
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(color)
+                        WidgetWaveformSegmentView(
+                            samples: payload.waveformSamples ?? [],
+                            spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                            color: color,
+                            currentPosition: payload.waveformPosition(at: now)
+                        )
+                        .frame(height: 42)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 0)
                     WidgetOctalGlyph(
                         value: payload.glyph,
                         depth: snapshot.harmonicDepth,
                         color: color,
                         secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
                     )
-                        .frame(width: 78, height: 78)
-                        .offset(x: 3, y: 3)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(snapshot.threadTitle)
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text("Saros \(snapshot.saros)")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.62))
-                        TrackingCountdownText(payload: payload, now: now, compact: false, recordURL: snapshot.recordURL)
-                            .font(.title3.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(color)
-                        rarityIndicator(payload: payload, color: color)
-                    }
-                    .padding(.leading, 2)
-                    Spacer(minLength: 0)
+                    .frame(width: 72, height: 72)
+                    .offset(x: 3, y: 3)
                 }
             default:
                 VStack(alignment: .leading, spacing: 8) {
@@ -105,16 +121,22 @@ private struct TrackedThreadWidgetView: View {
                             .frame(width: 54, height: 54)
                             .offset(x: 3, y: 3)
                         Spacer(minLength: 0)
-                        WidgetRarityGlyphIcon(
-                            rawValue: payload.rarityRawValue,
-                            harmonicDepth: snapshot.harmonicDepth,
-                            color: color,
-                            size: 20
-                        )
-                            .offset(x: -2, y: 2)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(payload.energyText)
+                            Text(payload.momentumText)
+                        }
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(color)
                     }
                     Spacer(minLength: 0)
-                    Text(snapshot.threadTitle)
+                    WidgetWaveformSegmentView(
+                        samples: payload.waveformSamples ?? [],
+                        spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                        color: color,
+                        currentPosition: payload.waveformPosition(at: now)
+                    )
+                    .frame(height: 38)
+                    Text(payload.displayEventName)
                         .font(.headline)
                         .lineLimit(1)
                     TrackingCountdownText(payload: payload, now: now, compact: true, recordURL: snapshot.recordURL)
@@ -127,31 +149,14 @@ private struct TrackedThreadWidgetView: View {
         .padding(2)
     }
 
-    private func rarityIndicator(payload: TrackingDisplayPayload, color: Color) -> some View {
-        HStack(spacing: 5) {
-            WidgetRarityGlyphIcon(
-                rawValue: payload.rarityRawValue,
-                harmonicDepth: entry.snapshot?.harmonicDepth ?? 7,
-                color: color,
-                size: 15
-            )
-            Text(payload.rarityTitle)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(color)
-    }
-
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.title)
                 .foregroundStyle(.white.opacity(0.75))
-            Text("No tracked thread")
+            Text("Live tracking off")
                 .font(.headline)
-            Text("Start tracking from a thread screen.")
+            Text("Enable it from Settings.")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.62))
         }
@@ -165,6 +170,17 @@ extension ThreadTrackingSnapshot {
         threadTitle: "Tracked Thread",
         saros: 145,
         harmonicDepth: 7,
+        eventName: "148 Delta Duplex",
+        energyPercent: 0.62,
+        momentum: 0.34,
+        waveDirectionRawValue: "ascending",
+        waveformSamples: [0.12, 0.16, 0.22, 0.34, 0.51, 0.72, 0.94, 0.76, 0.48, 0.29, 0.22, 0.31, 0.46, 0.61, 0.68, 0.58, 0.43, 0.31, 0.24],
+        waveformSpikeMarkers: [
+            TrackingWaveformSpikeMarker(position: 0.34, energy: 0.94, colorHex: "#3D9BFF"),
+            TrackingWaveformSpikeMarker(position: 0.74, energy: 0.68, colorHex: "#AF52DE")
+        ],
+        waveformStartDate: Date.now.addingTimeInterval(-6 * 60 * 60),
+        waveformEndDate: Date.now.addingTimeInterval(6 * 60 * 60),
         glyph: "7210230",
         rarityRawValue: "rare-7",
         rarityTitle: "Omega Triplex",
