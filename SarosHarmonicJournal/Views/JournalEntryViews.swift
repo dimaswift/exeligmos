@@ -52,11 +52,14 @@ struct JournalEntryRow: View {
                         .lineLimit(1)
                         .padding(.top, 2)
                     Spacer(minLength: 0)
-                    JournalClosestSarosPhaseGlyph(
-                        context: context,
-                        displayDepth: displayDepth,
-                        size: 40
-                    )
+                    VStack(spacing: 3) {
+                        JournalClosestSarosPhaseGlyph(
+                            context: context,
+                            displayDepth: displayDepth,
+                            size: 38
+                        )
+                        JournalPulseGlyphForDate(date: entry.eventDate, size: 24)
+                    }
                 }
 
                 JournalSpikeGlyphStrip(
@@ -141,6 +144,7 @@ struct JournalEntryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
     @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
 
     let entry: JournalEntry
@@ -192,53 +196,61 @@ struct JournalEntryDetailView: View {
 
         List {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .top, spacing: 8) {
                         Text(JournalRecordMarkers.marker(from: entry.emoji))
-                            .font(.system(size: 42))
-                            .frame(width: 50, height: 50)
+                            .font(.system(size: 30))
+                            .frame(width: 36, height: 36)
 
                         VStack(alignment: .leading, spacing: 5) {
                             Text(context.displayTitleWithoutSaros)
-                                .font(.headline)
+                                .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(context.titleColor)
-                            Text(JournalFormatters.dateTime.string(from: entry.eventDate))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.82)
                         }
 
                         Spacer(minLength: 0)
 
-                        VStack(spacing: 5) {
+                        VStack(spacing: 3) {
                             JournalClosestSarosPhaseGlyph(
                                 context: context,
                                 displayDepth: displayDepth,
-                                size: 46
+                                size: 36
                             )
                             if let moonReading {
                                 MoonPhaseGlyph(reading: moonReading)
-                                    .frame(width: 30, height: 30)
+                                    .frame(width: 28, height: 28)
+                            }
+                            if let pulseReading {
+                                SarosPulseGlyph(reading: pulseReading, size: 24)
                             }
                             if let remoteDeviceEmoji {
                                 Text(remoteDeviceEmoji)
-                                    .font(.subheadline)
+                                    .font(.caption)
                             }
                         }
                     }
 
-                    JournalSpikeGlyphStrip(
-                        spikes: context.spikes,
-                        displayDepth: displayDepth,
-                        size: 34,
-                        highlightedSpikeID: context.closestSpike?.id
-                    )
-
-                    HStack {
+                    HStack(alignment: .bottom) {
+                        JournalSpikeGlyphStrip(
+                            spikes: context.spikes,
+                            displayDepth: displayDepth,
+                            size: 24,
+                            highlightedSpikeID: context.closestSpike?.id
+                        )
                         Spacer(minLength: 0)
-                        JournalWaveDirectionIcon(direction: displayedDirection, size: 11)
+                        VStack(alignment: .trailing, spacing: 3) {
+                            JournalWaveDirectionIcon(direction: displayedDirection, size: 9)
+                            Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.74)
+                        }
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 0)
                 .background {
                     if let primeTag {
                         RoundedRectangle(cornerRadius: 8)
@@ -348,6 +360,14 @@ struct JournalEntryDetailView: View {
                 MetadataRow(title: "Energy", value: "\(Int((context.energyPercent * 100).rounded()))%")
                 MetadataRow(title: "Extremum", value: context.extremum.title)
                 MetadataRow(title: "Major period", value: context.majorPeriodSeconds.compactDuration)
+                if let pulseReading {
+                    HStack {
+                        Text("Pulse")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 12)
+                        SarosPulseGlyph(reading: pulseReading, size: 28)
+                    }
+                }
                 if let sourceDeviceEmoji = entry.sourceDeviceEmoji?.nilIfBlank {
                     MetadataRow(title: "Device", value: sourceDeviceEmoji)
                 }
@@ -418,6 +438,22 @@ struct JournalEntryDetailView: View {
 
     private var moonMetadataReading: MoonPhaseOctalReading? {
         try? services.moonPhaseService.octalReading(for: entry.eventDate, depth: 8)
+    }
+
+    private var pulseReading: SarosPulseReading? {
+        let selectedSaros = pulseSaros > 0
+            ? pulseSaros
+            : ((try? SarosPulseCalculator.defaultActiveSaros(
+                at: entry.eventDate,
+                eclipseService: services.eclipseService
+            )) ?? 0)
+        guard selectedSaros > 0 else { return nil }
+        return try? SarosPulseCalculator.reading(
+            saros: selectedSaros,
+            date: entry.eventDate,
+            harmonicDepth: harmonicDepth,
+            eclipseService: services.eclipseService
+        )
     }
 
     private var syncStatusTitle: String {
@@ -2167,6 +2203,71 @@ private struct JournalClosestSarosPhaseGlyph: View {
         )
     }
 
+}
+
+private struct JournalPulseGlyphForDate: View {
+    @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+
+    let date: Date
+    let size: CGFloat
+
+    @State private var reading: SarosPulseReading?
+
+    var body: some View {
+        ZStack {
+            if let reading {
+                SarosPulseGlyph(reading: reading, size: size)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: taskID) {
+            await loadReading()
+        }
+    }
+
+    private var taskID: String {
+        "\(pulseSaros)-\(JournalSettings.clampedHarmonicDepth(harmonicDepth))-\(Int(date.timeIntervalSince1970))"
+    }
+
+    @MainActor
+    private func loadReading() async {
+        let configuredSaros = pulseSaros
+        let date = date
+        let harmonicDepth = harmonicDepth
+        let eclipseService = services.eclipseService
+        let result = await Task.detached(priority: .utility) {
+            Result<SarosPulseReading?, Error> {
+                let resolvedSaros: Int?
+                if configuredSaros > 0 {
+                    resolvedSaros = configuredSaros
+                } else {
+                    resolvedSaros = try SarosPulseCalculator.defaultActiveSaros(
+                        at: date,
+                        eclipseService: eclipseService
+                    )
+                }
+
+                guard let resolvedSaros else { return nil }
+                return try SarosPulseCalculator.reading(
+                    saros: resolvedSaros,
+                    date: date,
+                    harmonicDepth: harmonicDepth,
+                    eclipseService: eclipseService
+                )
+            }
+        }.value
+
+        switch result {
+        case .success(let loaded):
+            reading = loaded
+        case .failure:
+            reading = nil
+        }
+    }
 }
 
 private struct JournalSpikeGlyphStrip: View {

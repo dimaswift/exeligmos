@@ -185,8 +185,18 @@ struct WidgetWaveformSegmentView: View {
     let color: Color
     var showsCurrentMarker = true
     var currentPosition: Double = 0.5
+    var waveformStartDate: Date?
+    var waveformEndDate: Date?
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            canvas(currentPosition: markerPosition(at: timeline.date))
+                .id(Int(timeline.date.timeIntervalSince1970))
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func canvas(currentPosition: Double) -> some View {
         Canvas { context, size in
             guard samples.count > 1, size.width > 2, size.height > 2 else { return }
 
@@ -237,7 +247,18 @@ struct WidgetWaveformSegmentView: View {
                 context.stroke(marker, with: .color(.white.opacity(0.38)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .accessibilityHidden(true)
+    }
+
+    private func markerPosition(at date: Date) -> Double {
+        guard let waveformStartDate,
+              let waveformEndDate,
+              waveformEndDate > waveformStartDate
+        else {
+            return min(max(currentPosition, 0), 1)
+        }
+
+        let ratio = date.timeIntervalSince(waveformStartDate) / waveformEndDate.timeIntervalSince(waveformStartDate)
+        return min(max(ratio, 0), 1)
     }
 }
 

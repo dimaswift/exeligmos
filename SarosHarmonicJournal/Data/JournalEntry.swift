@@ -102,7 +102,7 @@ struct JournalEventContext: Codable, Hashable {
     }
 
     var rarity: FlipRarity {
-        spikes.map(\.rarity).max() ?? .common
+        closestSpike?.rarity ?? .common
     }
 
     var closestSpike: JournalSpikeReference? {

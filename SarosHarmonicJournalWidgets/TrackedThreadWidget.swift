@@ -94,7 +94,9 @@ private struct TrackedThreadWidgetView: View {
                             samples: payload.waveformSamples ?? [],
                             spikeMarkers: payload.waveformSpikeMarkers ?? [],
                             color: color,
-                            currentPosition: payload.waveformPosition(at: now)
+                            currentPosition: payload.waveformPosition(at: now),
+                            waveformStartDate: payload.waveformStartDate,
+                            waveformEndDate: payload.waveformEndDate
                         )
                         .frame(height: 42)
                     }
@@ -133,7 +135,9 @@ private struct TrackedThreadWidgetView: View {
                         samples: payload.waveformSamples ?? [],
                         spikeMarkers: payload.waveformSpikeMarkers ?? [],
                         color: color,
-                        currentPosition: payload.waveformPosition(at: now)
+                        currentPosition: payload.waveformPosition(at: now),
+                        waveformStartDate: payload.waveformStartDate,
+                        waveformEndDate: payload.waveformEndDate
                     )
                     .frame(height: 38)
                     Text(payload.displayEventName)

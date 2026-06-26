@@ -35,6 +35,7 @@ struct RootView: View {
     @EnvironmentObject private var services: AppServices
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     @State private var selectedTab: AppTab = .feed
     @State private var captureRequest: RecordCaptureRequest?
@@ -78,6 +79,9 @@ struct RootView: View {
         }
         .onChange(of: harmonicDepth) { _, _ in
             prewarmSarosFlipDistribution()
+            refreshSarosEventNotifications()
+        }
+        .onChange(of: pulseSaros) { _, _ in
             refreshSarosEventNotifications()
         }
         .onChange(of: entities.map(\.id)) { _, _ in

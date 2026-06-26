@@ -98,6 +98,7 @@ enum JournalSettings {
     static let deviceIDKey = "syncDeviceID"
     static let deviceNameKey = "syncDeviceName"
     static let deviceEmojiKey = "syncDeviceEmoji"
+    static let pulseSarosKey = "pulseSaros"
     static let lastWeatherCodeKey = "lastWeatherCode"
     static let lastWeatherEmojiKey = "lastWeatherEmoji"
     static let lastWeatherTemperatureKey = "lastWeatherTemperatureC"
@@ -179,6 +180,307 @@ enum JournalSettings {
             }
         }
         return "\(century)\(suffix)"
+    }
+}
+
+enum SarosPulseUnit: String, CaseIterable, Identifiable, Hashable {
+    case rollover
+    case giga
+    case mega
+    case kilo
+    case saros
+    case mili
+    case nano
+
+    var id: String { rawValue }
+
+    static let glyphUnits: [SarosPulseUnit] = [.giga, .mega, .kilo, .saros, .mili, .nano]
+    static let rulerUnits: [SarosPulseUnit] = [.rollover, .giga, .mega, .kilo]
+    static let referenceUnits: [SarosPulseUnit] = [.rollover] + glyphUnits
+
+    var title: String {
+        switch self {
+        case .rollover: "Rollover"
+        case .giga: "Giga"
+        case .mega: "Mega"
+        case .kilo: "Kilo"
+        case .saros: "Saros"
+        case .mili: "Milisaros"
+        case .nano: "Nanosaros"
+        }
+    }
+
+    var exponent: Int {
+        switch self {
+        case .rollover: 3
+        case .giga: 4
+        case .mega: 5
+        case .kilo: 6
+        case .saros: 7
+        case .mili: 8
+        case .nano: 9
+        }
+    }
+
+    var pattern: String {
+        switch self {
+        case .rollover: "000000"
+        case .giga: "X00000"
+        case .mega: "XX0000"
+        case .kilo: "XXX000"
+        case .saros: "XXXX00"
+        case .mili: "XXXXX0"
+        case .nano: "XXXXXX"
+        }
+    }
+
+    var isRulerTick: Bool {
+        Self.rulerUnits.contains(self)
+    }
+
+    var showsTickLabel: Bool {
+        self == .giga
+    }
+
+    var color: Color {
+        switch self {
+        case .rollover: .red
+        case .giga: .yellow
+        case .mega: .purple
+        case .kilo: .blue
+        case .saros: .white
+        case .mili: .orange
+        case .nano: .cyan
+        }
+    }
+
+    var tickHeight: CGFloat {
+        switch self {
+        case .rollover: 58
+        case .giga: 48
+        case .mega: 34
+        case .kilo: 22
+        case .saros, .mili, .nano: 0
+        }
+    }
+}
+
+struct SarosPulseTick: Identifiable, Hashable {
+    let saros: Int
+    let unit: SarosPulseUnit
+    let digit: Int
+    let date: Date
+
+    var id: String {
+        "\(saros)-\(unit.id)-\(digit)-\(Int(date.timeIntervalSince1970))"
+    }
+}
+
+struct SarosPulseReading: Hashable {
+    let saros: Int
+    let octalAddress: String
+    let glyphDepth: Int
+    let values: [SarosPulseUnit: Int]
+
+    var trailingZeroCount: Int {
+        octalAddress.reversed().prefix { $0 == "0" }.count
+    }
+
+    var color: Color {
+        switch trailingZeroCount {
+        case 0...1: .white
+        case 2: .blue
+        case 3: .purple
+        case 4: .yellow
+        default: .red
+        }
+    }
+
+    var glyphStyle: OctalGlyphStyle {
+        .single(color)
+    }
+
+    var accessibilityTitle: String {
+        SarosPulseUnit.glyphUnits
+            .compactMap { unit in
+                values[unit].map { "\($0) \(unit.title)" }
+            }
+            .joined(separator: ", ")
+    }
+}
+
+struct SarosPulseGlyph: View {
+    let reading: SarosPulseReading
+    var size: CGFloat
+
+    var body: some View {
+        OctalGlyph(
+            value: reading.octalAddress,
+            depth: reading.glyphDepth,
+            style: reading.glyphStyle
+        )
+        .frame(width: size, height: size)
+        .accessibilityLabel(reading.accessibilityTitle)
+    }
+}
+
+enum SarosPulseCalculator {
+    static let pulseDepth = 6
+    private static let parentExponent = 3
+    private static let pulseBinCount = octalPower(pulseDepth)
+    private static let parentBinCount = octalPower(parentExponent)
+
+    static func defaultActiveSaros(
+        at date: Date,
+        eclipseService: any EclipseService
+    ) throws -> Int? {
+        try eclipseService.allSarosSeries()
+            .filter { $0.firstEclipseDate < date && $0.lastEclipseDate > date }
+            .map(\.saros)
+            .sorted()
+            .first
+    }
+
+    static func reading(
+        saros: Int,
+        date: Date,
+        harmonicDepth rawHarmonicDepth: Int,
+        eclipseService: any EclipseService
+    ) throws -> SarosPulseReading {
+        let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        guard saros > 0,
+              let interval = try eclipseService.previousAndNextEclipse(saros: saros, around: date)
+        else {
+            return SarosPulseReading(
+                saros: saros,
+                octalAddress: "",
+                glyphDepth: Self.pulseDepth,
+                values: [:]
+            )
+        }
+
+        let reading = try SarosClockCalculator.reading(
+            saros: saros,
+            previous: interval.previous,
+            next: interval.next,
+            now: date,
+            harmonicDepth: harmonicDepth
+        )
+
+        let localPhase = (reading.phase * Double(Self.parentBinCount))
+            .truncatingRemainder(dividingBy: 1)
+        let pulseIndex = min(
+            Int(floor(localPhase * Double(Self.pulseBinCount))),
+            Self.pulseBinCount - 1
+        )
+        let octalAddress = String(pulseIndex, radix: 8)
+            .leftPadded(toLength: Self.pulseDepth, withPad: "0")
+        let digits = Array(octalAddress)
+        let values = SarosPulseUnit.glyphUnits.enumerated().reduce(into: [SarosPulseUnit: Int]()) { values, pair in
+            let (index, unit) = pair
+            guard digits.indices.contains(index),
+                  let digit = Int(String(digits[index]))
+            else {
+                return
+            }
+            values[unit] = digit
+        }
+
+        return SarosPulseReading(
+            saros: saros,
+            octalAddress: octalAddress,
+            glyphDepth: Self.pulseDepth,
+            values: values
+        )
+    }
+
+    static func ticks(
+        in displayInterval: DateInterval,
+        saros: Int,
+        harmonicDepth rawHarmonicDepth: Int,
+        eclipseService: any EclipseService
+    ) throws -> [SarosPulseTick] {
+        guard saros > 0 else { return [] }
+
+        var ticks: [SarosPulseTick] = []
+        var probeDate = displayInterval.start
+        var visitedIntervals = Set<String>()
+
+        for _ in 0..<4 {
+            guard probeDate < displayInterval.end,
+                  let interval = try eclipseService.previousAndNextEclipse(saros: saros, around: probeDate)
+            else {
+                break
+            }
+
+            let key = "\(interval.previous.id)-\(interval.next.id)"
+            guard visitedIntervals.insert(key).inserted else { break }
+
+            appendTicks(
+                in: displayInterval,
+                saros: saros,
+                interval: interval,
+                into: &ticks
+            )
+
+            probeDate = interval.next.date.addingTimeInterval(1)
+        }
+
+        return ticks.sorted { lhs, rhs in
+            if lhs.date != rhs.date {
+                return lhs.date < rhs.date
+            }
+            return lhs.unit.exponent < rhs.unit.exponent
+        }
+    }
+
+    static func averageDuration(for unit: SarosPulseUnit) -> TimeInterval {
+        JournalSettings.averageSarosPeriod / Double(octalPower(unit.exponent))
+    }
+
+    private static func appendTicks(
+        in displayInterval: DateInterval,
+        saros: Int,
+        interval: SarosInterval,
+        into ticks: inout [SarosPulseTick]
+    ) {
+        let segmentStart = max(displayInterval.start, interval.previous.date)
+        let segmentEnd = min(displayInterval.end, interval.next.date)
+        guard segmentStart < segmentEnd else { return }
+
+        let intervalDuration = interval.next.date.timeIntervalSince(interval.previous.date)
+        guard intervalDuration > 0 else { return }
+
+        for unit in SarosPulseUnit.rulerUnits {
+            let divisions = octalPower(unit.exponent)
+            let startPhase = segmentStart.timeIntervalSince(interval.previous.date) / intervalDuration
+            var bin = max(Int(ceil(startPhase * Double(divisions))), 0)
+
+            while bin <= divisions {
+                let date = interval.previous.date.addingTimeInterval(Double(bin) / Double(divisions) * intervalDuration)
+                if date >= segmentEnd { break }
+
+                let digit = bin % 8
+                let shouldAdd = unit == .rollover ? true : digit > 0
+                if date >= segmentStart, shouldAdd {
+                    ticks.append(
+                        SarosPulseTick(
+                            saros: saros,
+                            unit: unit,
+                            digit: digit,
+                            date: date
+                        )
+                    )
+                }
+
+                bin += 1
+            }
+        }
+    }
+
+    private static func octalPower(_ exponent: Int) -> Int {
+        guard exponent > 0 else { return 1 }
+        return (0..<exponent).reduce(1) { value, _ in value * 8 }
     }
 }
 

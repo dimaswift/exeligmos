@@ -789,6 +789,8 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var zoomAnchorDate: Date?
     @State private var selectedCalendarReference: SarosSpikeCalendarReference?
     @State private var probeDate: Date?
+    @State private var pulseTicks: [SarosPulseTick] = []
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     private var month: SarosGlobalTimelineMonth {
         SarosGlobalTimelineMonth.containing(flip.observedAt)
@@ -829,7 +831,12 @@ private struct SarosSpikeWaveTimelineView: View {
                     Button {
                         scrollToPresent(proxy: scrollProxy)
                     } label: {
-                        SarosSpikeWaveStatePanel(state: displayedWaveState ?? currentState)
+                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                            SarosSpikeWaveStatePanel(
+                                state: displayedWaveState ?? currentState,
+                                pulseReading: pulseReading(at: timeline.date)
+                            )
+                        }
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal)
@@ -866,6 +873,12 @@ private struct SarosSpikeWaveTimelineView: View {
                             SarosSpikeMarkersCanvas(
                                 events: markerEvents,
                                 dots: dotMarkers,
+                                displayInterval: displayInterval
+                            )
+                            .frame(width: contentWidth, height: height)
+
+                            SarosPulseRulerCanvas(
+                                ticks: pulseTicks,
                                 displayInterval: displayInterval
                             )
                             .frame(width: contentWidth, height: height)
@@ -1011,6 +1024,9 @@ private struct SarosSpikeWaveTimelineView: View {
             .task {
                 loadEvents()
             }
+            .task(id: pulseTaskID) {
+                await loadPulseTicks()
+            }
         }
         .navigationDestination(item: $selectedCalendarReference) { reference in
             SarosGlobalFlipTimelineView(
@@ -1030,6 +1046,10 @@ private struct SarosSpikeWaveTimelineView: View {
     private static let referenceScrollID = "saros-spike-reference"
     private static let scrollCoordinateSpace = "saros-spike-scroll"
 
+    private var pulseTaskID: String {
+        "\(pulseSaros)-\(flip.harmonicDepth)-\(Int(displayInterval.start.timeIntervalSince1970))-\(Int(displayInterval.end.timeIntervalSince1970))"
+    }
+
     private var displayedWaveState: SarosSpikeWaveState? {
         if let probeDate,
            let state = waveField.sample(at: probeDate)
@@ -1038,6 +1058,17 @@ private struct SarosSpikeWaveTimelineView: View {
         }
 
         return currentState
+    }
+
+    private func pulseReading(at date: Date) -> SarosPulseReading? {
+        let resolvedSaros = pulseSaros > 0 ? pulseSaros : flip.saros
+        guard resolvedSaros > 0 else { return nil }
+        return try? SarosPulseCalculator.reading(
+            saros: resolvedSaros,
+            date: date,
+            harmonicDepth: flip.harmonicDepth,
+            eclipseService: services.eclipseService
+        )
     }
 
     private static let calendar: Calendar = {
@@ -1389,6 +1420,48 @@ private struct SarosSpikeWaveTimelineView: View {
         default: 6
         }
     }
+
+    @MainActor
+    private func loadPulseTicks() async {
+        let configuredSaros = pulseSaros
+        let eclipseService = services.eclipseService
+        let displayInterval = displayInterval
+        let harmonicDepth = flip.harmonicDepth
+        let now = Date()
+
+        let result = await Task.detached(priority: .utility) {
+            Result<(Int?, [SarosPulseTick]), Error> {
+                let resolvedSaros: Int?
+                if configuredSaros > 0 {
+                    resolvedSaros = configuredSaros
+                } else {
+                    resolvedSaros = try SarosPulseCalculator.defaultActiveSaros(
+                        at: now,
+                        eclipseService: eclipseService
+                    )
+                }
+
+                guard let resolvedSaros else {
+                    return (nil, [])
+                }
+
+                let ticks = try SarosPulseCalculator.ticks(
+                    in: displayInterval,
+                    saros: resolvedSaros,
+                    harmonicDepth: harmonicDepth,
+                    eclipseService: eclipseService
+                )
+                return (resolvedSaros, ticks)
+            }
+        }.value
+
+        switch result {
+        case .success(let loaded):
+            pulseTicks = loaded.1
+        case .failure:
+            pulseTicks = []
+        }
+    }
 }
 
 private struct SarosSpikeDotMarker: Identifiable {
@@ -1410,6 +1483,7 @@ private struct SarosSpikeContentMinXPreferenceKey: PreferenceKey {
 
 private struct SarosSpikeWaveStatePanel: View {
     let state: SarosSpikeWaveState
+    var pulseReading: SarosPulseReading? = nil
 
     private var normalizedSlopePerDay: Double {
         state.normalizedDerivative * 86_400
@@ -1444,6 +1518,10 @@ private struct SarosSpikeWaveStatePanel: View {
             }
 
             Spacer(minLength: 0)
+
+            if let pulseReading {
+                SarosPulseGlyph(reading: pulseReading, size: 34)
+            }
 
             VStack(alignment: .trailing, spacing: 4) {
                 Text(String(format: "E %.3f / H %.2f", state.energy, state.peakHeight))
@@ -1613,6 +1691,79 @@ private struct SarosSpikeMarkersCanvas: View {
                 context.fill(dot, with: .color(marker.event.rarity.color))
                 context.stroke(dot, with: .color(.black.opacity(0.38)), lineWidth: 0.8)
             }
+        }
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(
+            max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0),
+            1
+        )
+        return CGFloat(ratio) * width
+    }
+}
+
+private struct SarosPulseRulerCanvas: View {
+    let ticks: [SarosPulseTick]
+    let displayInterval: DateInterval
+
+    var body: some View {
+        Canvas { context, size in
+            guard !ticks.isEmpty else { return }
+
+            let baseline = size.height * 0.94
+            var lastXByUnit: [SarosPulseUnit: CGFloat] = [:]
+
+            for tick in ticks {
+                guard tick.unit.isRulerTick else { continue }
+
+                let x = xPosition(for: tick.date, width: size.width)
+                if tick.unit != .rollover,
+                   let lastX = lastXByUnit[tick.unit],
+                   abs(lastX - x) < 1.6 {
+                    continue
+                }
+                lastXByUnit[tick.unit] = x
+
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: baseline))
+                line.addLine(to: CGPoint(x: x, y: baseline - tick.unit.tickHeight))
+                context.stroke(
+                    line,
+                    with: .color(tick.unit.color.opacity(opacity(for: tick.unit))),
+                    lineWidth: lineWidth(for: tick.unit)
+                )
+
+                if tick.unit.showsTickLabel {
+                    context.draw(
+                        Text("\(tick.digit)")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(tick.unit.color.opacity(0.95)),
+                        at: CGPoint(x: x, y: max(8, baseline - tick.unit.tickHeight - 10))
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func opacity(for unit: SarosPulseUnit) -> Double {
+        switch unit {
+        case .rollover: 0.95
+        case .giga: 0.9
+        case .mega: 0.72
+        case .kilo: 0.54
+        case .saros, .mili, .nano: 0
+        }
+    }
+
+    private func lineWidth(for unit: SarosPulseUnit) -> CGFloat {
+        switch unit {
+        case .rollover: 1.6
+        case .giga: 1.3
+        case .mega: 1.0
+        case .kilo: 0.75
+        case .saros, .mili, .nano: 0
         }
     }
 

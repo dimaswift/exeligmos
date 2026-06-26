@@ -48,6 +48,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Pulse") {
+                NavigationLink {
+                    PulseSettingsView()
+                } label: {
+                    Label("Pulse reference", systemImage: "ruler")
+                }
+            }
+
             Section("Camera") {
                 NavigationLink {
                     MirrorCameraView()
@@ -246,6 +254,139 @@ struct SettingsView: View {
 
 }
 
+private struct PulseSettingsView: View {
+    @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+
+    @State private var preview: SarosPulseReading?
+    @State private var errorMessage: String?
+
+    private var selectedSaros: Binding<Int?> {
+        Binding(
+            get: { pulseSaros > 0 ? pulseSaros : nil },
+            set: { pulseSaros = $0 ?? 0 }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section("Reference Saros") {
+                SarosGlyphGridPicker(selectedSaros: selectedSaros)
+
+                if let preview, !preview.octalAddress.isEmpty {
+                    HStack(spacing: 12) {
+                        SarosPulseGlyph(reading: preview, size: 44)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Current pulse")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Saros \(preview.saros)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    Text("Pulse uses one selected Saros as a six-digit fine ruler.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Ruler") {
+                ForEach(SarosPulseUnit.referenceUnits) { unit in
+                    HStack {
+                        Rectangle()
+                            .fill(unit.color)
+                            .frame(width: 28, height: 3)
+                            .clipShape(Capsule())
+                        Text(unit.title)
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(pattern(for: unit))
+                                .font(.caption.monospaced())
+                            Text(Self.durationFormatter.string(from: SarosPulseCalculator.averageDuration(for: unit)) ?? SarosPulseCalculator.averageDuration(for: unit).compactDuration)
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Pulse")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await ensureDefaultSaros()
+            updatePreview()
+        }
+        .onChange(of: pulseSaros) { _, _ in
+            updatePreview()
+        }
+        .onChange(of: harmonicDepth) { _, _ in
+            updatePreview()
+        }
+    }
+
+    @MainActor
+    private func ensureDefaultSaros() async {
+        guard pulseSaros <= 0 else { return }
+        let eclipseService = services.eclipseService
+        let result = await Task.detached(priority: .utility) {
+            Result {
+                try SarosPulseCalculator.defaultActiveSaros(
+                    at: Date(),
+                    eclipseService: eclipseService
+                )
+            }
+        }.value
+
+        if case .success(let saros?) = result {
+            pulseSaros = saros
+        }
+    }
+
+    private func updatePreview() {
+        guard pulseSaros > 0 else {
+            preview = nil
+            return
+        }
+
+        do {
+            preview = try SarosPulseCalculator.reading(
+                saros: pulseSaros,
+                date: Date(),
+                harmonicDepth: harmonicDepth,
+                eclipseService: services.eclipseService
+            )
+            errorMessage = nil
+        } catch {
+            preview = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func pattern(for unit: SarosPulseUnit) -> String {
+        unit.pattern
+    }
+
+    private static let durationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.day, .hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 3
+        return formatter
+    }()
+}
+
 private struct AnimacyDatasetSettingsView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
@@ -385,15 +526,16 @@ private struct RarityPeriodRow: View {
 
     private var periodDuration: TimeInterval {
         let basePeriod = JournalSettings.averageSarosPeriod / Double(divisions)
-        guard !rarity.isHeaderRarity else { return basePeriod }
-        return basePeriod * Double(max(rarity.repeatedDigit, 1)) / 7
+        let fraction = basePeriod / 7
+        guard !rarity.isHeaderRarity else { return fraction }
+        return fraction * Double(max(rarity.repeatedDigit, 1))
     }
 
     private var detailText: String {
         if rarity.isHeaderRarity {
-            return "\(String(divisions, radix: 8)) divisions"
+            return "Smallest 1/7 fraction"
         }
-        return "\(rarity.repeatedDigit)/7 into \(rarity.baseRarity.title.lowercased()) range"
+        return "\(rarity.repeatedDigit)/7 filled"
     }
 
     var body: some View {

@@ -83,7 +83,9 @@ private struct ThreadTrackingLockScreenView: View {
                     samples: payload.waveformSamples ?? [],
                     spikeMarkers: payload.waveformSpikeMarkers ?? [],
                     color: color,
-                    currentPosition: payload.waveformPosition(at: now)
+                    currentPosition: payload.waveformPosition(at: now),
+                    waveformStartDate: payload.waveformStartDate,
+                    waveformEndDate: payload.waveformEndDate
                 )
                 .frame(height: 40)
                 TrackingCountdownText(
@@ -177,7 +179,9 @@ private struct LiveTrackingWaveTimerView: View {
                     samples: payload.waveformSamples ?? [],
                     spikeMarkers: payload.waveformSpikeMarkers ?? [],
                     color: color,
-                    currentPosition: payload.waveformPosition(at: timeline.date)
+                    currentPosition: payload.waveformPosition(at: timeline.date),
+                    waveformStartDate: payload.waveformStartDate,
+                    waveformEndDate: payload.waveformEndDate
                 )
                 .frame(height: 42)
                 LiveTrackingTimerView(context: context, compact: false)

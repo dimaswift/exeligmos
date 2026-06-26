@@ -198,6 +198,111 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         for boundary in boundaryCandidates.prefix(boundaryLimit) {
             await scheduleBoundaryNotification(boundary)
         }
+
+        let configuredPulseSaros = UserDefaults.standard.integer(forKey: JournalSettings.pulseSarosKey)
+        let pulseSaros = configuredPulseSaros > 0
+            ? configuredPulseSaros
+            : summaries
+                .filter { $0.firstEclipseDate < now && $0.lastEclipseDate > now }
+                .map(\.saros)
+                .sorted()
+                .first
+        if let pulseSaros {
+            await scheduleGigaPulseNotifications(
+                saros: pulseSaros,
+                eclipseService: eclipseService,
+                harmonicDepth: depth,
+                now: now,
+                horizon: horizon
+            )
+        }
+    }
+
+    private func scheduleGigaPulseNotifications(
+        saros: Int,
+        eclipseService: any EclipseService,
+        harmonicDepth: Int,
+        now: Date,
+        horizon: TimeInterval,
+        limit: Int = 24
+    ) async {
+        let displayInterval = DateInterval(
+            start: now,
+            end: now.addingTimeInterval(horizon)
+        )
+        guard let ticks = try? SarosPulseCalculator.ticks(
+            in: displayInterval,
+            saros: saros,
+            harmonicDepth: harmonicDepth,
+            eclipseService: eclipseService
+        ) else {
+            return
+        }
+
+        let gigaTicks = ticks
+            .filter { $0.unit == .giga && $0.date.addingTimeInterval(-33) > now }
+            .prefix(limit)
+
+        for tick in gigaTicks {
+            await scheduleGigaPulseNotification(
+                tick: tick,
+                eclipseService: eclipseService,
+                harmonicDepth: harmonicDepth
+            )
+        }
+    }
+
+    private func scheduleGigaPulseNotification(
+        tick: SarosPulseTick,
+        eclipseService: any EclipseService,
+        harmonicDepth: Int
+    ) async {
+        let notifyDate = tick.date.addingTimeInterval(-33)
+        let pulseReading = try? SarosPulseCalculator.reading(
+            saros: tick.saros,
+            date: tick.date.addingTimeInterval(0.001),
+            harmonicDepth: harmonicDepth,
+            eclipseService: eclipseService
+        )
+
+        let content = UNMutableNotificationContent()
+        content.title = "Giga pulse \(tick.digit)"
+        content.subtitle = "T minus 33 seconds"
+        if let pulseReading {
+            content.body = "Saros \(tick.saros) pulse \(pulseReading.octalAddress) begins at \(JournalFormatters.dateTime.string(from: tick.date))."
+        } else {
+            content.body = "Saros \(tick.saros) Giga \(tick.digit) begins at \(JournalFormatters.dateTime.string(from: tick.date))."
+        }
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.threadIdentifier = "saros-pulse-\(tick.saros)"
+        content.relevanceScore = 0.72
+        content.userInfo = [
+            "trigger": "sarosPulseGiga",
+            "saros": tick.saros,
+            "date": tick.date.timeIntervalSince1970,
+            "digit": tick.digit,
+            "octalAddress": pulseReading?.octalAddress ?? ""
+        ]
+
+        if let pulseReading,
+           let attachment = await glyphAttachment(
+            octalAddress: pulseReading.octalAddress,
+            harmonicDepth: pulseReading.glyphDepth,
+            style: pulseReading.glyphStyle
+           )
+        {
+            content.attachments = [attachment]
+        }
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)pulse.giga.\(tick.saros).\(Int(tick.date.timeIntervalSince1970))"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        )
     }
 
     private func notifyDate(
