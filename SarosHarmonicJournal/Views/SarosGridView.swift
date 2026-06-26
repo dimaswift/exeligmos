@@ -1956,6 +1956,7 @@ private struct SarosPhaseDetailView: View {
                     case .timeline:
                         SarosFlipEventTimelineView(
                             series: series,
+                            seriesEclipses: seriesEclipses,
                             reference: reference,
                             now: context.date,
                             onSelectEvent: { event in
@@ -2235,15 +2236,15 @@ private struct SarosPhaseHeaderPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 VStack(spacing: 8) {
                     OctalGlyph(
                         value: reading.octalAddress,
                         depth: reading.harmonicDepth,
                         color: tint
                     )
-                    .frame(width: 84, height: 84)
-                    .padding(10)
+                    .frame(width: 76, height: 76)
+                    .padding(8)
                     .background(.black.opacity(0.28), in: Circle())
                     .overlay {
                         Circle()
@@ -2255,8 +2256,8 @@ private struct SarosPhaseHeaderPanel: View {
                         depth: 3,
                         color: tint
                     )
-                    .frame(width: 28, height: 28)
-                    .padding(6)
+                    .frame(width: 24, height: 24)
+                    .padding(5)
                     .background(.black.opacity(0.22), in: Circle())
                     .overlay {
                         Circle()
@@ -2268,14 +2269,21 @@ private struct SarosPhaseHeaderPanel: View {
                     Text(reference?.event.rarity.title ?? "No Duplex event")
                         .font(.headline)
                         .foregroundStyle(tint)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
                     Text(countdownText)
-                        .font(.system(.title2, design: .monospaced).weight(.bold))
+                        .font(.system(.title3, design: .monospaced).weight(.bold))
                         .foregroundStyle(tint)
                         .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
                     Text(reference.map { JournalFormatters.dateTime.string(from: $0.event.date) } ?? "No upcoming event")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 0)
 
@@ -2284,7 +2292,7 @@ private struct SarosPhaseHeaderPanel: View {
                     color: tint,
                     compact: true
                 )
-                .frame(width: 124, height: 124)
+                .frame(width: 108, height: 108)
             }
 
             SarosEclipseYearMarkersView(
@@ -2594,18 +2602,54 @@ private struct SarosEclipseCubeMapPreview: View {
 
 private struct SarosFlipEventTimelineView: View {
     let series: ActiveSarosPhaseSeries
+    let seriesEclipses: [Eclipse]
     let reference: SarosPhaseTimelineReference?
     let now: Date
-    var pastLimit = 28
-    var futureLimit = 28
     let onSelectEvent: (SarosPhaseFlipEvent) -> Void
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @State private var didScrollToReference = false
+    @State private var periodOffset = 0
+
+    private var sortedEclipses: [Eclipse] {
+        seriesEclipses.sorted { $0.date < $1.date }
+    }
+
+    private var activeRangeIndex: Int? {
+        guard let reference,
+              let baseIndex = Self.periodIndex(containing: reference.event.date, in: sortedEclipses)
+        else {
+            return nil
+        }
+        return min(max(baseIndex + periodOffset, 0), max(sortedEclipses.count - 2, 0))
+    }
+
+    private var activeRange: SarosEclipsePeriodRange? {
+        guard let index = activeRangeIndex,
+              sortedEclipses.indices.contains(index),
+              sortedEclipses.indices.contains(index + 1)
+        else {
+            return nil
+        }
+        return SarosEclipsePeriodRange(
+            start: sortedEclipses[index],
+            end: sortedEclipses[index + 1]
+        )
+    }
+
+    private var canLoadPreviousRange: Bool {
+        (activeRangeIndex ?? 0) > 0
+    }
+
+    private var canLoadNextRange: Bool {
+        guard let activeRangeIndex else { return false }
+        return activeRangeIndex < sortedEclipses.count - 2
+    }
 
     private var model: SarosPhaseTimelineModel? {
         guard let reference,
-              let reading = series.reading(at: reference.event.date, harmonicDepth: harmonicDepth)
+              let range = activeRange,
+              let reading = series.reading(at: range.midpoint, harmonicDepth: harmonicDepth)
         else {
             return nil
         }
@@ -2613,46 +2657,58 @@ private struct SarosFlipEventTimelineView: View {
         return SarosPhaseTimelineModel(
             reading: reading,
             reference: reference,
-            pastLimit: pastLimit,
-            futureLimit: futureLimit
+            range: range
         )
     }
 
     var body: some View {
         if let model {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        Color.clear
-                            .frame(height: 180)
-
-                        ForEach(model.events) { event in
-                            Button {
-                                onSelectEvent(event)
-                            } label: {
-                                SarosPhaseTimelineRow(
-                                    event: event,
-                                    now: model.reference.event.date,
-                                    harmonicDepth: model.reading.harmonicDepth,
-                                    isReference: event.id == model.referenceID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .id(event.id)
-                        }
-
-                        Color.clear
-                            .frame(height: 180)
-                    }
+            VStack(spacing: 0) {
+                rangeControls(model: model)
                     .padding(.horizontal)
                     .padding(.vertical, 8)
-                }
-                .onAppear {
-                    scrollToReference(with: proxy, referenceID: model.referenceID)
-                }
-                .onChange(of: model.referenceID) { _, referenceID in
-                    didScrollToReference = false
-                    scrollToReference(with: proxy, referenceID: referenceID)
+
+                Divider()
+
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            Color.clear
+                                .frame(height: 120)
+
+                            if model.events.isEmpty {
+                                ContentUnavailableView("No Duplex+ flips in this eclipse range", systemImage: "timeline.selection")
+                                    .padding(.vertical, 40)
+                            }
+
+                            ForEach(model.events) { event in
+                                Button {
+                                    onSelectEvent(event)
+                                } label: {
+                                    SarosPhaseTimelineRow(
+                                        event: event,
+                                        now: model.reference.event.date,
+                                        harmonicDepth: model.reading.harmonicDepth,
+                                        isReference: event.id == model.referenceID
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .id(event.id)
+                            }
+
+                            Color.clear
+                                .frame(height: 120)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                    }
+                    .onAppear {
+                        scrollToReference(with: proxy, model: model)
+                    }
+                    .onChange(of: model.scrollTargetID) { _, _ in
+                        didScrollToReference = false
+                        scrollToReference(with: proxy, model: model)
+                    }
                 }
             }
         } else {
@@ -2660,60 +2716,99 @@ private struct SarosFlipEventTimelineView: View {
         }
     }
 
-    private func scrollToReference(with proxy: ScrollViewProxy, referenceID: String) {
+    private func rangeControls(model: SarosPhaseTimelineModel) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                periodOffset -= 1
+                didScrollToReference = false
+            } label: {
+                Image(systemName: "chevron.up")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!canLoadPreviousRange)
+            .accessibilityLabel("Load previous eclipse range")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.range.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(model.range.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                periodOffset += 1
+                didScrollToReference = false
+            } label: {
+                Image(systemName: "chevron.down")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!canLoadNextRange)
+            .accessibilityLabel("Load next eclipse range")
+        }
+    }
+
+    private func scrollToReference(with proxy: ScrollViewProxy, model: SarosPhaseTimelineModel) {
         guard !didScrollToReference else { return }
+        guard let targetID = model.scrollTargetID else { return }
         didScrollToReference = true
         DispatchQueue.main.async {
             withAnimation(.snappy(duration: 0.35)) {
-                proxy.scrollTo(referenceID, anchor: .center)
+                proxy.scrollTo(targetID, anchor: .center)
             }
         }
+    }
+
+    private static func periodIndex(containing date: Date, in eclipses: [Eclipse]) -> Int? {
+        guard eclipses.count >= 2 else { return nil }
+        let previousIndex = eclipses.lastIndex { $0.date <= date } ?? eclipses.startIndex
+        return min(max(previousIndex, eclipses.startIndex), eclipses.count - 2)
     }
 }
 
 private struct SarosPhaseTimelineModel {
     let reading: SarosClockReading
     let reference: SarosPhaseTimelineReference
+    let range: SarosEclipsePeriodRange
     let events: [SarosPhaseFlipEvent]
 
     var referenceID: String {
         reference.event.id
     }
 
+    var scrollTargetID: String? {
+        if events.contains(where: { $0.id == referenceID }) {
+            return referenceID
+        }
+        return events.first(where: { $0.date >= reference.event.date })?.id ?? events.last?.id
+    }
+
     init(
         reading: SarosClockReading,
         reference: SarosPhaseTimelineReference,
-        pastLimit: Int,
-        futureLimit: Int
+        range: SarosEclipsePeriodRange
     ) {
         self.reading = reading
         self.reference = reference
+        self.range = range
 
-        let past = Self.events(
+        events = Self.events(
             reading: reading,
-            startIndex: reference.event.binIndex - 1,
-            direction: .backward,
-            limit: pastLimit
-        ).reversed()
-        let future = Self.events(
-            reading: reading,
-            startIndex: reference.event.binIndex,
-            direction: .forward,
-            limit: futureLimit
+            range: range
         )
-        events = Array(past) + [reference.event] + future
-    }
-
-    private enum Direction {
-        case forward
-        case backward
     }
 
     static func upcomingReference(reading: SarosClockReading, now: Date) -> SarosPhaseTimelineReference? {
-        events(
+        nearbyEvents(
             reading: reading,
             startIndex: reading.binIndex,
-            direction: .forward,
             limit: 1
         )
         .first
@@ -2722,22 +2817,64 @@ private struct SarosPhaseTimelineModel {
 
     private static func events(
         reading: SarosClockReading,
+        range: SarosEclipsePeriodRange
+    ) -> [SarosPhaseFlipEvent] {
+        var eventsByBin: [Int: SarosPhaseFlipEvent] = [:]
+
+        for rarity in FlipRarity.eventRarities(for: reading.harmonicDepth) where rarity >= .epic {
+            var bin = reading.nextQualifiedFlipBin(after: 0, rarity: rarity, exact: true)
+
+            while let currentBin = bin,
+                  currentBin > 0,
+                  currentBin < reading.binCount
+            {
+                let date = reading.date(forBinIndex: currentBin)
+                if date >= range.start.date && date <= range.end.date {
+                    let event = SarosPhaseFlipEvent(
+                        saros: reading.saros,
+                        binIndex: currentBin,
+                        date: date,
+                        octalAddress: reading.octalAddress(forBinIndex: currentBin),
+                        harmonicDepth: reading.harmonicDepth,
+                        rarity: rarity
+                    )
+
+                    if let existing = eventsByBin[currentBin] {
+                        if event.rarity > existing.rarity {
+                            eventsByBin[currentBin] = event
+                        }
+                    } else {
+                        eventsByBin[currentBin] = event
+                    }
+                }
+
+                guard let nextBin = reading.nextQualifiedFlipBin(after: currentBin, rarity: rarity, exact: true),
+                      nextBin > currentBin
+                else {
+                    bin = nil
+                    continue
+                }
+                bin = nextBin
+            }
+        }
+
+        return eventsByBin.values.sorted {
+            if $0.date != $1.date {
+                return $0.date < $1.date
+            }
+            return $0.rarity > $1.rarity
+        }
+    }
+
+    private static func nearbyEvents(
+        reading: SarosClockReading,
         startIndex: Int,
-        direction: Direction,
         limit: Int
     ) -> [SarosPhaseFlipEvent] {
         var eventsByBin: [Int: SarosPhaseFlipEvent] = [:]
 
         for rarity in FlipRarity.eventRarities(for: reading.harmonicDepth) where rarity >= .epic {
-            let firstBin: Int?
-            switch direction {
-            case .forward:
-                firstBin = reading.nextQualifiedFlipBin(after: startIndex, rarity: rarity, exact: true)
-            case .backward:
-                firstBin = reading.previousQualifiedFlipBin(atOrBefore: startIndex, rarity: rarity, exact: true)
-            }
-
-            var bin = firstBin
+            var bin = reading.nextQualifiedFlipBin(after: startIndex, rarity: rarity, exact: true)
             var perRarityCount = 0
             while let currentBin = bin,
                   currentBin > 0,
@@ -2763,40 +2900,41 @@ private struct SarosPhaseTimelineModel {
 
                 perRarityCount += 1
 
-                switch direction {
-                case .forward:
-                    let nextBin = reading.nextQualifiedFlipBin(after: currentBin, rarity: rarity, exact: true)
-                    guard let nextBin, nextBin > currentBin else {
-                        bin = nil
-                        continue
-                    }
-                    bin = nextBin
-                case .backward:
-                    let previousBin = reading.previousQualifiedFlipBin(atOrBefore: currentBin - 1, rarity: rarity, exact: true)
-                    guard let previousBin, previousBin < currentBin else {
-                        bin = nil
-                        continue
-                    }
-                    bin = previousBin
+                guard let nextBin = reading.nextQualifiedFlipBin(after: currentBin, rarity: rarity, exact: true),
+                      nextBin > currentBin
+                else {
+                    bin = nil
+                    continue
                 }
+                bin = nextBin
             }
         }
 
         let sorted = eventsByBin.values.sorted {
-            switch direction {
-            case .forward:
-                if $0.date != $1.date {
-                    return $0.date < $1.date
-                }
-            case .backward:
-                if $0.date != $1.date {
-                    return $0.date > $1.date
-                }
+            if $0.date != $1.date {
+                return $0.date < $1.date
             }
             return $0.rarity > $1.rarity
         }
 
         return Array(sorted.prefix(limit))
+    }
+}
+
+private struct SarosEclipsePeriodRange: Hashable {
+    let start: Eclipse
+    let end: Eclipse
+
+    var midpoint: Date {
+        start.date.addingTimeInterval(max(end.date.timeIntervalSince(start.date), 1) / 2)
+    }
+
+    var title: String {
+        "\(JournalFormatters.date.string(from: start.date)) → \(JournalFormatters.date.string(from: end.date))"
+    }
+
+    var subtitle: String {
+        "Eclipse range · \(end.date.timeIntervalSince(start.date).compactDuration)"
     }
 }
 
@@ -3036,27 +3174,55 @@ private struct SarosGlobalFlipTimelineView: View {
     let referenceDate: Date
     let referenceEvent: SarosPhaseFlipEvent?
 
+    @State private var activeReferenceDate: Date
+    @State private var activeReferenceEvent: SarosPhaseFlipEvent?
     @State private var selectedMonth: SarosGlobalTimelineMonth?
     @State private var monthDistributions: [String: SarosFlipMonthDistribution] = [:]
     @State private var didScrollToReferenceMonth = false
     @State private var didOpenReferenceMonth = false
+    @State private var pastMonthRadius = 120
+    @State private var futureMonthRadius = 120
+    @State private var isReferencePickerPresented = false
 
     private var months: [SarosGlobalTimelineMonth] {
-        SarosGlobalTimelineMonth.months(around: referenceDate)
+        SarosGlobalTimelineMonth.months(
+            around: activeReferenceDate,
+            pastMonths: pastMonthRadius,
+            futureMonths: futureMonthRadius
+        )
     }
 
     private var referenceMonthID: String {
-        SarosGlobalTimelineMonth.containing(referenceDate).id
+        SarosGlobalTimelineMonth.containing(activeReferenceDate).id
     }
 
     private var firstMonthID: String? {
         months.first?.id
     }
 
+    init(referenceDate: Date, referenceEvent: SarosPhaseFlipEvent?) {
+        self.referenceDate = referenceDate
+        self.referenceEvent = referenceEvent
+        _activeReferenceDate = State(initialValue: referenceDate)
+        _activeReferenceEvent = State(initialValue: referenceEvent)
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: []) {
+                    Button {
+                        pastMonthRadius += 60
+                        didScrollToReferenceMonth = false
+                    } label: {
+                        Label("Load previous 5 years", systemImage: "chevron.up")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.bottom, 8)
+
                     ForEach(months) { month in
                         if month.isFirstMonthOfYear || month.id == firstMonthID {
                             SarosGlobalYearDivider(year: month.year)
@@ -3075,13 +3241,43 @@ private struct SarosGlobalFlipTimelineView: View {
                         .buttonStyle(.plain)
                         .id(month.id)
                     }
+
+                    Button {
+                        futureMonthRadius += 60
+                    } label: {
+                        Label("Load next 5 years", systemImage: "chevron.down")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 8)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 12)
             }
             .navigationTitle("Saros calendar")
             .navigationBarTitleDisplayMode(.inline)
-            .task(id: harmonicDepth) {
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isReferencePickerPresented = true
+                    } label: {
+                        Image(systemName: "calendar.badge.clock")
+                    }
+                    .accessibilityLabel("Choose reference date")
+                }
+            }
+            .sheet(isPresented: $isReferencePickerPresented) {
+                NavigationStack {
+                    SarosCalendarReferencePicker(date: $activeReferenceDate) {
+                        activeReferenceEvent = nil
+                        didScrollToReferenceMonth = false
+                        didOpenReferenceMonth = false
+                    }
+                }
+            }
+            .task(id: "\(harmonicDepth)-\(activeReferenceDate.timeIntervalSince1970)-\(pastMonthRadius)-\(futureMonthRadius)") {
                 loadMonthDistributions()
                 scrollToReferenceMonth(with: proxy)
                 openReferenceMonth()
@@ -3090,8 +3286,8 @@ private struct SarosGlobalFlipTimelineView: View {
         .navigationDestination(item: $selectedMonth) { month in
             SarosGlobalMonthTimelineView(
                 month: month,
-                referenceDate: referenceDate,
-                referenceEvent: referenceEvent
+                referenceDate: activeReferenceDate,
+                referenceEvent: activeReferenceEvent
             )
         }
     }
@@ -3101,7 +3297,7 @@ private struct SarosGlobalFlipTimelineView: View {
         didOpenReferenceMonth = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            selectedMonth = SarosGlobalTimelineMonth.containing(referenceDate)
+            selectedMonth = SarosGlobalTimelineMonth.containing(activeReferenceDate)
         }
     }
 
@@ -3128,6 +3324,45 @@ private struct SarosGlobalFlipTimelineView: View {
                 harmonicDepth: harmonicDepth,
                 eclipseService: eclipseService
             )
+        }
+    }
+}
+
+private struct SarosCalendarReferencePicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var date: Date
+    @State private var draftDate: Date
+    let onApply: () -> Void
+
+    init(date: Binding<Date>, onApply: @escaping () -> Void) {
+        _date = date
+        _draftDate = State(initialValue: date.wrappedValue)
+        self.onApply = onApply
+    }
+
+    var body: some View {
+        Form {
+            Section("Reference") {
+                DatePicker("Date", selection: $draftDate)
+                    .datePickerStyle(.compact)
+
+                Button {
+                    draftDate = Date()
+                } label: {
+                    Label("Now", systemImage: "clock.arrow.circlepath")
+                }
+            }
+        }
+        .navigationTitle("Reference Date")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    date = draftDate
+                    onApply()
+                    dismiss()
+                }
+            }
         }
     }
 }
@@ -3493,9 +3728,13 @@ private struct SarosGlobalTimelineMonth: Identifiable, Hashable {
         make(from: calendar.dateInterval(of: .month, for: date)?.start ?? calendar.startOfDay(for: date))
     }
 
-    static func months(around date: Date) -> [SarosGlobalTimelineMonth] {
+    static func months(
+        around date: Date,
+        pastMonths: Int = 120,
+        futureMonths: Int = 120
+    ) -> [SarosGlobalTimelineMonth] {
         let reference = containing(date).startDate
-        return (-120...120).compactMap { offset in
+        return (-max(pastMonths, 0)...max(futureMonths, 0)).compactMap { offset in
             guard let monthStart = calendar.date(byAdding: .month, value: offset, to: reference) else {
                 return nil
             }

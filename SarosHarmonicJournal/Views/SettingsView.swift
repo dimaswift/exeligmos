@@ -40,6 +40,12 @@ struct SettingsView: View {
                 } label: {
                     Label("Periods", systemImage: "clock.arrow.circlepath")
                 }
+
+                NavigationLink {
+                    CatalogView()
+                } label: {
+                    Label("Catalog", systemImage: "globe.europe.africa")
+                }
             }
 
             Section("Camera") {

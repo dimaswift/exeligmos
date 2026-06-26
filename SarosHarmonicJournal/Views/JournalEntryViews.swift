@@ -202,9 +202,6 @@ struct JournalEntryDetailView: View {
                             Text(context.displayTitleWithoutSaros)
                                 .font(.headline)
                                 .foregroundStyle(context.titleColor)
-                            if context.rarity != .common {
-                                FlipRarityBadge(rarity: context.rarity)
-                            }
                             Text(JournalFormatters.dateTime.string(from: entry.eventDate))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -2694,21 +2691,89 @@ private struct JournalEntryImageCarousel: View {
     let items: [JournalMediaItem]
 
     var body: some View {
-        TabView {
-            ForEach(items) { item in
-                let url = MediaStorage.url(for: item)
-                JournalAsyncMediaImage(item: item, contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.secondarySystemBackground))
-                    .contentShape(Rectangle())
-                    .contextMenu {
-                        ShareLink(item: url) {
-                            Label("Share", systemImage: "square.and.arrow.up")
+        GeometryReader { geometry in
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    ForEach(items) { item in
+                        let url = MediaStorage.url(for: item)
+                        JournalAsyncMediaImage(item: item, contentMode: .fit)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .background(Color(.secondarySystemBackground))
+                            .contentShape(Rectangle())
+                            .overlay {
+                                MediaShareContextMenuOverlay(url: url)
+                            }
+                            .contextMenu {
+                                ShareLink(item: url) {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                            }
                         }
-                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+        }
+    }
+}
+
+private struct MediaShareContextMenuOverlay: UIViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+        view.addInteraction(UIContextMenuInteraction(delegate: context.coordinator))
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.url = url
+    }
+
+    final class Coordinator: NSObject, UIContextMenuInteractionDelegate {
+        var url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            configurationForMenuAtLocation location: CGPoint
+        ) -> UIContextMenuConfiguration? {
+            UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self, weak interaction] _ in
+                let action = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { _ in
+                    self?.presentShareSheet(from: interaction?.view)
+                }
+                return UIMenu(children: [action])
             }
         }
-        .tabViewStyle(.page)
+
+        private func presentShareSheet(from sourceView: UIView?) {
+            let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if let popover = controller.popoverPresentationController {
+                popover.sourceView = sourceView
+                popover.sourceRect = sourceView?.bounds ?? .zero
+            }
+            topViewController()?.present(controller, animated: true)
+        }
+
+        private func topViewController() -> UIViewController? {
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+            var controller = scene?.windows.first { $0.isKeyWindow }?.rootViewController
+            while let presented = controller?.presentedViewController {
+                controller = presented
+            }
+            return controller
+        }
     }
 }
 
