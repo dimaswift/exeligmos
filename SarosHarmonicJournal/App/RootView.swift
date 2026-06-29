@@ -3,7 +3,7 @@ import SwiftUI
 
 enum AppTab: String, CaseIterable, Identifiable {
     case feed
-    case clock
+    case timeline
     case saros
     case record
     case settings
@@ -13,7 +13,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .feed: "Feed"
-        case .clock: "Tags"
+        case .timeline: "Waveform"
         case .saros: "Saros"
         case .record: "Record"
         case .settings: "Settings"
@@ -23,7 +23,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .feed: "rectangle.stack"
-        case .clock: "tag"
+        case .timeline: "waveform.path.ecg"
         case .saros: "circle.grid.3x3"
         case .record: "square.and.pencil"
         case .settings: "gearshape"
@@ -34,6 +34,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct RootView: View {
     @EnvironmentObject private var services: AppServices
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
@@ -94,8 +95,8 @@ struct RootView: View {
         switch tab {
         case .feed:
             FeedView()
-        case .clock:
-            TagsView()
+        case .timeline:
+            SarosCurrentWaveTimelineView()
         case .saros:
             SarosGridView()
         case .record:
@@ -116,7 +117,7 @@ struct RootView: View {
                 selectedTab = .record
             }
         case "thread":
-            selectedTab = .clock
+            selectedTab = .settings
         case "saros":
             selectedTab = .saros
         default:
@@ -135,7 +136,7 @@ struct RootView: View {
             return
         }
 
-        selectedTab = .clock
+        selectedTab = .record
         captureRequest = RecordCaptureRequest(entity: entity, startedAt: Date())
     }
 
@@ -159,7 +160,8 @@ struct RootView: View {
             await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                 eclipseService: services.eclipseService,
                 moonPhaseService: services.moonPhaseService,
-                harmonicDepth: harmonicDepth
+                harmonicDepth: harmonicDepth,
+                recentEntries: Array(entries.prefix(10))
             )
         }
     }
@@ -245,14 +247,15 @@ private struct FeedView: View {
             } else {
                 ForEach(entryGroups) { group in
                     Section {
-                        ForEach(group.entries) { entry in
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
                             Button {
                                 selectedEntry = entry
                             } label: {
                                 JournalEntryRow(entry: entry, tags: tags)
                             }
                             .buttonStyle(.plain)
-                            .listRowSeparator(.visible)
+                            .listRowSeparator(index == group.entries.count - 1 ? .hidden : .visible, edges: .bottom)
+                            .listRowSeparator(.hidden, edges: .top)
                             .listRowSeparatorTint(.white.opacity(0.28))
                         }
                     } header: {
@@ -1211,7 +1214,9 @@ private struct LiveTrackingRolloverObserver: View {
         let shouldRefreshForFlip = date >= snapshot.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay)
         let shouldRefreshForWaveform = snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID
             && snapshot.waveformEndDate.map { date >= $0 } == true
-        guard shouldRefreshForFlip || shouldRefreshForWaveform else { return }
+        let shouldRefreshForCycle = snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID
+            && snapshot.liveCycleEndDates.contains { date >= $0 }
+        guard shouldRefreshForFlip || shouldRefreshForWaveform || shouldRefreshForCycle else { return }
 
         isUpdating = true
         defer { isUpdating = false }
@@ -1231,7 +1236,10 @@ private struct LiveTrackingRolloverObserver: View {
                         harmonicDepth: harmonicDepth
                     )
                 }.value
-                guard shouldRefreshForWaveform || nextSnapshot.flipDate > snapshot.flipDate.addingTimeInterval(0.5) else { return }
+                guard shouldRefreshForWaveform
+                    || shouldRefreshForCycle
+                    || nextSnapshot.flipDate > snapshot.flipDate.addingTimeInterval(0.5)
+                else { return }
                 try await ThreadLiveActivityService.start(snapshot: nextSnapshot)
                 return
             }
@@ -1258,5 +1266,17 @@ private struct LiveTrackingRolloverObserver: View {
         } catch {
             // Live tracking should not disturb normal app navigation if a rollover cannot be refreshed.
         }
+    }
+}
+
+private extension ThreadTrackingSnapshot {
+    var liveCycleEndDates: [Date] {
+        [
+            pulseCycleEndDate,
+            moonSynodicEndDate,
+            moonAnomalisticEndDate,
+            moonDraconicEndDate
+        ]
+        .compactMap { $0 }
     }
 }

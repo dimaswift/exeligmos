@@ -26,16 +26,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Saros clock") {
-                Stepper(
-                    "Glyph depth \(harmonicDepth)",
-                    value: $harmonicDepth,
-                    in: JournalSettings.supportedHarmonicDepth
-                )
-
-                Text("Depth controls glyph shape, flip timing, and which rarity orders exist.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
                 NavigationLink {
                     RarityPeriodsSettingsView()
                 } label: {
@@ -52,6 +42,12 @@ struct SettingsView: View {
                     CatalogView()
                 } label: {
                     Label("Catalog", systemImage: "globe.europe.africa")
+                }
+
+                NavigationLink {
+                    TagsView()
+                } label: {
+                    Label("Tags", systemImage: "tag")
                 }
             }
 
@@ -88,7 +84,8 @@ struct SettingsView: View {
                         await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                             eclipseService: services.eclipseService,
                             moonPhaseService: services.moonPhaseService,
-                            harmonicDepth: harmonicDepth
+                            harmonicDepth: harmonicDepth,
+                            recentEntries: Array(entries.prefix(10))
                         )
                         diagnosticMessage = "Notification schedule refreshed."
                     }
@@ -179,7 +176,8 @@ struct SettingsView: View {
                 await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                     eclipseService: services.eclipseService,
                     moonPhaseService: services.moonPhaseService,
-                    harmonicDepth: newDepth
+                    harmonicDepth: newDepth,
+                    recentEntries: Array(entries.prefix(10))
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
             }
@@ -285,6 +283,7 @@ private struct WaveformSettingsView: View {
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var mergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var normalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var subdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
+    @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var amplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
 
     private var selectedModel: JournalWaveformModel {
         JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
@@ -327,6 +326,18 @@ private struct WaveformSettingsView: View {
                 Toggle("Merge close spikes", isOn: $mergeCloseSpikes)
                 Toggle("Normalized amplitude", isOn: $normalizedAmplitude)
 
+                HStack {
+                    Text("Amplitude")
+                    Slider(
+                        value: $amplitudeMultiplier,
+                        in: JournalWaveformSettings.amplitudeMultiplierRange,
+                        step: 0.05
+                    )
+                    Text("\(clampedAmplitudeMultiplier, format: .number.precision(.fractionLength(2)))x")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
                 Stepper(
                     "Subdivision depth \(clampedSubdivisionDepth)",
                     value: $subdivisionDepth,
@@ -360,6 +371,13 @@ private struct WaveformSettingsView: View {
         min(
             max(subdivisionDepth, JournalWaveformSettings.subdivisionDepthRange.lowerBound),
             JournalWaveformSettings.subdivisionDepthRange.upperBound
+        )
+    }
+
+    private var clampedAmplitudeMultiplier: Double {
+        min(
+            max(amplitudeMultiplier, JournalWaveformSettings.amplitudeMultiplierRange.lowerBound),
+            JournalWaveformSettings.amplitudeMultiplierRange.upperBound
         )
     }
 }

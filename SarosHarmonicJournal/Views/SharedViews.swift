@@ -95,6 +95,7 @@ enum JournalSettings {
     static let waveformMergeCloseSpikesKey = "waveformMergeCloseSpikes"
     static let waveformNormalizedAmplitudeKey = "waveformNormalizedAmplitude"
     static let waveformSubdivisionDepthKey = "waveformSubdivisionDepth"
+    static let waveformAmplitudeMultiplierKey = "waveformAmplitudeMultiplier"
     static let notificationRarityPreferencesKey = "notificationRarityPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
@@ -224,6 +225,8 @@ enum JournalWaveformModel: String, CaseIterable, Identifiable, Sendable {
 enum JournalWaveformSettings {
     static let defaultParabolaA = 2.6
     static let parabolaARange = 1.0...8.0
+    static let defaultAmplitudeMultiplier = 1.0
+    static let amplitudeMultiplierRange = 0.25...4.0
     static let mergeCloseSpikeThreshold: TimeInterval = 36 * 60 + 10
     static let defaultSubdivisionDepth = 5
     static let subdivisionDepthRange = 1...8
@@ -239,6 +242,12 @@ enum JournalWaveformSettings {
         let raw = stored == 0 ? defaultSubdivisionDepth : stored
         return min(max(raw, subdivisionDepthRange.lowerBound), subdivisionDepthRange.upperBound)
     }
+
+    static var currentAmplitudeMultiplier: Double {
+        let stored = UserDefaults.standard.double(forKey: JournalSettings.waveformAmplitudeMultiplierKey)
+        guard stored.isFinite, stored > 0 else { return defaultAmplitudeMultiplier }
+        return min(max(stored, amplitudeMultiplierRange.lowerBound), amplitudeMultiplierRange.upperBound)
+    }
 }
 
 struct JournalWaveformOptions: Hashable, Sendable {
@@ -247,6 +256,7 @@ struct JournalWaveformOptions: Hashable, Sendable {
     var normalizedAmplitude: Bool
     var subdivisionDepth: Int
     var mergeThreshold: TimeInterval
+    var amplitudeMultiplier: Double
 
     static var current: JournalWaveformOptions {
         JournalWaveformOptions(
@@ -254,7 +264,8 @@ struct JournalWaveformOptions: Hashable, Sendable {
             mergeCloseSpikes: UserDefaults.standard.bool(forKey: JournalSettings.waveformMergeCloseSpikesKey),
             normalizedAmplitude: UserDefaults.standard.bool(forKey: JournalSettings.waveformNormalizedAmplitudeKey),
             subdivisionDepth: JournalWaveformSettings.currentSubdivisionDepth,
-            mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+            mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
+            amplitudeMultiplier: JournalWaveformSettings.currentAmplitudeMultiplier
         )
     }
 
@@ -263,7 +274,8 @@ struct JournalWaveformOptions: Hashable, Sendable {
         mergeCloseSpikes: false,
         normalizedAmplitude: false,
         subdivisionDepth: JournalWaveformSettings.defaultSubdivisionDepth,
-        mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+        mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
+        amplitudeMultiplier: JournalWaveformSettings.defaultAmplitudeMultiplier
     )
 }
 
@@ -273,7 +285,7 @@ enum SarosDurationUnitFormatter {
         maxUnits: Int = 3
     ) -> String {
         guard duration.isFinite, duration > 0 else {
-            return "0 nanosaros"
+            return "0 nS"
         }
 
         var remaining = duration
@@ -293,19 +305,19 @@ enum SarosDurationUnitFormatter {
         }
 
         if parts.isEmpty {
-            parts.append("1 nanosaros")
+            parts.append("1 nS")
         }
 
         return parts.joined(separator: " ")
     }
 
     private static let units: [(name: String, duration: TimeInterval)] = [
-        ("gigasaros", SarosPulseCalculator.averageDuration(for: .giga)),
-        ("megasaros", SarosPulseCalculator.averageDuration(for: .mega)),
-        ("kilosaros", SarosPulseCalculator.averageDuration(for: .kilo)),
-        ("saros", SarosPulseCalculator.averageDuration(for: .saros)),
-        ("milisaros", SarosPulseCalculator.averageDuration(for: .mili)),
-        ("nanosaros", SarosPulseCalculator.averageDuration(for: .nano))
+        ("Gs", SarosPulseCalculator.averageDuration(for: .giga)),
+        ("Ms", SarosPulseCalculator.averageDuration(for: .mega)),
+        ("Ks", SarosPulseCalculator.averageDuration(for: .kilo)),
+        ("S", SarosPulseCalculator.averageDuration(for: .saros)),
+        ("mS", SarosPulseCalculator.averageDuration(for: .mili)),
+        ("nS", SarosPulseCalculator.averageDuration(for: .nano))
     ]
 }
 

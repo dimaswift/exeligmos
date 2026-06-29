@@ -25,23 +25,14 @@ struct TrackedThreadProvider: TimelineProvider {
             .compactMap { $0 }
             .filter { $0 > now.addingTimeInterval(2) }
         let naturalRefresh = refreshCandidates.min() ?? now.addingTimeInterval(Self.timelineHorizon)
-        let horizonEnd = min(naturalRefresh, now.addingTimeInterval(Self.timelineHorizon))
-        var entries: [TrackedThreadEntry] = []
-        var cursor = now
-
-        while cursor <= horizonEnd {
-            entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
-            cursor = cursor.addingTimeInterval(Self.timelineStep)
-        }
-
-        if entries.isEmpty {
-            entries = [TrackedThreadEntry(date: now, snapshot: snapshot)]
-        }
-
-        completion(Timeline(entries: entries, policy: .after(horizonEnd)))
+        completion(
+            Timeline(
+                entries: [TrackedThreadEntry(date: now, snapshot: snapshot)],
+                policy: .after(naturalRefresh)
+            )
+        )
     }
 
-    private static let timelineStep: TimeInterval = 5
     private static let timelineHorizon: TimeInterval = 15 * 60
 }
 
@@ -55,6 +46,7 @@ struct TrackedThreadWidget: Widget {
         .configurationDisplayName("Live Tracking")
         .description("Shows the live waveform, glyph, and countdown for the current Saros spike.")
         .supportedFamilies([.systemSmall, .systemMedium])
+        .contentMarginsDisabled()
     }
 }
 
@@ -90,37 +82,47 @@ private struct TrackedThreadWidgetView: View {
             switch family {
             case .systemMedium:
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 14) {
-                        VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(payload.displayEventName)
                                 .font(.headline)
                                 .lineLimit(1)
-                            TrackingCountdownText(payload: payload, now: now, compact: false, recordURL: snapshot.recordURL)
-                                .font(.title3.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(color)
+                            Text(payload.secondaryEventDescription(at: now))
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .lineLimit(1)
                             HStack(spacing: 10) {
                                 Text(payload.energyText(at: now))
                                 Text(payload.momentumText(at: now))
                             }
-                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(color)
+                            TrackingCountdownText(
+                                payload: payload,
+                                now: now,
+                                compact: false,
+                                recordURL: snapshot.recordURL
+                            )
+                                .font(.callout.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(color)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Spacer(minLength: 0)
-                        VStack(spacing: 7) {
+                        HStack(alignment: .center, spacing: 8) {
                             WidgetOctalGlyph(
                                 value: payload.glyph,
                                 depth: snapshot.harmonicDepth,
                                 color: color,
                                 secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
                             )
-                            .frame(width: 62, height: 62)
+                            .frame(width: 48, height: 48)
                             .offset(x: 3, y: 3)
-
-                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 26)
+                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
                         }
                     }
-                    Spacer(minLength: 0)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 10)
+
                     WidgetWaveformSegmentView(
                         samples: payload.waveformSamples ?? [],
                         samplePositions: payload.waveformSamplePositions ?? [],
@@ -128,32 +130,50 @@ private struct TrackedThreadWidgetView: View {
                         color: color,
                         currentPosition: payload.waveformPosition(at: now),
                         waveformStartDate: payload.waveformStartDate,
-                        waveformEndDate: payload.waveformEndDate
+                        waveformEndDate: payload.waveformEndDate,
+                        pulseCycleStartDate: payload.pulseCycleStartDate,
+                        pulseCycleEndDate: payload.pulseCycleEndDate
                     )
                     .frame(maxWidth: .infinity)
-                    .frame(height: 42)
+                    .frame(height: 62)
                 }
             default:
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        WidgetOctalGlyph(
-                            value: payload.glyph,
-                            depth: snapshot.harmonicDepth,
-                            color: color,
-                            secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
-                        )
-                            .frame(width: 54, height: 54)
-                            .offset(x: 3, y: 3)
-                        Spacer(minLength: 0)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 24)
-                            Text(payload.energyText(at: now))
-                            Text(payload.momentumText(at: now))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(payload.displayEventName)
+                                .font(.headline)
+                                .lineLimit(1)
+                            Text(payload.secondaryEventDescription(at: now))
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .lineLimit(1)
                         }
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(color)
+                        Spacer(minLength: 0)
+                        HStack(spacing: 5) {
+                            WidgetOctalGlyph(
+                                value: payload.glyph,
+                                depth: snapshot.harmonicDepth,
+                                color: color,
+                                secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                            )
+                            .frame(width: 36, height: 36)
+                            .offset(x: 2, y: 2)
+                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 22)
+                        }
                     }
-                    Spacer(minLength: 0)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+
+                    HStack(spacing: 8) {
+                        Text(payload.energyText(at: now))
+                        Text(payload.momentumText(at: now))
+                        TrackingCountdownText(payload: payload, now: now, compact: true, recordURL: snapshot.recordURL)
+                    }
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 8)
+
                     WidgetWaveformSegmentView(
                         samples: payload.waveformSamples ?? [],
                         samplePositions: payload.waveformSamplePositions ?? [],
@@ -161,20 +181,15 @@ private struct TrackedThreadWidgetView: View {
                         color: color,
                         currentPosition: payload.waveformPosition(at: now),
                         waveformStartDate: payload.waveformStartDate,
-                        waveformEndDate: payload.waveformEndDate
+                        waveformEndDate: payload.waveformEndDate,
+                        pulseCycleStartDate: payload.pulseCycleStartDate,
+                        pulseCycleEndDate: payload.pulseCycleEndDate
                     )
-                    .frame(height: 38)
-                    Text(payload.displayEventName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    TrackingCountdownText(payload: payload, now: now, compact: true, recordURL: snapshot.recordURL)
-                        .font(.callout.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(color)
+                    .frame(height: 50)
                 }
             }
         }
         .foregroundStyle(.white)
-        .padding(2)
     }
 
     private var emptyState: some View {

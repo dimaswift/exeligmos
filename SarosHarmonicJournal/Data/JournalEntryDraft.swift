@@ -8,6 +8,7 @@ final class JournalEntryDraft {
     var updatedAt: Date
     var recordStartedAt: Date
     var eventDate: Date
+    var endDate: Date?
     var text: String?
     var emoji: String?
     var mediaItemsJSON: Data
@@ -25,6 +26,7 @@ final class JournalEntryDraft {
         updatedAt: Date = Date(),
         recordStartedAt: Date,
         eventDate: Date,
+        endDate: Date? = nil,
         text: String? = nil,
         emoji: String? = nil,
         mediaItems: [JournalMediaItem] = [],
@@ -40,6 +42,7 @@ final class JournalEntryDraft {
         self.updatedAt = updatedAt
         self.recordStartedAt = recordStartedAt
         self.eventDate = eventDate
+        self.endDate = endDate
         self.text = text
         self.emoji = emoji
         self.mediaItemsJSON = (try? JSONEncoder().encode(mediaItems)) ?? Data()
@@ -79,6 +82,7 @@ final class JournalEntryDraft {
     func update(
         recordStartedAt: Date,
         eventDate: Date,
+        endDate: Date?,
         text: String?,
         emoji: String?,
         mediaItems: [JournalMediaItem],
@@ -91,6 +95,7 @@ final class JournalEntryDraft {
     ) {
         self.recordStartedAt = recordStartedAt
         self.eventDate = eventDate
+        self.endDate = endDate
         self.text = text
         self.emoji = emoji
         self.mediaItems = mediaItems

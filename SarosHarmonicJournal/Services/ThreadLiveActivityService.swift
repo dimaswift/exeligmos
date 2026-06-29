@@ -23,6 +23,9 @@ enum ThreadLiveActivityError: LocalizedError {
 
 enum ThreadLiveActivityService {
     private static let alarmIdentifierPrefix = "saros-journal.live-tracking."
+    private static let waveformDisplayDuration = SarosPulseCalculator.averageDuration(for: .mega) * 2
+    private static let liveWaveformPayloadSampleCount = 96
+    private static let liveWaveformPayloadMarkerLimit = 10
 
     static func snapshot(
         entity: TrackedEntity,
@@ -93,7 +96,7 @@ enum ThreadLiveActivityService {
         let waveformSpikes = try contextService.waveformSpikes(
             around: date,
             harmonicDepth: harmonicDepth,
-            displayDuration: JournalEventWaveform.defaultDisplayDuration,
+            displayDuration: waveformDisplayDuration,
             paddingDuration: 172_800
         )
         let upcomingSpike = nextSpike(after: date, in: waveformSpikes)
@@ -350,7 +353,8 @@ enum ThreadLiveActivityService {
     }
 
     private static func scheduleFlipAlarm(for snapshot: ThreadTrackingSnapshot) async {
-        guard snapshot.flipDate > Date(),
+        let notifyDate = snapshot.flipDate.addingTimeInterval(-SarosPulseCalculator.averageDuration(for: .mili))
+        guard notifyDate > Date(),
               await NotificationScheduler.shared.requestAuthorization()
         else {
             return
@@ -366,8 +370,8 @@ enum ThreadLiveActivityService {
         )
 
         let content = UNMutableNotificationContent()
-        content.title = snapshot.eventName ?? "\(snapshot.rarityTitle): \(snapshot.threadTitle)"
-        content.subtitle = "Peak reached"
+        content.title = "Approaching \(snapshot.eventName ?? snapshot.rarityTitle) peak"
+        content.subtitle = "T-minus 1 milisaros"
         let energy = snapshot.energyPercent.map { "Energy \(Int((min(max($0, 0), 1) * 100).rounded()))%" }
         let momentum = snapshot.momentum.map { value in
             let percent = Int((min(max(value, -1), 1) * 100).rounded())
@@ -392,7 +396,7 @@ enum ThreadLiveActivityService {
 
         let components = Calendar.current.dateComponents(
             [.year, .month, .day, .hour, .minute, .second],
-            from: snapshot.flipDate
+            from: notifyDate
         )
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let identifier = "\(threadPrefix)\(Int(snapshot.flipDate.timeIntervalSince1970))"
@@ -431,21 +435,35 @@ enum ThreadLiveActivityService {
         waveformStartDate: Date,
         waveformEndDate: Date
     ) {
-        let interval = JournalEventWaveform.displayInterval(centeredOn: date)
+        let interval = JournalEventWaveform.displayInterval(
+            centeredOn: date,
+            duration: waveformDisplayDuration
+        )
         let field = JournalEventWaveform.field(spikes: spikes)
-        let samples = field.samples(in: interval, sampleCount: 96, spikes: spikes)
+        let samples = field.samples(in: interval, sampleCount: liveWaveformPayloadSampleCount, spikes: spikes)
+        let payloadPoints = compactWaveformPoints(samples.points, maxCount: liveWaveformPayloadSampleCount)
         let currentEnergy = field.energy(at: date)
         let visibleMaxEnergy = samples.points.map(\.energy).max() ?? 0
         let maxEnergy = max(visibleMaxEnergy, currentEnergy, 0.000_000_001)
-        let normalizedSamples = samples.points.map { point in
+        let normalizedSamples = payloadPoints.map { point in
             min(max(point.energy / maxEnergy, 0), 1)
         }
-        let samplePositions = samples.points.map(\.position)
+        let samplePositions = payloadPoints.map { point in
+            (point.position * 10_000).rounded() / 10_000
+        }
         let visibleSpikes = JournalEventWaveform.visibleSpikes(in: interval, spikes: spikes)
-        let spikeMarkers = visibleSpikes.map { spike in
+        let spikeMarkers = visibleSpikes
+            .sorted {
+                if $0.rarity != $1.rarity {
+                    return $0.rarity > $1.rarity
+                }
+                return abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+            }
+            .prefix(liveWaveformPayloadMarkerLimit)
+            .map { spike in
             TrackingWaveformSpikeMarker(
-                position: min(max(spike.date.timeIntervalSince(interval.start) / interval.duration, 0), 1),
-                energy: min(max((samples.eventEnergyByID[spike.id] ?? field.energy(at: spike.date)) / maxEnergy, 0), 1),
+                position: (min(max(spike.date.timeIntervalSince(interval.start) / interval.duration, 0), 1) * 10_000).rounded() / 10_000,
+                energy: (min(max((samples.eventEnergyByID[spike.id] ?? field.energy(at: spike.date)) / maxEnergy, 0), 1) * 10_000).rounded() / 10_000,
                 colorHex: trackingPrimaryColorHex(for: spike.rarity)
             )
         }
@@ -461,5 +479,41 @@ enum ThreadLiveActivityService {
             waveformStartDate: interval.start,
             waveformEndDate: interval.end
         )
+    }
+
+    private static func compactWaveformPoints(
+        _ points: [JournalEventWaveSample],
+        maxCount: Int
+    ) -> [JournalEventWaveSample] {
+        guard points.count > maxCount, maxCount > 1 else { return points }
+        let sorted = points.sorted { $0.position < $1.position }
+        let interval = sorted.first.map { DateInterval(start: $0.date, end: sorted.last?.date ?? $0.date) }
+            ?? DateInterval(start: Date(), duration: 1)
+
+        return (0..<maxCount).map { index in
+            let position = Double(index) / Double(maxCount - 1)
+            let energy = interpolatedEnergy(in: sorted, at: position)
+            let date = interval.start.addingTimeInterval(interval.duration * position)
+            return JournalEventWaveSample(date: date, position: position, energy: energy)
+        }
+    }
+
+    private static func interpolatedEnergy(
+        in points: [JournalEventWaveSample],
+        at position: Double
+    ) -> Double {
+        guard let first = points.first, let last = points.last else { return 0 }
+        let clamped = min(max(position, first.position), last.position)
+        if clamped <= first.position { return first.energy }
+
+        for index in 0..<(points.count - 1) {
+            let left = points[index]
+            let right = points[index + 1]
+            guard clamped <= right.position || index == points.count - 2 else { continue }
+            let fraction = (clamped - left.position) / max(right.position - left.position, 0.000_001)
+            return left.energy + (right.energy - left.energy) * min(max(fraction, 0), 1)
+        }
+
+        return last.energy
     }
 }

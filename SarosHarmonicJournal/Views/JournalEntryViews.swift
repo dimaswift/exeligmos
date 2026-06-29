@@ -36,84 +36,100 @@ struct JournalEntryRow: View {
         return entry.sourceDeviceEmoji?.nilIfBlank
     }
 
+    private var secondaryDisplayLabel: String {
+        entry.isOngoing() ? "\(context.secondaryEventLabel) (in progress)" : context.secondaryEventLabel
+    }
+
     var body: some View {
         let primeTint = primeTag.map { Color(hex: $0.tintHex, fallback: .white) }
 
-        HStack(alignment: .top, spacing: 14) {
-            Text(JournalRecordMarkers.marker(from: entry.emoji))
-                .font(.system(size: 36))
-                .frame(width: 48, height: 52, alignment: .top)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(JournalRecordMarkers.marker(from: entry.emoji))
+                    .font(.system(size: 38))
+                    .frame(width: 44, height: 44, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(primaryTitle)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(context.titleColor)
                         .lineLimit(1)
-                        .padding(.top, 2)
-                    Spacer(minLength: 0)
-                    VStack(spacing: 3) {
-                        JournalClosestSarosPhaseGlyph(
-                            context: context,
-                            displayDepth: displayDepth,
-                            size: 38
-                        )
-                        JournalPulseGlyphForDate(date: entry.eventDate, size: 30)
-                    }
-                }
-
-                JournalSpikeGlyphStrip(
-                    spikes: context.spikes,
-                    displayDepth: displayDepth,
-                    size: 28,
-                    highlightedSpikeID: context.closestSpike?.id
-                )
-
-                if let text = entry.text, !text.isEmpty {
-                    Text(text)
-                        .lineLimit(3)
-                        .font(.subheadline)
-                }
-
-                if !entry.mediaItems.isEmpty {
-                    JournalEntryMediaStrip(items: entry.mediaItems)
-                }
-
-                if !matchingTags.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(matchingTags) { tag in
-                            Text(tag.displayEmoji)
-                                .font(.caption)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(
-                                    tag.isPrime
-                                        ? Color(hex: tag.tintHex, fallback: .white).opacity(0.18)
-                                        : Color.secondary.opacity(0.12),
-                                    in: Capsule()
-                                )
-                        }
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Text(JournalFormatters.dateTime.string(from: entry.eventDate))
-                        .font(.caption)
+                    Text(secondaryDisplayLabel)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    if entry.isPeriodEntry {
+                        Text(SarosDurationUnitFormatter.verboseDuration(entry.eventDuration, maxUnits: 2))
+                            .font(.caption2.monospacedDigit().weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 6)
+
+                HStack(alignment: .center, spacing: 6) {
+                    JournalClosestSarosPhaseGlyph(
+                        context: context,
+                        displayDepth: displayDepth,
+                        size: 46
+                    )
+                    JournalPulseGlyphForDate(date: entry.eventDate, size: 38)
                     if let moonReading {
                         MoonPhaseGlyph(reading: moonReading)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 36, height: 36)
                     }
-                    if let remoteDeviceEmoji {
-                        Text(remoteDeviceEmoji)
-                            .font(.caption)
-                    }
-                    Spacer(minLength: 8)
-                    JournalWaveDirectionIcon(direction: context.direction, size: 12)
                 }
             }
+
+            JournalSpikeGlyphStrip(
+                spikes: context.spikes,
+                displayDepth: displayDepth,
+                size: 32,
+                highlightedSpikeID: context.closestSpike?.id
+            )
+
+            if let text = entry.text, !text.isEmpty {
+                Text(text)
+                    .lineLimit(3)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !entry.mediaItems.isEmpty {
+                JournalEntryMediaStrip(items: entry.mediaItems)
+            }
+
+            if !matchingTags.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(matchingTags) { tag in
+                        Text(tag.displayEmoji)
+                            .font(.caption)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                tag.isPrime
+                                    ? Color(hex: tag.tintHex, fallback: .white).opacity(0.18)
+                                    : Color.secondary.opacity(0.12),
+                                in: Capsule()
+                            )
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let remoteDeviceEmoji {
+                    Text(remoteDeviceEmoji)
+                        .font(.caption)
+                }
+                Spacer(minLength: 8)
+                JournalWaveDirectionIcon(direction: context.direction, size: 12)
+            }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
         .padding(.horizontal, primeTint == nil ? 0 : 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
@@ -190,40 +206,55 @@ struct JournalEntryDetailView: View {
         return entry.sourceDeviceEmoji?.nilIfBlank
     }
 
+    private var secondaryDisplayLabel: String {
+        entry.isOngoing() ? "\(context.secondaryEventLabel) (in progress)" : context.secondaryEventLabel
+    }
+
     var body: some View {
         let displayedDirection = localWaveDynamics?.direction ?? context.direction
         let displayedMomentum = localWaveDynamics?.momentum ?? context.effectiveMomentum
 
         List {
             Section {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
                         Text(JournalRecordMarkers.marker(from: entry.emoji))
                             .font(.system(size: 30))
                             .frame(width: 36, height: 36)
 
-                        VStack(alignment: .leading, spacing: 5) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(context.displayTitleWithoutSaros)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(context.titleColor)
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.82)
+                            Text(secondaryDisplayLabel)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            if entry.isPeriodEntry {
+                                Text(SarosDurationUnitFormatter.verboseDuration(entry.eventDuration, maxUnits: 2))
+                                    .font(.caption2.monospacedDigit().weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         Spacer(minLength: 0)
 
-                        VStack(spacing: 3) {
+                        HStack(alignment: .center, spacing: 6) {
                             JournalClosestSarosPhaseGlyph(
                                 context: context,
                                 displayDepth: displayDepth,
-                                size: 36
+                                size: 34
                             )
+                            if let pulseReading {
+                                SarosPulseGlyph(reading: pulseReading, size: 30)
+                            }
                             if let moonReading {
                                 MoonPhaseGlyph(reading: moonReading)
-                                    .frame(width: 34, height: 34)
-                            }
-                            if let pulseReading {
-                                SarosPulseGlyph(reading: pulseReading, size: 32)
+                                    .frame(width: 30, height: 30)
                             }
                             if let remoteDeviceEmoji {
                                 Text(remoteDeviceEmoji)
@@ -232,22 +263,21 @@ struct JournalEntryDetailView: View {
                         }
                     }
 
-                    HStack(alignment: .bottom) {
-                        JournalSpikeGlyphStrip(
-                            spikes: context.spikes,
-                            displayDepth: displayDepth,
-                            size: 24,
-                            highlightedSpikeID: context.closestSpike?.id
-                        )
+                    JournalSpikeGlyphStrip(
+                        spikes: context.spikes,
+                        displayDepth: displayDepth,
+                        size: 24,
+                        highlightedSpikeID: context.closestSpike?.id
+                    )
+
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.74)
                         Spacer(minLength: 0)
-                        VStack(alignment: .trailing, spacing: 3) {
-                            JournalWaveDirectionIcon(direction: displayedDirection, size: 9)
-                            Text(JournalFormatters.dateTime.string(from: entry.eventDate))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.74)
-                        }
+                        JournalWaveDirectionIcon(direction: displayedDirection, size: 9)
                     }
                 }
                 .padding(.vertical, 0)
@@ -321,9 +351,12 @@ struct JournalEntryDetailView: View {
                 }
             }
 
-            Section("Waveform") {
-                JournalEntryWaveformView(context: context)
+            Section {
+                JournalEntryWaveformView(context: context, endDate: entry.effectiveEndDate)
                     .frame(height: 190)
+            } header: {
+                Text("Waveform")
+                    .textCase(nil)
             }
 
             if !matchingTags.isEmpty {
@@ -358,8 +391,17 @@ struct JournalEntryDetailView: View {
                 JournalDirectionMetadataRow(direction: displayedDirection)
                 MetadataRow(title: "Momentum", value: Self.momentumPercentText(displayedMomentum))
                 MetadataRow(title: "Energy", value: "\(Int((context.energyPercent * 100).rounded()))%")
-                MetadataRow(title: "Extremum", value: context.extremum.title)
-                MetadataRow(title: "Major period", value: context.majorPeriodSeconds.compactDuration)
+                MetadataRow(
+                    title: "\(context.eventDescriptor.segmentKind == .descent ? "Descent" : "Ascent") period",
+                    value: SarosDurationUnitFormatter.verboseDuration(context.eventDescriptor.segmentDuration)
+                )
+                if entry.isPeriodEntry {
+                    MetadataRow(title: "End", value: JournalFormatters.dateTime.string(from: entry.effectiveEndDate))
+                    MetadataRow(
+                        title: "Duration",
+                        value: SarosDurationUnitFormatter.verboseDuration(entry.eventDuration)
+                    )
+                }
                 if let pulseReading {
                     HStack {
                         Text("Pulse")
@@ -518,6 +560,7 @@ struct JournalEntryCaptureView: View {
     @State private var noteText = ""
     @State private var emoji = JournalRecordMarkers.random()
     @State private var eventDate: Date
+    @State private var eventEndDate: Date
     @State private var mediaItems: [JournalMediaItem] = []
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var context: JournalEventContext?
@@ -545,6 +588,7 @@ struct JournalEntryCaptureView: View {
         self.existingDraft = draft
         self.editingEntry = nil
         _eventDate = State(initialValue: draft?.eventDate ?? startedAt)
+        _eventEndDate = State(initialValue: draft?.endDate ?? draft?.eventDate ?? startedAt)
         _noteText = State(initialValue: draft?.text ?? template.text)
         _emoji = State(initialValue: draft?.emoji ?? template.resolvedEmoji)
         _mediaItems = State(initialValue: draft?.mediaItems ?? [])
@@ -559,6 +603,7 @@ struct JournalEntryCaptureView: View {
         self.existingDraft = nil
         self.editingEntry = entry
         _eventDate = State(initialValue: entry.eventDate)
+        _eventEndDate = State(initialValue: entry.effectiveEndDate)
         _noteText = State(initialValue: entry.text ?? "")
         _emoji = State(initialValue: entry.emoji ?? JournalRecordMarkers.random())
         _mediaItems = State(initialValue: entry.mediaItems)
@@ -643,12 +688,27 @@ struct JournalEntryCaptureView: View {
                 DatePicker("Record date", selection: $eventDate)
                     .datePickerStyle(.compact)
 
-                Button {
-                    eventDate = Date()
-                    refreshContext()
-                } label: {
-                    Label("Now", systemImage: "clock.arrow.circlepath")
+                DatePicker("End", selection: $eventEndDate, in: eventDate...)
+                    .datePickerStyle(.compact)
+
+                HStack(spacing: 10) {
+                    JournalTimingIconButton(systemName: "arrow.left.to.line", title: "Start") {
+                        setStartToNow()
+                    }
+                    JournalTimingIconButton(systemName: "arrow.right.to.line", title: "Finish") {
+                        setFinishToNow()
+                    }
+                    JournalTimingIconButton(systemName: "arrow.down.right.and.arrow.up.left", title: "Collapse") {
+                        collapseTimingToNow()
+                    }
+                    JournalTimingIconButton(systemName: "minus", title: "Cut") {
+                        cutEndByKilosaros()
+                    }
+                    JournalTimingIconButton(systemName: "plus", title: "Extend") {
+                        extendEndByKilosaros()
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 if let context {
                     JournalSpikeGlyphStrip(
@@ -656,7 +716,7 @@ struct JournalEntryCaptureView: View {
                         displayDepth: JournalSettings.canonicalHarmonicDepth,
                         size: 38
                     )
-                    JournalEntryWaveformView(context: context)
+                    JournalEntryWaveformView(context: context, endDate: normalizedEndDate)
                         .frame(height: 150)
                 } else {
                     ContentUnavailableView("Saros context unavailable", systemImage: "waveform.path.ecg")
@@ -726,6 +786,9 @@ struct JournalEntryCaptureView: View {
             refreshContext()
         }
         .onChange(of: eventDate) { _, _ in
+            if eventEndDate < eventDate {
+                eventEndDate = eventDate
+            }
             refreshContext()
         }
         .onChange(of: audioRecorder.lastItem) { _, item in
@@ -825,6 +888,7 @@ struct JournalEntryCaptureView: View {
                 editingEntry.createdAt = recordStartedAt
                 editingEntry.updatedAt = Date()
                 editingEntry.eventDate = eventDate
+                editingEntry.endDate = normalizedEndDate
                 editingEntry.unixTimestamp = Int64(eventDate.timeIntervalSince1970.rounded(.towardZero))
                 editingEntry.version += 1
                 editingEntry.text = noteText.nilIfBlank
@@ -860,6 +924,7 @@ struct JournalEntryCaptureView: View {
                 createdAt: recordStartedAt,
                 updatedAt: Date(),
                 eventDate: eventDate,
+                endDate: normalizedEndDate,
                 text: noteText.nilIfBlank,
                 emoji: emoji.nilIfBlank ?? JournalRecordMarkers.random(),
                 mediaItems: savedMedia,
@@ -942,6 +1007,7 @@ struct JournalEntryCaptureView: View {
             existingDraft.update(
                 recordStartedAt: recordStartedAt,
                 eventDate: eventDate,
+                endDate: normalizedEndDate,
                 text: noteText.nilIfBlank,
                 emoji: emoji.nilIfBlank,
                 mediaItems: mediaItems,
@@ -956,6 +1022,7 @@ struct JournalEntryCaptureView: View {
             modelContext.insert(JournalEntryDraft(
                 recordStartedAt: recordStartedAt,
                 eventDate: eventDate,
+                endDate: normalizedEndDate,
                 text: noteText.nilIfBlank,
                 emoji: emoji.nilIfBlank,
                 mediaItems: mediaItems,
@@ -1015,6 +1082,52 @@ struct JournalEntryCaptureView: View {
 
     private var availableTags: [JournalTag] {
         tags.filter { !selectedTagIDs.contains($0.compactID) }
+    }
+
+    private var kilosarosDuration: TimeInterval {
+        SarosPulseCalculator.averageDuration(for: .kilo)
+    }
+
+    @MainActor
+    private func setStartToNow() {
+        let now = Date()
+        eventDate = now
+        if eventEndDate < eventDate {
+            eventEndDate = eventDate
+        }
+        refreshContext()
+    }
+
+    @MainActor
+    private func setFinishToNow() {
+        let now = Date()
+        if now < eventDate {
+            eventDate = now
+        }
+        eventEndDate = max(now, eventDate)
+        refreshContext()
+    }
+
+    @MainActor
+    private func collapseTimingToNow() {
+        let now = Date()
+        eventDate = now
+        eventEndDate = now
+        refreshContext()
+    }
+
+    @MainActor
+    private func cutEndByKilosaros() {
+        eventEndDate = max(eventDate, eventEndDate.addingTimeInterval(-kilosarosDuration))
+    }
+
+    @MainActor
+    private func extendEndByKilosaros() {
+        eventEndDate = eventEndDate.addingTimeInterval(kilosarosDuration)
+    }
+
+    private var normalizedEndDate: Date {
+        eventEndDate < eventDate ? eventDate : eventEndDate
     }
 }
 
@@ -2379,11 +2492,16 @@ private struct JournalEntryWaveformView: View {
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
+    @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var waveformAmplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
 
     let context: JournalEventContext
+    var endDate: Date? = nil
 
     @State private var plot = JournalEntryWaveformPlot.empty
     @State private var lunarTicks: [LunarRulerTick] = []
+    @State private var pulseTicks: [SarosPulseTick] = []
+    @State private var displayMegaUnits = JournalEntryWaveform.defaultMegaUnits
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     var body: some View {
         ZStack {
@@ -2404,11 +2522,13 @@ private struct JournalEntryWaveformView: View {
                 let insets = EdgeInsets(top: lunarBottomY, leading: 14, bottom: 24, trailing: 14)
                 let width = max(size.width - insets.leading - insets.trailing, 1)
                 let height = max(size.height - insets.top - insets.bottom, 1)
+                let baseline = insets.top + height
+                let waveHeight = height * JournalEntryWaveform.amplitudeScale
 
                 var path = Path()
                 for sample in samples {
                     let x = insets.leading + CGFloat(sample.date.timeIntervalSince(interval.start) / interval.duration) * width
-                    let y = insets.top + (1 - CGFloat(sample.energy / maxEnergy)) * height
+                    let y = baseline - CGFloat(sample.energy / maxEnergy) * waveHeight
                     if sample == samples.first {
                         path.move(to: CGPoint(x: x, y: y))
                     } else {
@@ -2436,7 +2556,7 @@ private struct JournalEntryWaveformView: View {
                     var x = baseX
                     let spikeEnergy = plot.energyBySpikeID[spike.id] ?? 0
                     let dotSize = JournalEntryWaveform.dotSize(for: spike.rarity)
-                    let baseY = insets.top + (1 - CGFloat(spikeEnergy / maxEnergy)) * height
+                    let baseY = baseline - CGFloat(spikeEnergy / maxEnergy) * waveHeight
                     var dotY = baseY
                     var collisionLevel = 0
                     let dotStep = dotSize + 5
@@ -2479,12 +2599,44 @@ private struct JournalEntryWaveformView: View {
                 }
 
                 let eventX = insets.leading + CGFloat(context.eventDate.timeIntervalSince(interval.start) / interval.duration) * width
-                let eventY = insets.top + (1 - CGFloat(plot.eventEnergy / maxEnergy)) * height
-                var marker = Path()
-                marker.move(to: CGPoint(x: eventX, y: insets.top))
-                marker.addLine(to: CGPoint(x: eventX, y: size.height - insets.bottom))
-                graphics.stroke(marker, with: .color(.green.opacity(0.85)), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                graphics.fill(Path(ellipseIn: CGRect(x: eventX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
+                let eventY = baseline - CGFloat(plot.eventEnergy / maxEnergy) * waveHeight
+                if plot.isPeriod {
+                    let rawEndX = insets.leading + CGFloat(plot.eventEndDate.timeIntervalSince(interval.start) / interval.duration) * width
+                    let clampedStartX = min(max(eventX, insets.leading), insets.leading + width)
+                    let clampedEndX = min(max(rawEndX, insets.leading), insets.leading + width)
+                    let leftX = min(clampedStartX, clampedEndX)
+                    let rightX = max(clampedStartX, clampedEndX)
+                    let periodRect = CGRect(
+                        x: leftX,
+                        y: insets.top,
+                        width: max(rightX - leftX, 2),
+                        height: size.height - insets.top - insets.bottom
+                    )
+                    let periodPath = Path(roundedRect: periodRect, cornerRadius: 4)
+                    graphics.fill(periodPath, with: .color(.green.opacity(0.12)))
+                    graphics.stroke(periodPath, with: .color(.green.opacity(0.55)), lineWidth: 1)
+
+                    for x in [clampedStartX, clampedEndX] {
+                        var marker = Path()
+                        marker.move(to: CGPoint(x: x, y: insets.top))
+                        marker.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                        graphics.stroke(
+                            marker,
+                            with: .color(.green.opacity(0.85)),
+                            style: StrokeStyle(lineWidth: 1.2, dash: [4, 4])
+                        )
+                    }
+
+                    let endY = baseline - CGFloat(plot.eventEndEnergy / maxEnergy) * waveHeight
+                    graphics.fill(Path(ellipseIn: CGRect(x: clampedStartX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
+                    graphics.fill(Path(ellipseIn: CGRect(x: clampedEndX - 4, y: endY - 4, width: 8, height: 8)), with: .color(.green))
+                } else {
+                    var marker = Path()
+                    marker.move(to: CGPoint(x: eventX, y: insets.top))
+                    marker.addLine(to: CGPoint(x: eventX, y: size.height - insets.bottom))
+                    graphics.stroke(marker, with: .color(.green.opacity(0.85)), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    graphics.fill(Path(ellipseIn: CGRect(x: eventX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
+                }
             }
             LunarRulerCanvas(
                 ticks: lunarTicks,
@@ -2493,12 +2645,39 @@ private struct JournalEntryWaveformView: View {
                 rowSpacing: JournalEntryWaveform.lunarRulerRowSpacing,
                 labelOffset: 15
             )
+            JournalEntryPulseRulerCanvas(
+                ticks: pulseTicks,
+                displayInterval: plot.interval
+            )
+            HStack(spacing: 0) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            displayMegaUnits = min(displayMegaUnits + 1, JournalEntryWaveform.maximumMegaUnits)
+                        }
+                    }
+                    .accessibilityLabel("Zoom waveform out")
+
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            displayMegaUnits = max(displayMegaUnits - 1, JournalEntryWaveform.minimumMegaUnits)
+                        }
+                    }
+                    .accessibilityLabel("Zoom waveform in")
+            }
         }
         .accessibilityLabel("Journal waveform")
         .task(id: waveformTaskID) {
             let context = context
             let contextService = services.sarosEventContextService
             let moonService = services.moonPhaseService
+            let eclipseService = services.eclipseService
+            let pulseSaros = pulseSaros
+            let endDate = resolvedEndDate
+            let displayDuration = JournalEntryWaveform.displayDuration(megaUnits: displayMegaUnits)
             let waveformModel = JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
             let parabolaA = min(
                 max(waveformParabolaA, JournalWaveformSettings.parabolaARange.lowerBound),
@@ -2509,40 +2688,68 @@ private struct JournalEntryWaveformView: View {
                 mergeCloseSpikes: waveformMergeCloseSpikes,
                 normalizedAmplitude: waveformNormalizedAmplitude,
                 subdivisionDepth: clampedSubdivisionDepth,
-                mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+                mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
+                amplitudeMultiplier: clampedAmplitudeMultiplier
             )
-            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick]) in
+            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick], [SarosPulseTick]) in
                 let spikes = (
                     try? contextService.waveformSpikes(
                         around: context.eventDate,
                         harmonicDepth: context.waveformHarmonicDepth,
-                        displayDuration: JournalEntryWaveform.displayDuration,
-                        paddingDuration: JournalEntryWaveform.displayDuration
+                        displayDuration: displayDuration,
+                        paddingDuration: 172_800
                     )
                 ) ?? context.spikes
                 let plot = JournalEntryWaveformPlot.make(
                     for: context,
+                    endDate: endDate,
                     spikes: spikes,
+                    displayDuration: displayDuration,
                     model: waveformModel,
                     parabolaA: parabolaA,
                     options: options
                 )
                 let lunarTicks = LunarRulerTickBuilder.ticks(in: plot.interval, moonService: moonService)
-                return (plot, lunarTicks)
+                let resolvedPulseSaros: Int?
+                if pulseSaros > 0 {
+                    resolvedPulseSaros = pulseSaros
+                } else {
+                    resolvedPulseSaros = try? SarosPulseCalculator.defaultActiveSaros(
+                        at: context.eventDate,
+                        eclipseService: eclipseService
+                    )
+                }
+                let pulseTicks: [SarosPulseTick]
+                if let resolvedPulseSaros {
+                    pulseTicks = (try? SarosPulseCalculator.ticks(
+                        in: plot.interval,
+                        saros: resolvedPulseSaros,
+                        harmonicDepth: context.waveformHarmonicDepth,
+                        eclipseService: eclipseService
+                    )) ?? []
+                } else {
+                    pulseTicks = []
+                }
+                return (plot, lunarTicks, pulseTicks)
             }.value
             plot = generated.0
             lunarTicks = generated.1
+            pulseTicks = generated.2
         }
     }
 
     private var waveformTaskID: String {
         [
             context.waveformCacheKey,
+            "\(Int(resolvedEndDate.timeIntervalSince1970))",
             waveformModelRawValue,
             "\(Int((waveformParabolaA * 100).rounded()))",
             waveformMergeCloseSpikes ? "merged" : "raw",
             waveformNormalizedAmplitude ? "norm" : "weighted",
-            "\(clampedSubdivisionDepth)"
+            "\(clampedSubdivisionDepth)",
+            "\(Int((clampedAmplitudeMultiplier * 100).rounded()))",
+            "\(displayMegaUnits)",
+            "\(pulseSaros)"
         ].joined(separator: "-")
     }
 
@@ -2551,6 +2758,18 @@ private struct JournalEntryWaveformView: View {
             max(waveformSubdivisionDepth, JournalWaveformSettings.subdivisionDepthRange.lowerBound),
             JournalWaveformSettings.subdivisionDepthRange.upperBound
         )
+    }
+
+    private var clampedAmplitudeMultiplier: Double {
+        min(
+            max(waveformAmplitudeMultiplier, JournalWaveformSettings.amplitudeMultiplierRange.lowerBound),
+            JournalWaveformSettings.amplitudeMultiplierRange.upperBound
+        )
+    }
+
+    private var resolvedEndDate: Date {
+        guard let endDate, endDate > context.eventDate else { return context.eventDate }
+        return endDate
     }
 }
 
@@ -2561,6 +2780,9 @@ private struct JournalEntryWaveformPlot {
     let midpointDates: [Date]
     let energyBySpikeID: [String: Double]
     let eventEnergy: Double
+    let eventEndDate: Date
+    let eventEndEnergy: Double
+    let isPeriod: Bool
     let maxEnergy: Double
 
     static let empty = JournalEntryWaveformPlot(
@@ -2570,19 +2792,31 @@ private struct JournalEntryWaveformPlot {
         midpointDates: [],
         energyBySpikeID: [:],
         eventEnergy: 0,
+        eventEndDate: Date(),
+        eventEndEnergy: 0,
+        isPeriod: false,
         maxEnergy: 1
     )
 
     static func make(
         for context: JournalEventContext,
+        endDate: Date? = nil,
         spikes: [JournalSpikeReference],
+        displayDuration: TimeInterval = JournalEntryWaveform.displayDuration(megaUnits: JournalEntryWaveform.defaultMegaUnits),
         model: JournalWaveformModel = JournalWaveformModel.current,
         parabolaA: Double = JournalWaveformSettings.currentParabolaA,
         options: JournalWaveformOptions = .current
     ) -> JournalEntryWaveformPlot {
+        let eventEndDate = {
+            guard let endDate, endDate > context.eventDate else { return context.eventDate }
+            return endDate
+        }()
+        let intervalCenter = context.eventDate.addingTimeInterval(
+            max(eventEndDate.timeIntervalSince(context.eventDate), 0) / 2
+        )
         let interval = JournalEventWaveform.displayInterval(
-            centeredOn: context.eventDate,
-            duration: JournalEntryWaveform.displayDuration
+            centeredOn: intervalCenter,
+            duration: displayDuration
         )
         let sortedSpikes = spikes.sorted { $0.date < $1.date }
         let field = JournalEventWaveform.field(
@@ -2611,6 +2845,7 @@ private struct JournalEntryWaveformPlot {
                 )
             }
         let eventEnergy = field.energy(at: context.eventDate)
+        let eventEndEnergy = field.energy(at: eventEndDate)
         let localMaxEnergy = waveSamples.points.map(\.energy).max() ?? eventEnergy
         let visibleSpikeMaxEnergy = visibleSpikeGroups
             .compactMap { waveSamples.eventEnergyByID[$0.primary.id] }
@@ -2619,7 +2854,7 @@ private struct JournalEntryWaveformPlot {
             .flatMap { [$0.period.leftBoundary, $0.period.rightBoundary] }
             .filter { interval.contains($0) }
             .sorted()
-        let maxEnergy = max(localMaxEnergy, visibleSpikeMaxEnergy, eventEnergy, 0.000_001)
+        let maxEnergy = max(localMaxEnergy, visibleSpikeMaxEnergy, eventEnergy, eventEndEnergy, 0.000_001)
         return JournalEntryWaveformPlot(
             interval: interval,
             samples: waveSamples.points,
@@ -2627,6 +2862,9 @@ private struct JournalEntryWaveformPlot {
             midpointDates: midpointDates,
             energyBySpikeID: waveSamples.eventEnergyByID,
             eventEnergy: eventEnergy,
+            eventEndDate: eventEndDate,
+            eventEndEnergy: eventEndEnergy,
+            isPeriod: eventEndDate.timeIntervalSince(context.eventDate) > 0.5,
             maxEnergy: maxEnergy
         )
     }
@@ -2693,9 +2931,17 @@ private struct JournalDirectionMetadataRow: View {
 }
 
 private enum JournalEntryWaveform {
-    static let displayDuration: TimeInterval = 86_400 + 20 * 3_600 + 5 * 60
+    static let minimumMegaUnits = 1
+    static let defaultMegaUnits = 4
+    static let maximumMegaUnits = 12
     static let lunarRulerTopInset: CGFloat = 10
     static let lunarRulerRowSpacing: CGFloat = 15
+    static let amplitudeScale: CGFloat = 0.34
+
+    static func displayDuration(megaUnits: Int) -> TimeInterval {
+        SarosPulseCalculator.averageDuration(for: .mega)
+            * Double(min(max(megaUnits, minimumMegaUnits), maximumMegaUnits))
+    }
 
     static func dotSize(for rarity: FlipRarity) -> CGFloat {
         switch rarity.baseRarity {
@@ -2704,6 +2950,75 @@ private enum JournalEntryWaveform {
         case .epic: 6.5
         default: 6
         }
+    }
+}
+
+private struct JournalEntryPulseRulerCanvas: View {
+    let ticks: [SarosPulseTick]
+    let displayInterval: DateInterval
+
+    var body: some View {
+        Canvas { context, size in
+            guard displayInterval.duration > 0, !ticks.isEmpty else { return }
+
+            let baseline = size.height - 8
+            var lastXByUnit: [SarosPulseUnit: CGFloat] = [:]
+
+            for tick in ticks where tick.unit.isRulerTick {
+                let x = xPosition(for: tick.date, width: size.width)
+                if tick.unit != .rollover,
+                   let lastX = lastXByUnit[tick.unit],
+                   abs(lastX - x) < 1.6 {
+                    continue
+                }
+                lastXByUnit[tick.unit] = x
+
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: baseline))
+                line.addLine(to: CGPoint(x: x, y: baseline - tickHeight(for: tick.unit)))
+                context.stroke(
+                    line,
+                    with: .color(tick.unit.color.opacity(opacity(for: tick.unit))),
+                    lineWidth: lineWidth(for: tick.unit)
+                )
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func tickHeight(for unit: SarosPulseUnit) -> CGFloat {
+        switch unit {
+        case .rollover: 28
+        case .giga: 22
+        case .mega: 16
+        case .kilo: 11
+        case .saros, .mili, .nano: 0
+        }
+    }
+
+    private func opacity(for unit: SarosPulseUnit) -> Double {
+        switch unit {
+        case .rollover: 0.9
+        case .giga: 0.72
+        case .mega: 0.58
+        case .kilo: 0.44
+        case .saros, .mili, .nano: 0
+        }
+    }
+
+    private func lineWidth(for unit: SarosPulseUnit) -> CGFloat {
+        switch unit {
+        case .rollover: 1.3
+        case .giga: 1.0
+        case .mega: 0.85
+        case .kilo: 0.65
+        case .saros, .mili, .nano: 0
+        }
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
     }
 }
 
@@ -3083,6 +3398,35 @@ private struct JournalEntryActionIcon: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(tint.opacity(0.28), lineWidth: 1)
             }
+    }
+}
+
+private struct JournalTimingIconButton: View {
+    let systemName: String
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: systemName)
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 26, height: 24)
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(Color.accentColor)
+            .frame(width: 58, height: 58)
+            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.accentColor.opacity(0.24), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 

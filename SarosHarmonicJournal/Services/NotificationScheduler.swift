@@ -7,6 +7,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationScheduler()
 
     private let identifierPrefix = "saros-journal."
+    private static let waveformNotificationLeadTime = SarosPulseCalculator.averageDuration(for: .mili)
+    private static let waveformNotificationLeadLabel = "1 milisaros"
 
     private override init() {
         super.init()
@@ -143,6 +145,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         eclipseService: any EclipseService,
         moonPhaseService: any MoonPhaseService,
         harmonicDepth rawHarmonicDepth: Int,
+        recentEntries: [JournalEntry] = [],
         horizon: TimeInterval = 14 * 86_400,
         peakLimit: Int = 32,
         boundaryLimit: Int = 24
@@ -174,30 +177,38 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             eclipseService: eclipseService,
             harmonicDepth: depth
         )
-        let futureEvents = events
-            .filter { $0.date > now }
-            .sorted { lhs, rhs in
-                if lhs.date != rhs.date { return lhs.date < rhs.date }
-                if lhs.rarity != rhs.rarity { return lhs.rarity > rhs.rarity }
-                return lhs.saros < rhs.saros
+        let timelineEvents = Self.distinctTimelineEvents(events)
+        let peakCandidates = timelineEvents.enumerated()
+            .filter { _, event in
+                event.date.addingTimeInterval(-Self.waveformNotificationLeadTime) > now
             }
 
-        for event in futureEvents.prefix(peakLimit) {
-            await schedulePeakNotification(event: event, notifyDate: event.date)
+        for (index, event) in peakCandidates.prefix(peakLimit) {
+            await schedulePeakNotification(
+                event: event,
+                previous: index > timelineEvents.startIndex ? timelineEvents[index - 1] : nil,
+                next: index < timelineEvents.index(before: timelineEvents.endIndex) ? timelineEvents[index + 1] : nil,
+                notifyDate: event.date.addingTimeInterval(-Self.waveformNotificationLeadTime)
+            )
         }
 
-        let boundaryEvents = Self.distinctTimelineEvents(events)
-        let boundaryCandidates = zip(boundaryEvents, boundaryEvents.dropFirst())
+        let boundaryCandidates = zip(timelineEvents, timelineEvents.dropFirst())
             .compactMap { previous, next -> SarosBoundaryNotification? in
                 let boundaryDate = Date(
                     timeIntervalSince1970: (previous.date.timeIntervalSince1970 + next.date.timeIntervalSince1970) / 2
                 )
-                guard boundaryDate > now, boundaryDate < interval.end else { return nil }
-                return SarosBoundaryNotification(previous: previous, next: next, date: boundaryDate)
+                let notifyDate = boundaryDate.addingTimeInterval(-Self.waveformNotificationLeadTime)
+                guard notifyDate > now, boundaryDate < interval.end else { return nil }
+                return SarosBoundaryNotification(
+                    previous: previous,
+                    next: next,
+                    date: boundaryDate,
+                    notifyDate: notifyDate
+                )
             }
 
         for boundary in boundaryCandidates.prefix(boundaryLimit) {
-            await scheduleBoundaryNotification(boundary)
+            await scheduleMidpointNotification(boundary)
         }
 
         let configuredPulseSaros = UserDefaults.standard.integer(forKey: JournalSettings.pulseSarosKey)
@@ -223,6 +234,42 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             now: now,
             horizon: horizon
         )
+
+        await scheduleEntryEndNotifications(
+            entries: Array(recentEntries.prefix(10)),
+            now: now
+        )
+    }
+
+    private func scheduleEntryEndNotifications(
+        entries: [JournalEntry],
+        now: Date
+    ) async {
+        for entry in entries {
+            let endDate = entry.effectiveEndDate
+            guard entry.isPeriodEntry, endDate > now else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Record ended"
+            content.body = "\(JournalRecordMarkers.marker(from: entry.emoji)) \(entry.firstTextLine) has ended."
+            content.sound = .default
+            content.interruptionLevel = .active
+            content.threadIdentifier = "journal-entry-end"
+            content.userInfo = [
+                "trigger": "journalEntryEnd",
+                "entryID": entry.id.uuidString,
+                "endDate": endDate.timeIntervalSince1970
+            ]
+
+            let trigger = UNCalendarNotificationTrigger(
+                dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: endDate),
+                repeats: false
+            )
+            let identifier = "\(identifierPrefix)entry.end.\(entry.id.uuidString).\(Int(endDate.timeIntervalSince1970))"
+            try? await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            )
+        }
     }
 
     private func scheduleGigaPulseNotifications(
@@ -247,7 +294,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
 
         let gigaTicks = ticks
-            .filter { $0.unit == .giga && $0.date.addingTimeInterval(-33) > now }
+            .filter { $0.unit == .giga && $0.date.addingTimeInterval(-Self.waveformNotificationLeadTime) > now }
             .prefix(limit)
 
         for tick in gigaTicks {
@@ -264,7 +311,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         eclipseService: any EclipseService,
         harmonicDepth: Int
     ) async {
-        let notifyDate = tick.date.addingTimeInterval(-33)
+        let notifyDate = tick.date.addingTimeInterval(-Self.waveformNotificationLeadTime)
         let pulseReading = try? SarosPulseCalculator.reading(
             saros: tick.saros,
             date: tick.date.addingTimeInterval(0.001),
@@ -274,7 +321,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
         let content = UNMutableNotificationContent()
         content.title = "Giga pulse \(tick.digit)"
-        content.subtitle = "T minus 33 seconds"
+        content.subtitle = "T-minus \(Self.waveformNotificationLeadLabel)"
         if let pulseReading {
             content.body = "Saros \(tick.saros) pulse \(pulseReading.octalAddress) begins at \(JournalFormatters.dateTime.string(from: tick.date))."
         } else {
@@ -323,7 +370,10 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             end: now.addingTimeInterval(horizon)
         )
         let ticks = LunarRulerTickBuilder.ticks(in: interval, moonService: moonPhaseService)
-            .filter { ($0.level == .major || $0.level == .eighth) && $0.date.addingTimeInterval(-33) > now }
+            .filter {
+                ($0.level == .major || $0.level == .eighth)
+                    && $0.date.addingTimeInterval(-Self.waveformNotificationLeadTime) > now
+            }
             .sorted { lhs, rhs in
                 if lhs.date != rhs.date { return lhs.date < rhs.date }
                 if lhs.level != rhs.level { return lhs.level.rawValue < rhs.level.rawValue }
@@ -337,10 +387,10 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func scheduleLunarTickNotification(_ tick: LunarRulerTick) async {
-        let notifyDate = tick.date.addingTimeInterval(-33)
+        let notifyDate = tick.date.addingTimeInterval(-Self.waveformNotificationLeadTime)
         let content = UNMutableNotificationContent()
         content.title = tick.label ?? "\(tick.cycle.displayName) lunar tick"
-        content.subtitle = "T minus 33 seconds"
+        content.subtitle = "T-minus \(Self.waveformNotificationLeadLabel)"
         content.body = "\(tick.cycle.displayName) \(tick.level.notificationName) at \(JournalFormatters.dateTime.string(from: tick.date))."
         content.sound = .default
         content.interruptionLevel = tick.level == .major ? .timeSensitive : .active
@@ -496,12 +546,18 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
     private func schedulePeakNotification(
         event: ScheduledSarosEvent,
+        previous: ScheduledSarosEvent?,
+        next: ScheduledSarosEvent?,
         notifyDate: Date
     ) async {
+        let durationText = SarosDurationUnitFormatter.verboseDuration(
+            Self.peakWindowDuration(event: event, previous: previous, next: next),
+            maxUnits: 2
+        )
         let content = UNMutableNotificationContent()
-        content.title = "Peak reached"
-        content.subtitle = event.shortTitle
-        content.body = "\(event.shortTitle) peaked at \(JournalFormatters.dateTime.string(from: event.date))."
+        content.title = "Approaching \(event.shortTitle) peak"
+        content.subtitle = "T-minus \(Self.waveformNotificationLeadLabel)"
+        content.body = "Approaching \(event.shortTitle) peak that will last \(durationText)."
         content.sound = .default
         content.interruptionLevel = event.rarity.baseRarity == .mythic ? .timeSensitive : .active
         content.threadIdentifier = "saros-global-peak-\(event.saros)"
@@ -532,12 +588,16 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
-    private func scheduleBoundaryNotification(_ boundary: SarosBoundaryNotification) async {
-        let peakWait = max(boundary.next.date.timeIntervalSince(boundary.date), 0)
+    private func scheduleMidpointNotification(_ boundary: SarosBoundaryNotification) async {
+        let waitText = SarosDurationUnitFormatter.verboseDuration(
+            max(boundary.next.date.timeIntervalSince(boundary.date), 0),
+            maxUnits: 2
+        )
+        let ascentSpeed = Self.ascentSpeedLabel(previous: boundary.previous, boundary: boundary.date, next: boundary.next)
         let content = UNMutableNotificationContent()
-        content.title = "Saros boundary crossed"
-        content.subtitle = "Beginning ascent into \(boundary.next.shortTitle)"
-        content.body = "Descent from \(boundary.previous.shortTitle) completed. Peak in \(peakWait.compactDuration)."
+        content.title = "Beginning \(ascentSpeed) ascent"
+        content.subtitle = "T-minus \(Self.waveformNotificationLeadLabel)"
+        content.body = "Beginning \(ascentSpeed) ascent towards \(boundary.next.shortTitle). T-minus \(waitText)."
         content.sound = .default
         content.interruptionLevel = boundary.next.rarity.baseRarity == .mythic ? .timeSensitive : .active
         content.threadIdentifier = "saros-global-boundary"
@@ -561,13 +621,42 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
 
         let trigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: boundary.date),
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: boundary.notifyDate),
             repeats: false
         )
-        let identifier = "\(identifierPrefix)global.boundary.\(Int(boundary.previous.date.timeIntervalSince1970)).\(Int(boundary.next.date.timeIntervalSince1970))"
+        let identifier = "\(identifierPrefix)global.midpoint.\(Int(boundary.previous.date.timeIntervalSince1970)).\(Int(boundary.next.date.timeIntervalSince1970))"
         try? await UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         )
+    }
+
+    private static func peakWindowDuration(
+        event: ScheduledSarosEvent,
+        previous: ScheduledSarosEvent?,
+        next: ScheduledSarosEvent?
+    ) -> TimeInterval {
+        let fallback = SarosPulseCalculator.averageDuration(for: .mega)
+        guard let previous, let next else {
+            return fallback
+        }
+
+        let start = midpoint(previous.date, event.date)
+        let end = midpoint(event.date, next.date)
+        return max(end.timeIntervalSince(start), fallback)
+    }
+
+    private static func ascentSpeedLabel(
+        previous: ScheduledSarosEvent,
+        boundary: Date,
+        next: ScheduledSarosEvent
+    ) -> String {
+        let descentDuration = max(boundary.timeIntervalSince(previous.date), 0.001)
+        let ascentDuration = max(next.date.timeIntervalSince(boundary), 0.001)
+        return ascentDuration < descentDuration ? "rapid" : "slow"
+    }
+
+    private static func midpoint(_ lhs: Date, _ rhs: Date) -> Date {
+        Date(timeIntervalSince1970: (lhs.timeIntervalSince1970 + rhs.timeIntervalSince1970) / 2)
     }
 
     private func notificationTitle(
@@ -676,6 +765,7 @@ private struct SarosBoundaryNotification: Hashable {
     let previous: ScheduledSarosEvent
     let next: ScheduledSarosEvent
     let date: Date
+    let notifyDate: Date
 }
 
 private extension LunarRulerTickLevel {

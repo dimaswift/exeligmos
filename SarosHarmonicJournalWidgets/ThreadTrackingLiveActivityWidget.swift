@@ -60,26 +60,20 @@ private struct ThreadTrackingLockScreenView: View {
         let color = Color(hexString: payload.rarityColorHex)
 
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 18) {
-                WidgetOctalGlyph(
-                    value: payload.glyph,
-                    depth: context.attributes.harmonicDepth,
-                    color: color,
-                    secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
-                )
-                .frame(width: 60, height: 60)
-                .offset(x: 4, y: 4)
-
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(payload.displayEventName)
                         .font(.headline)
+                        .lineLimit(1)
+                    Text(payload.secondaryEventDescription(at: now))
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.72))
                         .lineLimit(1)
                     HStack(spacing: 10) {
                         Text(payload.energyText(at: now))
                         Text(payload.momentumText(at: now))
-                        WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 24)
                     }
-                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .font(.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color)
                     TrackingCountdownText(
                         payload: payload,
@@ -87,11 +81,22 @@ private struct ThreadTrackingLockScreenView: View {
                         compact: false,
                         recordURL: URL(string: "exeligmos://record/\(context.attributes.threadID)")
                     )
-                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color)
                 }
-                .padding(.leading, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
+                HStack(alignment: .center, spacing: 8) {
+                    WidgetOctalGlyph(
+                        value: payload.glyph,
+                        depth: context.attributes.harmonicDepth,
+                        color: color,
+                        secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                    )
+                    .frame(width: 48, height: 48)
+                    .offset(x: 3, y: 3)
+                    WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
+                }
             }
             WidgetWaveformSegmentView(
                 samples: payload.waveformSamples ?? [],
@@ -100,12 +105,16 @@ private struct ThreadTrackingLockScreenView: View {
                 color: color,
                 currentPosition: payload.waveformPosition(at: now),
                 waveformStartDate: payload.waveformStartDate,
-                waveformEndDate: payload.waveformEndDate
+                waveformEndDate: payload.waveformEndDate,
+                pulseCycleStartDate: payload.pulseCycleStartDate,
+                pulseCycleEndDate: payload.pulseCycleEndDate
             )
             .frame(maxWidth: .infinity)
-            .frame(height: 42)
+            .frame(height: 68)
         }
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
         .foregroundStyle(.white)
     }
 }
@@ -137,14 +146,18 @@ private struct LiveTrackingCenterView: View {
             let payload = context.state.displayPayload(at: timeline.date)
             let color = Color(hexString: payload.rarityColorHex)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(payload.displayEventName)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(payload.secondaryEventDescription(at: timeline.date))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.72))
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Text(payload.energyText(at: timeline.date))
                     Text(payload.momentumText(at: timeline.date))
-                    WidgetAuxiliaryGlyphsView(payload: payload, date: timeline.date, size: 20)
+                    WidgetAuxiliaryGlyphsView(payload: payload, date: timeline.date, size: 24)
                 }
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
@@ -180,7 +193,7 @@ private struct LiveTrackingWaveTimerView: View {
             let payload = context.state.displayPayload(at: timeline.date)
             let color = Color(hexString: payload.rarityColorHex)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 WidgetWaveformSegmentView(
                     samples: payload.waveformSamples ?? [],
                     samplePositions: payload.waveformSamplePositions ?? [],
@@ -188,10 +201,16 @@ private struct LiveTrackingWaveTimerView: View {
                     color: color,
                     currentPosition: payload.waveformPosition(at: timeline.date),
                     waveformStartDate: payload.waveformStartDate,
-                    waveformEndDate: payload.waveformEndDate
+                    waveformEndDate: payload.waveformEndDate,
+                    pulseCycleStartDate: payload.pulseCycleStartDate,
+                    pulseCycleEndDate: payload.pulseCycleEndDate
                 )
-                .frame(height: 42)
-                LiveTrackingTimerView(context: context, compact: false)
+                .frame(height: 52)
+                HStack {
+                    LiveTrackingTimerView(context: context, compact: false)
+                    Spacer(minLength: 4)
+                    WidgetAuxiliaryGlyphsView(payload: payload, date: timeline.date, size: 22)
+                }
             }
         }
     }
@@ -205,14 +224,16 @@ private struct LiveTrackingTimerView: View {
         TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             VStack(alignment: .leading, spacing: compact ? 0 : 6) {
-                TrackingCountdownText(
-                    payload: payload,
-                    now: timeline.date,
-                    compact: compact,
-                    recordURL: URL(string: "exeligmos://record/\(context.attributes.threadID)")
-                )
-                    .font(compact ? .caption2.weight(.semibold).monospacedDigit() : .title2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color(hexString: payload.rarityColorHex))
+                Group {
+                    TrackingCountdownText(
+                        payload: payload,
+                        now: timeline.date,
+                        compact: compact,
+                        recordURL: URL(string: "exeligmos://record/\(context.attributes.threadID)")
+                    )
+                }
+                .font(compact ? .caption2.weight(.semibold).monospacedDigit() : .title2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color(hexString: payload.rarityColorHex))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

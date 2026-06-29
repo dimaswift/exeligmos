@@ -132,6 +132,7 @@ struct JournalEntrySnapshot: Codable, Identifiable {
     let createdAt: Date
     let updatedAt: Date
     let eventDate: Date
+    let endDate: Date?
     let unixTimestamp: Int64
     let version: Int?
     let text: String?
@@ -543,6 +544,7 @@ extension JournalEntrySnapshot {
             createdAt: entry.createdAt,
             updatedAt: entry.updatedAt,
             eventDate: entry.eventDate,
+            endDate: entry.endDate,
             unixTimestamp: entry.unixTimestamp,
             version: entry.version,
             text: entry.text,

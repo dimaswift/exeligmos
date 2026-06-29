@@ -33,6 +33,26 @@ enum JournalWaveExtremum: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum JournalWaveMomentumMapper {
+    private static let flatAngle = 5.0 * Double.pi / 180.0
+    private static let verticalAngle = 88.0 * Double.pi / 180.0
+
+    static func momentum(forGradient gradient: Double) -> Double {
+        guard gradient.isFinite else { return 0 }
+
+        let angle = atan(abs(gradient))
+        let normalized = min(max((angle - flatAngle) / (verticalAngle - flatAngle), 0), 1)
+        guard normalized > 0 else { return 0 }
+        return normalized * (gradient >= 0 ? 1 : -1)
+    }
+
+    static func direction(forGradient gradient: Double) -> JournalWaveDirection {
+        let momentum = momentum(forGradient: gradient)
+        guard abs(momentum) > 0 else { return .flat }
+        return gradient > 0 ? .ascending : .descending
+    }
+}
+
 struct JournalSpikeReference: Codable, Hashable, Identifiable {
     let saros: Int
     let unixTimestamp: Int64
@@ -148,6 +168,7 @@ final class JournalEntry {
     var createdAt: Date
     var updatedAt: Date
     var eventDate: Date
+    var endDate: Date?
     var unixTimestamp: Int64
     var version: Int = 1
 
@@ -173,6 +194,7 @@ final class JournalEntry {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         eventDate: Date,
+        endDate: Date? = nil,
         version: Int = 1,
         text: String? = nil,
         emoji: String? = nil,
@@ -193,6 +215,7 @@ final class JournalEntry {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.eventDate = eventDate
+        self.endDate = endDate
         self.unixTimestamp = Int64(eventDate.timeIntervalSince1970.rounded(.towardZero))
         self.version = max(version, 1)
         self.text = text
@@ -220,6 +243,32 @@ final class JournalEntry {
         }
     }
 
+    var effectiveEndDate: Date {
+        guard let endDate, endDate > eventDate else { return eventDate }
+        return endDate
+    }
+
+    var eventDuration: TimeInterval {
+        max(effectiveEndDate.timeIntervalSince(eventDate), 0)
+    }
+
+    var isPeriodEntry: Bool {
+        eventDuration > 0.5
+    }
+
+    func isOngoing(at date: Date = Date()) -> Bool {
+        isPeriodEntry && eventDate <= date && effectiveEndDate > date
+    }
+
+    var firstTextLine: String {
+        text?
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank ?? "Record"
+    }
+
     var context: JournalEventContext {
         get {
             (try? JSONDecoder().decode(JournalEventContext.self, from: contextJSON))
@@ -229,6 +278,9 @@ final class JournalEntry {
             contextJSON = (try? JSONEncoder().encode(newValue)) ?? Data()
             eventDate = newValue.eventDate
             unixTimestamp = newValue.unixTimestamp
+            if let endDate, endDate < eventDate {
+                self.endDate = eventDate
+            }
             updatedAt = Date()
         }
     }

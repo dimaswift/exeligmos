@@ -1106,6 +1106,7 @@ final class SyncService {
     private func apply(_ snapshot: JournalEntrySnapshot, mediaItems: [JournalMediaItem], to entry: JournalEntry) {
         entry.createdAt = snapshot.createdAt
         entry.eventDate = snapshot.eventDate
+        entry.endDate = snapshot.endDate
         entry.unixTimestamp = snapshot.unixTimestamp
         entry.version = max(snapshot.version ?? entry.version, 1)
         entry.text = snapshot.text
@@ -1264,6 +1265,7 @@ private extension JournalEntry {
             createdAt: snapshot.createdAt,
             updatedAt: snapshot.updatedAt,
             eventDate: snapshot.eventDate,
+            endDate: snapshot.endDate,
             version: snapshot.version ?? 1,
             text: snapshot.text,
             emoji: snapshot.emoji,

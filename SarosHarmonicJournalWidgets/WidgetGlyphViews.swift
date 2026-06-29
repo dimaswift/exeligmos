@@ -149,6 +149,7 @@ extension ThreadTrackingSnapshot {
             moonDraconicEndDate: moonDraconicEndDate
         )
     }
+
 }
 
 #if canImport(ActivityKit)
@@ -226,6 +227,7 @@ extension ThreadTrackingAttributes.ContentState {
             moonDraconicEndDate: moonDraconicEndDate
         )
     }
+
 }
 #endif
 
@@ -238,6 +240,8 @@ struct WidgetWaveformSegmentView: View {
     var currentPosition: Double = 0.5
     var waveformStartDate: Date?
     var waveformEndDate: Date?
+    var pulseCycleStartDate: Date?
+    var pulseCycleEndDate: Date?
 
     var body: some View {
         canvas(currentPosition: currentPosition)
@@ -251,17 +255,19 @@ struct WidgetWaveformSegmentView: View {
             let clamped = samples.map { min(max($0, 0), 1) }
             let markerMax = spikeMarkers.map { min(max($0.energy, 0), 1) }.max() ?? 0
             let localMax = max(clamped.max() ?? 0, markerMax, 0.08)
-            let visualScale = max(1, min(3.6, 0.78 / localMax))
+            let visualScale = 1.0 / localMax
             let visualValue: (Double) -> Double = { value in
                 min(max(value, 0) * visualScale, 1)
             }
             let positions = resolvedSamplePositions(count: clamped.count)
-            let baselineY = size.height - 2
+            let baselineY = size.height
+            let extendedWidth = size.width + 160
+            let xOffset: CGFloat = -80
             var line = Path()
             var fill = Path()
 
             for index in clamped.indices {
-                let x = CGFloat(positions[index]) * size.width
+                let x = xOffset + CGFloat(positions[index]) * extendedWidth
                 let y = baselineY - CGFloat(visualValue(clamped[index])) * (size.height - 5)
                 let point = CGPoint(x: x, y: y)
                 if index == clamped.startIndex {
@@ -274,25 +280,81 @@ struct WidgetWaveformSegmentView: View {
                 }
             }
 
-            fill.addLine(to: CGPoint(x: size.width, y: baselineY))
+            fill.addLine(to: CGPoint(x: size.width + 80, y: baselineY))
             fill.closeSubpath()
-            context.fill(fill, with: .color(color.opacity(0.18)))
+            context.fill(fill, with: .color(color.opacity(0.24)))
             context.stroke(line, with: .color(color.opacity(0.92)), lineWidth: 1.4)
 
             for marker in spikeMarkers {
-                let x = CGFloat(min(max(marker.position, 0), 1)) * size.width
+                let x = xOffset + CGFloat(min(max(marker.position, 0), 1)) * extendedWidth
                 let y = baselineY - CGFloat(visualValue(marker.energy)) * (size.height - 5)
                 let dotRect = CGRect(x: x - 3, y: y - 3, width: 6, height: 6)
                 context.fill(Path(ellipseIn: dotRect), with: .color(Color(hexString: marker.colorHex)))
                 context.stroke(Path(ellipseIn: dotRect.insetBy(dx: -1, dy: -1)), with: .color(.black.opacity(0.45)), lineWidth: 1)
             }
 
+            drawPulseTicks(
+                in: context,
+                size: size,
+                extendedWidth: extendedWidth,
+                xOffset: xOffset
+            )
+
             if showsCurrentMarker {
-                let markerX = CGFloat(min(max(currentPosition, 0), 1)) * size.width
+                let markerX = xOffset + CGFloat(min(max(currentPosition, 0), 1)) * extendedWidth
                 var marker = Path()
                 marker.move(to: CGPoint(x: markerX, y: 0))
                 marker.addLine(to: CGPoint(x: markerX, y: size.height))
-                context.stroke(marker, with: .color(.white.opacity(0.38)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                context.stroke(marker, with: .color(.green.opacity(0.72)), style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+            }
+        }
+    }
+
+    private func drawPulseTicks(
+        in context: GraphicsContext,
+        size: CGSize,
+        extendedWidth: CGFloat,
+        xOffset: CGFloat
+    ) {
+        guard let waveformStartDate,
+              let waveformEndDate,
+              waveformEndDate > waveformStartDate,
+              let pulseCycleStartDate,
+              let pulseCycleEndDate,
+              pulseCycleEndDate > pulseCycleStartDate
+        else {
+            return
+        }
+
+        let cycleDuration = pulseCycleEndDate.timeIntervalSince(pulseCycleStartDate)
+        let waveformDuration = waveformEndDate.timeIntervalSince(waveformStartDate)
+        let pulseRolloverDuration = cycleDuration / 512
+        let tickSpecs: [(divisions: Double, color: Color, height: CGFloat, lineWidth: CGFloat)] = [
+            (512, .blue.opacity(0.72), min(size.height * 0.48, 22), 0.6),
+            (64, .purple.opacity(0.84), min(size.height * 0.66, 30), 0.9),
+            (8, .yellow.opacity(0.95), min(size.height * 0.86, 38), 1.2),
+            (1, .red.opacity(0.95), min(size.height * 0.96, 44), 1.4)
+        ]
+
+        for spec in tickSpecs {
+            let step = pulseRolloverDuration / spec.divisions
+            guard step > 0, waveformDuration / step <= 240 else { continue }
+            var index = ceil(waveformStartDate.timeIntervalSince(pulseCycleStartDate) / step)
+            var rendered = 0
+
+            while rendered < 240 {
+                let tickDate = pulseCycleStartDate.addingTimeInterval(index * step)
+                if tickDate > waveformEndDate { break }
+                if tickDate >= waveformStartDate {
+                    let position = tickDate.timeIntervalSince(waveformStartDate) / waveformDuration
+                    let x = xOffset + CGFloat(position) * extendedWidth
+                    var tick = Path()
+                    tick.move(to: CGPoint(x: x, y: size.height - spec.height))
+                    tick.addLine(to: CGPoint(x: x, y: size.height))
+                    context.stroke(tick, with: .color(spec.color), lineWidth: spec.lineWidth)
+                    rendered += 1
+                }
+                index += 1
             }
         }
     }
@@ -311,6 +373,30 @@ struct WidgetWaveformSegmentView: View {
 extension TrackingDisplayPayload {
     var displayEventName: String {
         eventName?.nilIfBlank ?? rarityTitle
+    }
+
+    func secondaryEventDescription(at date: Date) -> String {
+        let energy = sampledEnergy(at: date) ?? energyPercent ?? 0
+        let momentum = sampledMomentum(at: date) ?? momentum ?? 0
+        let magnitude = abs(momentum)
+
+        if energy >= 0.88 {
+            let modifier = magnitude >= 0.72 ? "sharp" : "dull"
+            return "\(modifier) peak"
+        }
+        if energy <= 0.06 {
+            let modifier = magnitude >= 0.72 ? "narrow" : "giant"
+            return "\(modifier) valley"
+        }
+
+        let pace = magnitude >= 0.45 ? "rapid" : "slow"
+        if momentum > 0.02 {
+            return "\(pace) ascent"
+        }
+        if momentum < -0.02 {
+            return "\(pace) descent"
+        }
+        return "flat"
     }
 
     func energyText(at date: Date) -> String {
@@ -406,20 +492,62 @@ extension TrackingDisplayPayload {
     private func sampledEnergy(at date: Date) -> Double? {
         guard let waveformSamples, waveformSamples.count > 1 else { return nil }
         let position = waveformPosition(at: date)
-        let scaled = position * Double(waveformSamples.count - 1)
-        let lower = min(max(Int(floor(scaled)), 0), waveformSamples.count - 1)
-        let upper = min(lower + 1, waveformSamples.count - 1)
-        let fraction = scaled - Double(lower)
-        return waveformSamples[lower] + (waveformSamples[upper] - waveformSamples[lower]) * fraction
+        guard let pair = samplePair(at: position, sampleCount: waveformSamples.count) else { return nil }
+        return waveformSamples[pair.lower]
+            + (waveformSamples[pair.upper] - waveformSamples[pair.lower]) * pair.fraction
     }
 
     private func sampledMomentum(at date: Date) -> Double? {
         guard let waveformSamples, waveformSamples.count > 2 else { return nil }
         let position = waveformPosition(at: date)
-        let scaled = position * Double(waveformSamples.count - 1)
-        let index = min(max(Int(round(scaled)), 1), waveformSamples.count - 2)
-        let delta = waveformSamples[index + 1] - waveformSamples[index - 1]
-        return min(max(delta * 4, -1), 1)
+        let positions = resolvedPositions(sampleCount: waveformSamples.count)
+        let center = positions.enumerated()
+            .min { abs($0.element - position) < abs($1.element - position) }?
+            .offset ?? 1
+        let lower = max(center - 1, 0)
+        let upper = min(center + 1, waveformSamples.count - 1)
+        let dx = max(positions[upper] - positions[lower], 0.000_001)
+        let dy = waveformSamples[upper] - waveformSamples[lower]
+        let gradient = dy / dx
+        let angle = atan(abs(gradient))
+        let flatAngle = 5.0 * Double.pi / 180.0
+        let verticalAngle = 88.0 * Double.pi / 180.0
+        let normalized = min(max((angle - flatAngle) / (verticalAngle - flatAngle), 0), 1)
+        return normalized * (gradient >= 0 ? 1 : -1)
+    }
+
+    private func samplePair(
+        at position: Double,
+        sampleCount: Int
+    ) -> (lower: Int, upper: Int, fraction: Double)? {
+        let positions = resolvedPositions(sampleCount: sampleCount)
+        guard positions.count == sampleCount, sampleCount > 1 else { return nil }
+        let clamped = min(max(position, 0), 1)
+
+        if clamped <= positions[0] {
+            return (0, 1, 0)
+        }
+
+        for index in 0..<(sampleCount - 1) {
+            let left = positions[index]
+            let right = positions[index + 1]
+            guard clamped <= right || index == sampleCount - 2 else { continue }
+            let fraction = (clamped - left) / max(right - left, 0.000_001)
+            return (index, index + 1, min(max(fraction, 0), 1))
+        }
+
+        return (sampleCount - 2, sampleCount - 1, 1)
+    }
+
+    private func resolvedPositions(sampleCount: Int) -> [Double] {
+        guard waveformSamplePositions?.count == sampleCount,
+              let waveformSamplePositions
+        else {
+            guard sampleCount > 1 else { return [0] }
+            return (0..<sampleCount).map { Double($0) / Double(sampleCount - 1) }
+        }
+
+        return waveformSamplePositions.map { min(max($0, 0), 1) }
     }
 
     private func moonDigit(at date: Date, start: Date?, end: Date?) -> Int? {

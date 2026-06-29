@@ -717,6 +717,120 @@ struct JournalEventWaveComponent {
     }
 }
 
+enum JournalWaveEventLabeler {
+    struct Descriptor: Hashable {
+        enum SegmentKind: String, Hashable {
+            case ascent
+            case descent
+            case flat
+        }
+
+        let label: String
+        let segmentDuration: TimeInterval
+        let segmentKind: SegmentKind
+    }
+
+    static func secondaryLabel(
+        at date: Date,
+        spikes: [JournalSpikeReference]
+    ) -> String {
+        descriptor(at: date, spikes: spikes).label
+    }
+
+    static func descriptor(
+        at date: Date,
+        spikes: [JournalSpikeReference]
+    ) -> Descriptor {
+        let field = JournalEventWaveform.field(spikes: spikes)
+        guard let component = activeComponent(at: date, in: field.components) else {
+            return Descriptor(label: "flat", segmentDuration: 0, segmentKind: .flat)
+        }
+
+        let isAscent = date <= component.spike.date
+        let midpoint = isAscent ? component.period.leftBoundary : component.period.rightBoundary
+        let segmentDuration = abs(component.spike.date.timeIntervalSince(midpoint))
+        let peakDistance = abs(date.timeIntervalSince(component.spike.date))
+        let valleyDistance = abs(date.timeIntervalSince(midpoint))
+        let kilo = SarosPulseCalculator.averageDuration(for: .kilo)
+
+        if peakDistance <= kilo, peakDistance <= valleyDistance {
+            return Descriptor(
+                label: "\(peakModifier(for: segmentDuration)) peak",
+                segmentDuration: segmentDuration,
+                segmentKind: isAscent ? .ascent : .descent
+            )
+        }
+
+        if valleyDistance <= kilo, valleyDistance < peakDistance {
+            return Descriptor(
+                label: "\(valleyModifier(for: segmentDuration)) valley",
+                segmentDuration: segmentDuration,
+                segmentKind: isAscent ? .ascent : .descent
+            )
+        }
+
+        let segmentKind: Descriptor.SegmentKind = isAscent ? .ascent : .descent
+        return Descriptor(
+            label: "\(paceModifier(for: segmentDuration)) \(segmentKind.rawValue)",
+            segmentDuration: segmentDuration,
+            segmentKind: segmentKind
+        )
+    }
+
+    private static func activeComponent(
+        at date: Date,
+        in components: [JournalEventWaveComponent]
+    ) -> JournalEventWaveComponent? {
+        if let component = components.first(where: { $0.contains(date) }) {
+            return component
+        }
+
+        return components.min { lhs, rhs in
+            distance(from: date, to: lhs.periodInterval) < distance(from: date, to: rhs.periodInterval)
+        }
+    }
+
+    private static func distance(from date: Date, to interval: DateInterval) -> TimeInterval {
+        if interval.contains(date) { return 0 }
+        if date < interval.start { return interval.start.timeIntervalSince(date) }
+        return date.timeIntervalSince(interval.end)
+    }
+
+    private static func peakModifier(for duration: TimeInterval) -> String {
+        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
+            return "explosive"
+        }
+        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
+            return "sharp"
+        }
+        return "dull"
+    }
+
+    private static func valleyModifier(for duration: TimeInterval) -> String {
+        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
+            return "narrow"
+        }
+        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
+            return "wide"
+        }
+        return "giant"
+    }
+
+    private static func paceModifier(for duration: TimeInterval) -> String {
+        duration < SarosPulseCalculator.averageDuration(for: .mega) ? "rapid" : "slow"
+    }
+}
+
+extension JournalEventContext {
+    var secondaryEventLabel: String {
+        eventDescriptor.label
+    }
+
+    var eventDescriptor: JournalWaveEventLabeler.Descriptor {
+        JournalWaveEventLabeler.descriptor(at: eventDate, spikes: spikes)
+    }
+}
+
 struct JournalEventWaveField {
     static let empty = JournalEventWaveField(components: [])
 
@@ -1085,10 +1199,12 @@ enum JournalEventWaveform {
 
     static func peakHeight(
         for spike: JournalSpikeReference,
-        normalizedAmplitude: Bool = JournalWaveformOptions.current.normalizedAmplitude
+        normalizedAmplitude: Bool = JournalWaveformOptions.current.normalizedAmplitude,
+        amplitudeMultiplier: Double = JournalWaveformOptions.current.amplitudeMultiplier
     ) -> Double {
         (normalizedAmplitude ? 1 : basePeakHeight(for: spike.rarity))
             * baseAmplitudeMultiplier
+            * amplitudeMultiplier
             * magnitudeAmplitudeMultiplier(for: spike.magnitude)
     }
 
@@ -1118,7 +1234,13 @@ enum JournalEventWaveform {
                 rightBoundary: rightBoundary
             ),
             peakHeight: cluster.contributors
-                .map { peakHeight(for: $0, normalizedAmplitude: options.normalizedAmplitude) }
+                .map {
+                    peakHeight(
+                        for: $0,
+                        normalizedAmplitude: options.normalizedAmplitude,
+                        amplitudeMultiplier: options.amplitudeMultiplier
+                    )
+                }
                 .reduce(0, +),
             gaussianExtent: gaussianExtent(forGamma: spike.gamma),
             waveformModel: model,
@@ -1248,11 +1370,9 @@ enum JournalEventWaveform {
 }
 
 enum JournalWaveMetricsCalculator {
-    private static let flatAngleThreshold = 5.0 * Double.pi / 180.0
-    private static let verticalAngleReference = 80.0 * Double.pi / 180.0
-    private static let visualWindow: TimeInterval = 86_400
+    private static let visualWindow: TimeInterval = SarosPulseCalculator.averageDuration(for: .mega) * 2
     private static let visualStep: TimeInterval = 900
-    static let flatMomentumThreshold = tan(flatAngleThreshold) / tan(verticalAngleReference)
+    static let flatMomentumThreshold = 0.000_1
 
     static func metrics(
         at date: Date,
@@ -1317,15 +1437,8 @@ enum JournalWaveMetricsCalculator {
         let rise = (afterEnergy - beforeEnergy) / range
         let run = after.timeIntervalSince(before) / visualWindow
         let gradient = rise / Swift.max(run, 0.000_000_001)
-        let angle = atan(abs(gradient))
-        let direction: JournalWaveDirection
-        if angle <= flatAngleThreshold {
-            direction = .flat
-        } else {
-            direction = gradient > 0 ? .ascending : .descending
-        }
-        let normalized = Swift.min(abs(gradient) / tan(verticalAngleReference), 1.0)
-        let momentum = direction == .flat ? 0.0 : normalized * (gradient > 0 ? 1.0 : -1.0)
+        let direction = JournalWaveMomentumMapper.direction(forGradient: gradient)
+        let momentum = direction == .flat ? 0.0 : JournalWaveMomentumMapper.momentum(forGradient: gradient)
         return JournalWaveDynamicsSnapshot(
             slope: slope,
             momentum: momentum,
