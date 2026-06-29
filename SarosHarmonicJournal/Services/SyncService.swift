@@ -421,13 +421,15 @@ final class SyncService {
             commands: commands
         )
 
-        return SyncReconcileSummary(
+        let summary = SyncReconcileSummary(
             uploadedRecordCount: pushSummary.recordCount,
             uploadedMediaCount: pushSummary.mediaCount,
             restoredEntityCount: commandResult.summary.entityCount,
             restoredRecordCount: commandResult.summary.recordCount,
             restoredMediaCount: commandResult.summary.mediaCount
         )
+        markLastSync()
+        return summary
     }
 
     @MainActor
@@ -439,13 +441,15 @@ final class SyncService {
         commands: [SyncLocalCommand]
     ) async throws -> SyncPushSummary {
         try await registerChannel(to: serverURLString)
-        return try await pushPendingCommands(
+        let summary = try await pushPendingCommands(
             to: serverURLString,
             modelContext: modelContext,
             tags: tags,
             entries: entries,
             commands: commands
         )
+        markLastSync()
+        return summary
     }
 
     func fetchLatest(from serverURLString: String) async throws -> SyncBackupPayload {
@@ -1179,6 +1183,10 @@ final class SyncService {
         default:
             "application/octet-stream"
         }
+    }
+
+    private func markLastSync() {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: JournalSettings.lastSyncAtKey)
     }
 
     private func documentsDirectory() -> URL {

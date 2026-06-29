@@ -17,7 +17,6 @@ struct TrackedThreadProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<TrackedThreadEntry>) -> Void) {
         let snapshot = ThreadTrackingSharedStore.load()
-        let entry = TrackedThreadEntry(date: .now, snapshot: snapshot)
         let now = Date.now
         let refreshCandidates = [
             snapshot?.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay),
@@ -25,9 +24,25 @@ struct TrackedThreadProvider: TimelineProvider {
         ]
             .compactMap { $0 }
             .filter { $0 > now.addingTimeInterval(2) }
-        let nextRefresh = refreshCandidates.min() ?? now.addingTimeInterval(30 * 60)
-        completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
+        let naturalRefresh = refreshCandidates.min() ?? now.addingTimeInterval(Self.timelineHorizon)
+        let horizonEnd = min(naturalRefresh, now.addingTimeInterval(Self.timelineHorizon))
+        var entries: [TrackedThreadEntry] = []
+        var cursor = now
+
+        while cursor <= horizonEnd {
+            entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
+            cursor = cursor.addingTimeInterval(Self.timelineStep)
+        }
+
+        if entries.isEmpty {
+            entries = [TrackedThreadEntry(date: now, snapshot: snapshot)]
+        }
+
+        completion(Timeline(entries: entries, policy: .after(horizonEnd)))
     }
+
+    private static let timelineStep: TimeInterval = 5
+    private static let timelineHorizon: TimeInterval = 15 * 60
 }
 
 struct TrackedThreadWidget: Widget {
@@ -51,13 +66,11 @@ private struct TrackedThreadWidgetView: View {
     var body: some View {
         Group {
             if let snapshot = entry.snapshot {
-                TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                    content(
-                        for: snapshot,
-                        payload: snapshot.displayPayload(at: timeline.date),
-                        now: timeline.date
-                    )
-                }
+                content(
+                    for: snapshot,
+                    payload: snapshot.displayPayload(at: entry.date),
+                    now: entry.date
+                )
                 .widgetURL(snapshot.deepLinkURL)
             } else {
                 emptyState
@@ -76,40 +89,49 @@ private struct TrackedThreadWidgetView: View {
         return Group {
             switch family {
             case .systemMedium:
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(payload.displayEventName)
-                            .font(.headline)
-                            .lineLimit(1)
-                        TrackingCountdownText(payload: payload, now: now, compact: false, recordURL: snapshot.recordURL)
-                            .font(.title3.weight(.semibold).monospacedDigit())
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 14) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(payload.displayEventName)
+                                .font(.headline)
+                                .lineLimit(1)
+                            TrackingCountdownText(payload: payload, now: now, compact: false, recordURL: snapshot.recordURL)
+                                .font(.title3.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(color)
+                            HStack(spacing: 10) {
+                                Text(payload.energyText(at: now))
+                                Text(payload.momentumText(at: now))
+                            }
+                            .font(.caption.weight(.semibold).monospacedDigit())
                             .foregroundStyle(color)
-                        HStack(spacing: 10) {
-                            Text(payload.energyText)
-                            Text(payload.momentumText)
                         }
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(color)
-                        WidgetWaveformSegmentView(
-                            samples: payload.waveformSamples ?? [],
-                            spikeMarkers: payload.waveformSpikeMarkers ?? [],
-                            color: color,
-                            currentPosition: payload.waveformPosition(at: now),
-                            waveformStartDate: payload.waveformStartDate,
-                            waveformEndDate: payload.waveformEndDate
-                        )
-                        .frame(height: 42)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer(minLength: 0)
+                        VStack(spacing: 7) {
+                            WidgetOctalGlyph(
+                                value: payload.glyph,
+                                depth: snapshot.harmonicDepth,
+                                color: color,
+                                secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                            )
+                            .frame(width: 62, height: 62)
+                            .offset(x: 3, y: 3)
+
+                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 26)
+                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     Spacer(minLength: 0)
-                    WidgetOctalGlyph(
-                        value: payload.glyph,
-                        depth: snapshot.harmonicDepth,
+                    WidgetWaveformSegmentView(
+                        samples: payload.waveformSamples ?? [],
+                        samplePositions: payload.waveformSamplePositions ?? [],
+                        spikeMarkers: payload.waveformSpikeMarkers ?? [],
                         color: color,
-                        secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
+                        currentPosition: payload.waveformPosition(at: now),
+                        waveformStartDate: payload.waveformStartDate,
+                        waveformEndDate: payload.waveformEndDate
                     )
-                    .frame(width: 72, height: 72)
-                    .offset(x: 3, y: 3)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 42)
                 }
             default:
                 VStack(alignment: .leading, spacing: 8) {
@@ -124,8 +146,9 @@ private struct TrackedThreadWidgetView: View {
                             .offset(x: 3, y: 3)
                         Spacer(minLength: 0)
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text(payload.energyText)
-                            Text(payload.momentumText)
+                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 24)
+                            Text(payload.energyText(at: now))
+                            Text(payload.momentumText(at: now))
                         }
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(color)
@@ -133,6 +156,7 @@ private struct TrackedThreadWidgetView: View {
                     Spacer(minLength: 0)
                     WidgetWaveformSegmentView(
                         samples: payload.waveformSamples ?? [],
+                        samplePositions: payload.waveformSamplePositions ?? [],
                         spikeMarkers: payload.waveformSpikeMarkers ?? [],
                         color: color,
                         currentPosition: payload.waveformPosition(at: now),
@@ -179,6 +203,7 @@ extension ThreadTrackingSnapshot {
         momentum: 0.34,
         waveDirectionRawValue: "ascending",
         waveformSamples: [0.12, 0.16, 0.22, 0.34, 0.51, 0.72, 0.94, 0.76, 0.48, 0.29, 0.22, 0.31, 0.46, 0.61, 0.68, 0.58, 0.43, 0.31, 0.24],
+        waveformSamplePositions: nil,
         waveformSpikeMarkers: [
             TrackingWaveformSpikeMarker(position: 0.34, energy: 0.94, colorHex: "#3D9BFF"),
             TrackingWaveformSpikeMarker(position: 0.74, energy: 0.68, colorHex: "#AF52DE")
@@ -201,6 +226,15 @@ extension ThreadTrackingSnapshot {
         nextRaritySymbolName: "circle.fill",
         nextRarityColorHex: "#8E8E93",
         nextRaritySecondaryColorHex: "#8E8E93",
-        nextFlipDate: Date.now.addingTimeInterval(2 * 60 * 60 + 18 * 60)
+        nextFlipDate: Date.now.addingTimeInterval(2 * 60 * 60 + 18 * 60),
+        pulseSaros: 134,
+        pulseCycleStartDate: Date.now.addingTimeInterval(-120 * 86_400),
+        pulseCycleEndDate: Date.now.addingTimeInterval(120 * 86_400),
+        moonSynodicStartDate: Date.now.addingTimeInterval(-14 * 86_400),
+        moonSynodicEndDate: Date.now.addingTimeInterval(15 * 86_400),
+        moonAnomalisticStartDate: Date.now.addingTimeInterval(-12 * 86_400),
+        moonAnomalisticEndDate: Date.now.addingTimeInterval(15 * 86_400),
+        moonDraconicStartDate: Date.now.addingTimeInterval(-13 * 86_400),
+        moonDraconicEndDate: Date.now.addingTimeInterval(14 * 86_400)
     )
 }

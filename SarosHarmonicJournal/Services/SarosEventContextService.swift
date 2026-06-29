@@ -212,14 +212,20 @@ final class SarosEventContextService {
 
             let detailedNext = eclipseWithMetrics(interval.next)
             let detailedPrevious = eclipseWithMetrics(interval.previous)
+            let seriesProgressesSouthToNorth = Self.seriesProgressesSouthToNorth(
+                previous: detailedPrevious,
+                next: detailedNext
+            )
             appendBoundarySpike(
                 eclipse: detailedPrevious,
                 reading: reading,
+                seriesProgressesSouthToNorth: seriesProgressesSouthToNorth,
                 into: &spikesByKey
             )
             appendBoundarySpike(
                 eclipse: detailedNext,
                 reading: reading,
+                seriesProgressesSouthToNorth: seriesProgressesSouthToNorth,
                 into: &spikesByKey
             )
 
@@ -234,6 +240,7 @@ final class SarosEventContextService {
                         rarity: rarity,
                         reading: reading,
                         eclipse: detailedNext,
+                        seriesProgressesSouthToNorth: seriesProgressesSouthToNorth,
                         into: &spikesByKey
                     )
                 }
@@ -248,6 +255,7 @@ final class SarosEventContextService {
                         rarity: rarity,
                         reading: reading,
                         eclipse: detailedNext,
+                        seriesProgressesSouthToNorth: seriesProgressesSouthToNorth,
                         into: &spikesByKey
                     )
                 }
@@ -270,6 +278,7 @@ final class SarosEventContextService {
         rarity: FlipRarity,
         reading: SarosClockReading,
         eclipse: Eclipse,
+        seriesProgressesSouthToNorth: Bool?,
         into spikesByKey: inout [String: JournalSpikeReference]
     ) {
         guard binIndex > 0, binIndex < reading.binCount else { return }
@@ -281,7 +290,11 @@ final class SarosEventContextService {
             harmonicDepth: reading.harmonicDepth,
             rarityRawValue: rarity.rawValue,
             gamma: eclipse.gamma,
-            magnitude: eclipse.magnitude
+            magnitude: eclipse.magnitude,
+            eclipseTypeRawValue: eclipse.type.rawValue,
+            sarosSequence: eclipse.sarosSequence,
+            sarosSeriesCount: eclipse.sarosSeriesCount,
+            seriesProgressesSouthToNorth: seriesProgressesSouthToNorth
         )
         upsert(spike, into: &spikesByKey)
     }
@@ -289,6 +302,7 @@ final class SarosEventContextService {
     private func appendBoundarySpike(
         eclipse: Eclipse,
         reading: SarosClockReading,
+        seriesProgressesSouthToNorth: Bool?,
         into spikesByKey: inout [String: JournalSpikeReference]
     ) {
         let spike = JournalSpikeReference(
@@ -298,7 +312,11 @@ final class SarosEventContextService {
             harmonicDepth: reading.harmonicDepth,
             rarityRawValue: FlipRarity.mythicDigit(7).rawValue,
             gamma: eclipse.gamma,
-            magnitude: eclipse.magnitude
+            magnitude: eclipse.magnitude,
+            eclipseTypeRawValue: eclipse.type.rawValue,
+            sarosSequence: eclipse.sarosSequence,
+            sarosSeriesCount: eclipse.sarosSeriesCount,
+            seriesProgressesSouthToNorth: seriesProgressesSouthToNorth
         )
         upsert(spike, into: &spikesByKey)
     }
@@ -320,6 +338,23 @@ final class SarosEventContextService {
     private func eclipseWithMetrics(_ eclipse: Eclipse) -> Eclipse {
         guard eclipse.gamma == nil || eclipse.magnitude == nil else { return eclipse }
         return (try? eclipseService.eclipse(withID: eclipse.id)) ?? eclipse
+    }
+
+    private static func seriesProgressesSouthToNorth(
+        previous: Eclipse,
+        next: Eclipse
+    ) -> Bool? {
+        guard
+            let previousGamma = previous.gamma,
+            let nextGamma = next.gamma,
+            previousGamma.isFinite,
+            nextGamma.isFinite,
+            previousGamma != nextGamma
+        else {
+            return nil
+        }
+
+        return nextGamma > previousGamma
     }
 }
 
@@ -567,9 +602,14 @@ struct JournalEventWaveComponent {
 
     let id: String
     let sourceSpikeID: String
+    let contributorSpikes: [JournalSpikeReference]
     let period: JournalEventWavePeriod
     let peakHeight: Double
     let gaussianExtent: Double
+    let waveformModel: JournalWaveformModel
+    let parabolaA: Double
+    let parabolaAscentAccelerates: Bool
+    let parabolaDescentAccelerates: Bool
 
     var spike: JournalSpikeReference {
         period.spike
@@ -586,6 +626,14 @@ struct JournalEventWaveComponent {
     func energy(at date: Date) -> Double {
         guard contains(date) else { return 0 }
 
+        if waveformModel == .saw {
+            return sawEnergy(at: date)
+        }
+
+        if waveformModel == .parabola {
+            return parabolaEnergy(at: date)
+        }
+
         let x = gaussianCoordinate(at: date)
         let boundaryValue = exp(-0.5 * gaussianExtent * gaussianExtent)
         let raw = exp(-0.5 * x * x)
@@ -596,6 +644,14 @@ struct JournalEventWaveComponent {
 
     func derivative(at date: Date) -> Double {
         guard contains(date) else { return 0 }
+
+        if waveformModel == .saw {
+            let offset = date.timeIntervalSince(spike.date)
+            let span = width(for: offset)
+            guard span > 0 else { return 0 }
+            return (offset < 0 ? peakHeight : -peakHeight) / span
+        }
+
         let step = min(max(width(for: date.timeIntervalSince(spike.date)) / 600, 60), 1_800)
         let before = max(period.leftBoundary, date.addingTimeInterval(-step))
         let after = min(period.rightBoundary, date.addingTimeInterval(step))
@@ -604,10 +660,54 @@ struct JournalEventWaveComponent {
         return (energy(at: after) - energy(at: before)) / duration
     }
 
+    func controlDates(in interval: DateInterval) -> [Date] {
+        [
+            interval.start,
+            period.leftBoundary,
+            spike.date,
+            period.rightBoundary,
+            interval.end
+        ]
+        .filter { $0 >= interval.start && $0 <= interval.end }
+    }
+
     private func width(for offset: TimeInterval) -> TimeInterval {
         offset < 0
             ? max(spike.date.timeIntervalSince(period.leftBoundary), 1)
             : max(period.rightBoundary.timeIntervalSince(spike.date), 1)
+    }
+
+    private func sawEnergy(at date: Date) -> Double {
+        if date <= spike.date {
+            let duration = max(spike.date.timeIntervalSince(period.leftBoundary), 1)
+            let progress = min(max(date.timeIntervalSince(period.leftBoundary) / duration, 0), 1)
+            return peakHeight * progress
+        }
+
+        let duration = max(period.rightBoundary.timeIntervalSince(spike.date), 1)
+        let progress = min(max(date.timeIntervalSince(spike.date) / duration, 0), 1)
+        return peakHeight * (1 - progress)
+    }
+
+    private func parabolaEnergy(at date: Date) -> Double {
+        let a = min(max(parabolaA, 1.0), 8.0)
+        let value: Double
+
+        if date <= spike.date {
+            let duration = max(spike.date.timeIntervalSince(period.leftBoundary), 1)
+            let t = min(max(date.timeIntervalSince(period.leftBoundary) / duration, 0), 1)
+            value = parabolaAscentAccelerates
+                ? pow(t, a)
+                : 1 - pow(1 - t, a)
+        } else {
+            let duration = max(period.rightBoundary.timeIntervalSince(spike.date), 1)
+            let t = min(max(date.timeIntervalSince(spike.date) / duration, 0), 1)
+            value = parabolaDescentAccelerates
+                ? 1 - pow(t, a)
+                : pow(1 - t, a)
+        }
+
+        return peakHeight * min(max(value, 0), 1)
     }
 
     private func gaussianCoordinate(at date: Date) -> Double {
@@ -622,10 +722,24 @@ struct JournalEventWaveField {
 
     let components: [JournalEventWaveComponent]
     let maxPeakHeight: Double
+    let subdivisionDepth: Int
+    private let componentsBySpikeID: [String: JournalEventWaveComponent]
 
-    init(components: [JournalEventWaveComponent]) {
+    init(
+        components: [JournalEventWaveComponent],
+        subdivisionDepth: Int = JournalWaveformSettings.defaultSubdivisionDepth
+    ) {
         self.components = components
         self.maxPeakHeight = components.map(\.peakHeight).max() ?? 0
+        self.subdivisionDepth = min(
+            max(subdivisionDepth, JournalWaveformSettings.subdivisionDepthRange.lowerBound),
+            JournalWaveformSettings.subdivisionDepthRange.upperBound
+        )
+        self.componentsBySpikeID = components.reduce(into: [:]) { lookup, component in
+            for spike in component.contributorSpikes {
+                lookup[spike.id] = component
+            }
+        }
     }
 
     var coveredInterval: DateInterval? {
@@ -667,9 +781,98 @@ struct JournalEventWaveField {
         }
 
         var maxEnergy = 0.0
-        let points = (0...sampleCount).map { index in
-            let position = Double(index) / Double(sampleCount)
-            let date = interval.start.addingTimeInterval(interval.duration * position)
+        let sampleDates = adaptiveSampleDates(
+            in: interval,
+            components: visibleComponents,
+            preferredSampleCount: sampleCount
+        )
+        let points = sampleDates.map { date in
+            let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
+            let energy = energy(at: date, in: visibleComponents)
+            maxEnergy = max(maxEnergy, energy)
+
+            return JournalEventWaveSample(
+                date: date,
+                position: position,
+                energy: energy
+            )
+        }
+
+        var eventEnergyByID: [String: Double] = [:]
+        for spike in spikes {
+            if let component = componentsBySpikeID[spike.id], visibleComponents.contains(where: { $0.id == component.id }) {
+                eventEnergyByID[spike.id] = component.energy(at: component.spike.date)
+            } else {
+                eventEnergyByID[spike.id] = energy(at: spike.date, in: visibleComponents)
+            }
+        }
+
+        return JournalEventWaveSamples(
+            interval: interval,
+            points: points,
+            maxEnergy: max(maxEnergy, maxPeakHeight, 0.000_000_001),
+            eventEnergyByID: eventEnergyByID
+        )
+    }
+
+    func maxEnergy(in interval: DateInterval, sampleCount: Int = 768) -> Double {
+        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
+        guard !visibleComponents.isEmpty, interval.duration > 0 else {
+            return max(maxPeakHeight, 0.000_000_001)
+        }
+
+        var maximum = 0.0
+        for date in adaptiveSampleDates(
+            in: interval,
+            components: visibleComponents,
+            preferredSampleCount: sampleCount
+        ) {
+            maximum = max(maximum, energy(at: date, in: visibleComponents))
+        }
+
+        return max(maximum, maxPeakHeight, 0.000_000_001)
+    }
+
+    func energyRange(in interval: DateInterval, sampleCount: Int = 384) -> Double {
+        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
+        guard !visibleComponents.isEmpty, interval.duration > 0 else { return 0 }
+
+        var minimum = Double.greatestFiniteMagnitude
+        var maximum = 0.0
+        for date in adaptiveSampleDates(
+            in: interval,
+            components: visibleComponents,
+            preferredSampleCount: sampleCount
+        ) {
+            let energy = energy(at: date, in: visibleComponents)
+            minimum = min(minimum, energy)
+            maximum = max(maximum, energy)
+        }
+
+        guard minimum.isFinite else { return 0 }
+        return max(maximum - minimum, 0)
+    }
+
+    private func energy(
+        at date: Date,
+        in candidateComponents: [JournalEventWaveComponent]
+    ) -> Double {
+        candidateComponents.reduce(0) { total, component in
+            guard component.contains(date) else { return total }
+            return total + component.energy(at: date)
+        }
+    }
+
+    private func sawSamples(
+        in interval: DateInterval,
+        components visibleComponents: [JournalEventWaveComponent],
+        spikes: [JournalSpikeReference]
+    ) -> JournalEventWaveSamples {
+        let dates = Set(visibleComponents.flatMap { $0.controlDates(in: interval) })
+            .sorted()
+        var maxEnergy = 0.0
+        let points = dates.map { date in
+            let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
             let energy = energy(at: date, in: visibleComponents)
             maxEnergy = max(maxEnergy, energy)
 
@@ -693,48 +896,44 @@ struct JournalEventWaveField {
         )
     }
 
-    func maxEnergy(in interval: DateInterval, sampleCount: Int = 768) -> Double {
-        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
-        guard !visibleComponents.isEmpty, interval.duration > 0 else {
-            return max(maxPeakHeight, 0.000_000_001)
+    private func adaptiveSampleDates(
+        in interval: DateInterval,
+        components visibleComponents: [JournalEventWaveComponent],
+        preferredSampleCount: Int
+    ) -> [Date] {
+        guard interval.duration > 0 else { return [] }
+
+        let anchors = ([interval.start, interval.end] + visibleComponents.flatMap { $0.controlDates(in: interval) })
+            .filter { interval.contains($0) || $0 == interval.end }
+            .sorted()
+            .reduce(into: [Date]()) { unique, date in
+                guard unique.last.map({ abs($0.timeIntervalSince(date)) > 0.001 }) ?? true else { return }
+                unique.append(date)
+            }
+
+        guard anchors.count > 1 else { return anchors }
+
+        let segmentCount = max(anchors.count - 1, 1)
+        let maximumDivisions = 1 << subdivisionDepth
+        let preferredDivisions = max(preferredSampleCount / segmentCount, 1)
+        let divisions = min(maximumDivisions, preferredDivisions)
+        var dates: [Date] = []
+        dates.reserveCapacity(segmentCount * divisions + 1)
+
+        for index in 0..<(anchors.count - 1) {
+            let start = anchors[index]
+            let end = anchors[index + 1]
+            let duration = end.timeIntervalSince(start)
+            if index == 0 {
+                dates.append(start)
+            }
+            guard duration > 0 else { continue }
+            for step in 1...divisions {
+                dates.append(start.addingTimeInterval(duration * Double(step) / Double(divisions)))
+            }
         }
 
-        var maximum = 0.0
-        for index in 0...max(sampleCount, 1) {
-            let ratio = Double(index) / Double(max(sampleCount, 1))
-            let date = interval.start.addingTimeInterval(interval.duration * ratio)
-            maximum = max(maximum, energy(at: date, in: visibleComponents))
-        }
-
-        return max(maximum, maxPeakHeight, 0.000_000_001)
-    }
-
-    func energyRange(in interval: DateInterval, sampleCount: Int = 384) -> Double {
-        let visibleComponents = components.filter { interval.intersects($0.periodInterval) }
-        guard !visibleComponents.isEmpty, interval.duration > 0 else { return 0 }
-
-        var minimum = Double.greatestFiniteMagnitude
-        var maximum = 0.0
-        for index in 0...max(sampleCount, 1) {
-            let ratio = Double(index) / Double(max(sampleCount, 1))
-            let date = interval.start.addingTimeInterval(interval.duration * ratio)
-            let energy = energy(at: date, in: visibleComponents)
-            minimum = min(minimum, energy)
-            maximum = max(maximum, energy)
-        }
-
-        guard minimum.isFinite else { return 0 }
-        return max(maximum - minimum, 0)
-    }
-
-    private func energy(
-        at date: Date,
-        in candidateComponents: [JournalEventWaveComponent]
-    ) -> Double {
-        candidateComponents.reduce(0) { total, component in
-            guard component.contains(date) else { return total }
-            return total + component.energy(at: date)
-        }
+        return dates
     }
 }
 
@@ -742,6 +941,15 @@ enum JournalEventWaveform {
     static let defaultDisplayDuration: TimeInterval = 43_200
 
     private static let baseAmplitudeMultiplier = 2.5
+
+    private struct SpikeCluster {
+        let primary: JournalSpikeReference
+        let contributors: [JournalSpikeReference]
+
+        var date: Date {
+            primary.date
+        }
+    }
 
     static func displayInterval(
         centeredOn date: Date,
@@ -755,9 +963,11 @@ enum JournalEventWaveform {
 
     static func visibleSpikes(
         in interval: DateInterval,
-        spikes: [JournalSpikeReference]
+        spikes: [JournalSpikeReference],
+        options: JournalWaveformOptions = .current
     ) -> [JournalSpikeReference] {
         spikes
+            .filter { !options.ignorePartialEclipses || !$0.isPartialEclipse }
             .filter { interval.contains($0.date) }
             .sorted {
                 if $0.date != $1.date {
@@ -767,18 +977,19 @@ enum JournalEventWaveform {
             }
     }
 
-    static func field(spikes: [JournalSpikeReference]) -> JournalEventWaveField {
-        let sortedSpikes = spikes.sorted { lhs, rhs in
-            if lhs.date != rhs.date {
-                return lhs.date < rhs.date
-            }
-            return lhs.rarity > rhs.rarity
-        }
+    static func field(
+        spikes: [JournalSpikeReference],
+        model: JournalWaveformModel = JournalWaveformModel.current,
+        parabolaA: Double = JournalWaveformSettings.currentParabolaA,
+        options: JournalWaveformOptions = .current
+    ) -> JournalEventWaveField {
+        let clusters = preprocessedClusters(spikes: spikes, options: options)
 
-        let components = sortedSpikes.indices.compactMap { index -> JournalEventWaveComponent? in
-            let spike = sortedSpikes[index]
-            let previous = previousDistinctSpike(in: sortedSpikes, before: index)
-            let next = nextDistinctSpike(in: sortedSpikes, after: index)
+        let components = clusters.indices.compactMap { index -> JournalEventWaveComponent? in
+            let cluster = clusters[index]
+            let spike = cluster.primary
+            let previous = previousDistinctCluster(in: clusters, before: index)?.primary
+            let next = nextDistinctCluster(in: clusters, after: index)?.primary
             let leftGap = max(
                 previous.map { spike.date.timeIntervalSince($0.date) }
                     ?? next.map { $0.date.timeIntervalSince(spike.date) }
@@ -796,37 +1007,109 @@ enum JournalEventWaveform {
                 ?? spike.date.addingTimeInterval(rightGap / 2)
 
             return component(
-                spike: spike,
+                cluster: cluster,
                 previous: previous,
                 next: next,
                 leftBoundary: leftBoundary,
                 rightBoundary: rightBoundary,
-                index: index
+                index: index,
+                model: model,
+                parabolaA: parabolaA,
+                options: options
             )
         }
 
-        return JournalEventWaveField(components: components)
+        return JournalEventWaveField(
+            components: components,
+            subdivisionDepth: options.subdivisionDepth
+        )
     }
 
-    static func peakHeight(for spike: JournalSpikeReference) -> Double {
-        basePeakHeight(for: spike.rarity)
+    private static func preprocessedClusters(
+        spikes: [JournalSpikeReference],
+        options: JournalWaveformOptions
+    ) -> [SpikeCluster] {
+        let sortedSpikes = spikes
+            .filter { !options.ignorePartialEclipses || !$0.isPartialEclipse }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date {
+                    return lhs.date < rhs.date
+                }
+                if lhs.rarity != rhs.rarity {
+                    return lhs.rarity > rhs.rarity
+                }
+                return lhs.saros < rhs.saros
+            }
+
+        guard options.mergeCloseSpikes else {
+            return sortedSpikes.map { SpikeCluster(primary: $0, contributors: [$0]) }
+        }
+
+        var clusters: [SpikeCluster] = []
+        var current: [JournalSpikeReference] = []
+
+        for spike in sortedSpikes {
+            if let last = current.last,
+               spike.date.timeIntervalSince(last.date) > options.mergeThreshold
+            {
+                clusters.append(makeCluster(from: current))
+                current = []
+            }
+            current.append(spike)
+        }
+
+        if !current.isEmpty {
+            clusters.append(makeCluster(from: current))
+        }
+
+        return clusters.sorted {
+            if $0.date != $1.date {
+                return $0.date < $1.date
+            }
+            return $0.primary.rarity > $1.primary.rarity
+        }
+    }
+
+    private static func makeCluster(from spikes: [JournalSpikeReference]) -> SpikeCluster {
+        let primary = spikes.max {
+            if $0.rarity != $1.rarity {
+                return $0.rarity < $1.rarity
+            }
+            if $0.magnitude ?? 0 != $1.magnitude ?? 0 {
+                return ($0.magnitude ?? 0) < ($1.magnitude ?? 0)
+            }
+            return $0.date > $1.date
+        } ?? spikes[0]
+        return SpikeCluster(primary: primary, contributors: spikes)
+    }
+
+    static func peakHeight(
+        for spike: JournalSpikeReference,
+        normalizedAmplitude: Bool = JournalWaveformOptions.current.normalizedAmplitude
+    ) -> Double {
+        (normalizedAmplitude ? 1 : basePeakHeight(for: spike.rarity))
             * baseAmplitudeMultiplier
             * magnitudeAmplitudeMultiplier(for: spike.magnitude)
     }
 
     private static func component(
-        spike: JournalSpikeReference,
+        cluster: SpikeCluster,
         previous: JournalSpikeReference?,
         next: JournalSpikeReference?,
         leftBoundary: Date,
         rightBoundary: Date,
-        index: Int
+        index: Int,
+        model: JournalWaveformModel,
+        parabolaA: Double,
+        options: JournalWaveformOptions
     ) -> JournalEventWaveComponent? {
+        let spike = cluster.primary
         guard rightBoundary.timeIntervalSince(leftBoundary) > 1 else { return nil }
 
         return JournalEventWaveComponent(
-            id: "\(spike.id)-field-\(index)",
+            id: "\(spike.id)-field-\(model.id)-\(index)",
             sourceSpikeID: spike.id,
+            contributorSpikes: cluster.contributors,
             period: JournalEventWavePeriod(
                 spike: spike,
                 previousSpike: previous,
@@ -834,9 +1117,39 @@ enum JournalEventWaveform {
                 leftBoundary: leftBoundary,
                 rightBoundary: rightBoundary
             ),
-            peakHeight: peakHeight(for: spike),
-            gaussianExtent: gaussianExtent(forGamma: spike.gamma)
+            peakHeight: cluster.contributors
+                .map { peakHeight(for: $0, normalizedAmplitude: options.normalizedAmplitude) }
+                .reduce(0, +),
+            gaussianExtent: gaussianExtent(forGamma: spike.gamma),
+            waveformModel: model,
+            parabolaA: parabolaA,
+            parabolaAscentAccelerates: parabolaAscentAccelerates(spike: spike, fallbackSeed: spike.saros + index),
+            parabolaDescentAccelerates: parabolaDescentAccelerates(spike: spike, fallbackSeed: spike.saros + index)
         )
+    }
+
+    private static func parabolaAscentAccelerates(
+        spike: JournalSpikeReference,
+        fallbackSeed: Int
+    ) -> Bool {
+        if let seriesProgressesSouthToNorth = spike.seriesProgressesSouthToNorth {
+            return seriesProgressesSouthToNorth
+        }
+
+        guard let gamma = spike.gamma, gamma.isFinite, gamma != 0 else {
+            return fallbackSeed.isMultiple(of: 2)
+        }
+        return gamma > 0
+    }
+
+    private static func parabolaDescentAccelerates(
+        spike: JournalSpikeReference,
+        fallbackSeed: Int
+    ) -> Bool {
+        if let isPastSeriesMidpoint = spike.isPastSeriesMidpoint {
+            return isPastSeriesMidpoint
+        }
+        return !fallbackSeed.isMultiple(of: 2)
     }
 
     private static func basePeakHeight(for rarity: FlipRarity) -> Double {
@@ -880,6 +1193,23 @@ enum JournalEventWaveform {
         return nil
     }
 
+    private static func previousDistinctCluster(
+        in clusters: [SpikeCluster],
+        before index: Int
+    ) -> SpikeCluster? {
+        guard index > clusters.startIndex else { return nil }
+        var cursor = index - 1
+
+        while cursor >= clusters.startIndex {
+            if clusters[cursor].date != clusters[index].date {
+                return clusters[cursor]
+            }
+            cursor -= 1
+        }
+
+        return nil
+    }
+
     private static func nextDistinctSpike(
         in spikes: [JournalSpikeReference],
         after index: Int
@@ -889,6 +1219,22 @@ enum JournalEventWaveform {
         while cursor < spikes.endIndex {
             if spikes[cursor].date != spikes[index].date {
                 return spikes[cursor]
+            }
+            cursor += 1
+        }
+
+        return nil
+    }
+
+    private static func nextDistinctCluster(
+        in clusters: [SpikeCluster],
+        after index: Int
+    ) -> SpikeCluster? {
+        var cursor = index + 1
+
+        while cursor < clusters.endIndex {
+            if clusters[cursor].date != clusters[index].date {
+                return clusters[cursor]
             }
             cursor += 1
         }

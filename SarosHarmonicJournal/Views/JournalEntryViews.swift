@@ -58,7 +58,7 @@ struct JournalEntryRow: View {
                             displayDepth: displayDepth,
                             size: 38
                         )
-                        JournalPulseGlyphForDate(date: entry.eventDate, size: 24)
+                        JournalPulseGlyphForDate(date: entry.eventDate, size: 30)
                     }
                 }
 
@@ -102,7 +102,7 @@ struct JournalEntryRow: View {
                         .foregroundStyle(.secondary)
                     if let moonReading {
                         MoonPhaseGlyph(reading: moonReading)
-                            .frame(width: 24, height: 24)
+                            .frame(width: 30, height: 30)
                     }
                     if let remoteDeviceEmoji {
                         Text(remoteDeviceEmoji)
@@ -220,10 +220,10 @@ struct JournalEntryDetailView: View {
                             )
                             if let moonReading {
                                 MoonPhaseGlyph(reading: moonReading)
-                                    .frame(width: 28, height: 28)
+                                    .frame(width: 34, height: 34)
                             }
                             if let pulseReading {
-                                SarosPulseGlyph(reading: pulseReading, size: 24)
+                                SarosPulseGlyph(reading: pulseReading, size: 32)
                             }
                             if let remoteDeviceEmoji {
                                 Text(remoteDeviceEmoji)
@@ -365,7 +365,7 @@ struct JournalEntryDetailView: View {
                         Text("Pulse")
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 12)
-                        SarosPulseGlyph(reading: pulseReading, size: 28)
+                        SarosPulseGlyph(reading: pulseReading, size: 36)
                     }
                 }
                 if let sourceDeviceEmoji = entry.sourceDeviceEmoji?.nilIfBlank {
@@ -1178,7 +1178,6 @@ private struct JournalEntryEditView: View {
 
     @State private var draft: JournalEntryEditDraft
     @State private var isTagPickerPresented = false
-    @State private var errorMessage: String?
 
     init(
         entry: JournalEntry,
@@ -1259,11 +1258,6 @@ private struct JournalEntryEditView: View {
                 )
             }
         }
-        .alert("Sync failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
     }
 
     @MainActor
@@ -1278,7 +1272,7 @@ private struct JournalEntryEditView: View {
                 commands: syncCommands
             )
         } catch {
-            errorMessage = error.localizedDescription
+            // Relay refresh is best-effort; editing must keep working offline.
         }
     }
 
@@ -1813,7 +1807,7 @@ struct TagsView: View {
                 commands: syncCommands
             )
         } catch {
-            errorMessage = error.localizedDescription
+            // Relay refresh is best-effort; tag management must keep working offline.
         }
     }
 
@@ -2380,110 +2374,191 @@ private struct JournalEntrySpikeRow: View {
 
 private struct JournalEntryWaveformView: View {
     @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.waveformModelKey) private var waveformModelRawValue = JournalWaveformModel.gaussian.rawValue
+    @AppStorage(JournalSettings.waveformParabolaAKey) private var waveformParabolaA = JournalWaveformSettings.defaultParabolaA
+    @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
+    @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
+    @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
 
     let context: JournalEventContext
 
     @State private var plot = JournalEntryWaveformPlot.empty
+    @State private var lunarTicks: [LunarRulerTick] = []
 
     var body: some View {
-        Canvas { graphics, size in
-            let rect = CGRect(origin: .zero, size: size)
-            let background = RoundedRectangle(cornerRadius: 8).path(in: rect)
-            graphics.fill(background, with: .color(Color(.secondarySystemBackground)))
-            graphics.stroke(background, with: .color(.secondary.opacity(0.2)), lineWidth: 1)
+        ZStack {
+            Canvas { graphics, size in
+                let rect = CGRect(origin: .zero, size: size)
+                let background = RoundedRectangle(cornerRadius: 8).path(in: rect)
+                graphics.fill(background, with: .color(Color(.secondarySystemBackground)))
+                graphics.stroke(background, with: .color(.secondary.opacity(0.2)), lineWidth: 1)
 
-            let interval = plot.interval
-            let samples = plot.samples
-            guard !samples.isEmpty else { return }
+                let interval = plot.interval
+                let samples = plot.samples
+                guard !samples.isEmpty else { return }
 
-            let maxEnergy = plot.maxEnergy
-            let insets = EdgeInsets(top: 14, leading: 14, bottom: 24, trailing: 14)
-            let width = max(size.width - insets.leading - insets.trailing, 1)
-            let height = max(size.height - insets.top - insets.bottom, 1)
+                let maxEnergy = plot.maxEnergy
+                let lunarBottomY = JournalEntryWaveform.lunarRulerTopInset
+                    + JournalEntryWaveform.lunarRulerRowSpacing * 2
+                    + LunarRulerTickLevel.major.height
+                let insets = EdgeInsets(top: lunarBottomY, leading: 14, bottom: 24, trailing: 14)
+                let width = max(size.width - insets.leading - insets.trailing, 1)
+                let height = max(size.height - insets.top - insets.bottom, 1)
 
-            var path = Path()
-            for sample in samples {
-                let x = insets.leading + CGFloat(sample.date.timeIntervalSince(interval.start) / interval.duration) * width
-                let y = insets.top + (1 - CGFloat(sample.energy / maxEnergy)) * height
-                if sample == samples.first {
-                    path.move(to: CGPoint(x: x, y: y))
-                } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
+                var path = Path()
+                for sample in samples {
+                    let x = insets.leading + CGFloat(sample.date.timeIntervalSince(interval.start) / interval.duration) * width
+                    let y = insets.top + (1 - CGFloat(sample.energy / maxEnergy)) * height
+                    if sample == samples.first {
+                        path.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
                 }
-            }
-            graphics.stroke(path, with: .color(.white.opacity(0.9)), lineWidth: 1.6)
+                graphics.stroke(path, with: .color(.white.opacity(0.9)), lineWidth: 1.6)
 
-            var placedDots: [CGPoint] = []
-            for spike in plot.visibleSpikes {
-                let baseX = insets.leading + CGFloat(spike.date.timeIntervalSince(interval.start) / interval.duration) * width
-                var x = baseX
-                let spikeEnergy = plot.energyBySpikeID[spike.id] ?? 0
-                let dotSize = JournalEntryWaveform.dotSize(for: spike.rarity)
-                let baseY = insets.top + (1 - CGFloat(spikeEnergy / maxEnergy)) * height
-                var dotY = baseY
-                var collisionLevel = 0
-                let dotStep = dotSize + 5
-                let maxUpLevels = max(Int((baseY - insets.top - dotSize / 2) / dotStep), 0)
-
-                while placedDots.contains(where: { abs($0.x - x) < dotSize + 4 && abs($0.y - dotY) < dotSize + 4 }),
-                      collisionLevel < 24
-                {
-                    collisionLevel += 1
-                    let upLevel = min(collisionLevel, maxUpLevels)
-                    let overflowLevel = max(collisionLevel - maxUpLevels, 0)
-                    dotY = max(insets.top + dotSize / 2, baseY - CGFloat(upLevel) * dotStep)
-                    x = min(
-                        size.width - insets.trailing - dotSize / 2,
-                        baseX + CGFloat(overflowLevel) * (dotSize + 5)
+                for midpoint in plot.midpointDates {
+                    let x = insets.leading + CGFloat(midpoint.timeIntervalSince(interval.start) / interval.duration) * width
+                    var line = Path()
+                    line.move(to: CGPoint(x: x, y: lunarBottomY))
+                    line.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                    graphics.stroke(
+                        line,
+                        with: .color(.gray.opacity(0.5)),
+                        style: StrokeStyle(lineWidth: 1, dash: [3, 4])
                     )
                 }
-                placedDots.append(CGPoint(x: x, y: dotY))
 
-                var line = Path()
-                line.move(to: CGPoint(x: x, y: insets.top))
-                line.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
-                graphics.stroke(line, with: .color(spike.rarity.color.opacity(0.42)), lineWidth: 1)
-                let dotRect = CGRect(
-                    x: x - dotSize / 2,
-                    y: dotY - dotSize / 2,
-                    width: dotSize,
-                    height: dotSize
-                )
-                let dot = Path(ellipseIn: dotRect)
-                graphics.fill(dot, with: .color(spike.rarity.color))
-                graphics.stroke(dot, with: .color(.black.opacity(0.38)), lineWidth: 0.8)
+                var placedDots: [CGPoint] = []
+                for group in plot.visibleSpikeGroups {
+                    let spike = group.primary
+                    let baseX = insets.leading + CGFloat(spike.date.timeIntervalSince(interval.start) / interval.duration) * width
+                    var x = baseX
+                    let spikeEnergy = plot.energyBySpikeID[spike.id] ?? 0
+                    let dotSize = JournalEntryWaveform.dotSize(for: spike.rarity)
+                    let baseY = insets.top + (1 - CGFloat(spikeEnergy / maxEnergy)) * height
+                    var dotY = baseY
+                    var collisionLevel = 0
+                    let dotStep = dotSize + 5
+                    let maxUpLevels = max(Int((baseY - insets.top - dotSize / 2) / dotStep), 0)
+
+                    while placedDots.contains(where: { abs($0.x - x) < dotSize + 4 && abs($0.y - dotY) < dotSize + 4 }),
+                          collisionLevel < 24
+                    {
+                        collisionLevel += 1
+                        let upLevel = min(collisionLevel, maxUpLevels)
+                        let overflowLevel = max(collisionLevel - maxUpLevels, 0)
+                        dotY = max(insets.top + dotSize / 2, baseY - CGFloat(upLevel) * dotStep)
+                        x = min(
+                            size.width - insets.trailing - dotSize / 2,
+                            baseX + CGFloat(overflowLevel) * (dotSize + 5)
+                        )
+                    }
+                    placedDots.append(CGPoint(x: x, y: dotY))
+
+                    var line = Path()
+                    line.move(to: CGPoint(x: x, y: lunarBottomY))
+                    line.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                    graphics.stroke(line, with: .color(spike.rarity.color.opacity(0.42)), lineWidth: 1)
+
+                    let contributors = group.contributors.isEmpty ? [spike] : group.contributors
+                    let dotGap = dotSize + 3
+                    let startOffset = -CGFloat(contributors.count - 1) * dotGap / 2
+                    for (index, contributor) in contributors.enumerated() {
+                        let y = dotY + startOffset + CGFloat(index) * dotGap
+                        let dotRect = CGRect(
+                            x: x - dotSize / 2,
+                            y: y - dotSize / 2,
+                            width: dotSize,
+                            height: dotSize
+                        )
+                        let dot = Path(ellipseIn: dotRect)
+                        graphics.fill(dot, with: .color(contributor.rarity.color))
+                        graphics.stroke(dot, with: .color(.black.opacity(0.38)), lineWidth: 0.8)
+                    }
+                }
+
+                let eventX = insets.leading + CGFloat(context.eventDate.timeIntervalSince(interval.start) / interval.duration) * width
+                let eventY = insets.top + (1 - CGFloat(plot.eventEnergy / maxEnergy)) * height
+                var marker = Path()
+                marker.move(to: CGPoint(x: eventX, y: insets.top))
+                marker.addLine(to: CGPoint(x: eventX, y: size.height - insets.bottom))
+                graphics.stroke(marker, with: .color(.green.opacity(0.85)), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                graphics.fill(Path(ellipseIn: CGRect(x: eventX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
             }
-
-            let eventX = insets.leading + CGFloat(context.eventDate.timeIntervalSince(interval.start) / interval.duration) * width
-            let eventY = insets.top + (1 - CGFloat(plot.eventEnergy / maxEnergy)) * height
-            var marker = Path()
-            marker.move(to: CGPoint(x: eventX, y: insets.top))
-            marker.addLine(to: CGPoint(x: eventX, y: size.height - insets.bottom))
-            graphics.stroke(marker, with: .color(.green.opacity(0.85)), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-            graphics.fill(Path(ellipseIn: CGRect(x: eventX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
+            LunarRulerCanvas(
+                ticks: lunarTicks,
+                displayInterval: plot.interval,
+                topInset: JournalEntryWaveform.lunarRulerTopInset,
+                rowSpacing: JournalEntryWaveform.lunarRulerRowSpacing,
+                labelOffset: 15
+            )
         }
         .accessibilityLabel("Journal waveform")
-        .task(id: context.waveformCacheKey) {
+        .task(id: waveformTaskID) {
             let context = context
             let contextService = services.sarosEventContextService
-            let generated = await Task.detached(priority: .userInitiated) { () -> JournalEntryWaveformPlot in
+            let moonService = services.moonPhaseService
+            let waveformModel = JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
+            let parabolaA = min(
+                max(waveformParabolaA, JournalWaveformSettings.parabolaARange.lowerBound),
+                JournalWaveformSettings.parabolaARange.upperBound
+            )
+            let options = JournalWaveformOptions(
+                ignorePartialEclipses: false,
+                mergeCloseSpikes: waveformMergeCloseSpikes,
+                normalizedAmplitude: waveformNormalizedAmplitude,
+                subdivisionDepth: clampedSubdivisionDepth,
+                mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+            )
+            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick]) in
                 let spikes = (
                     try? contextService.waveformSpikes(
                         around: context.eventDate,
-                        harmonicDepth: context.waveformHarmonicDepth
+                        harmonicDepth: context.waveformHarmonicDepth,
+                        displayDuration: JournalEntryWaveform.displayDuration,
+                        paddingDuration: JournalEntryWaveform.displayDuration
                     )
                 ) ?? context.spikes
-                return JournalEntryWaveformPlot.make(for: context, spikes: spikes)
+                let plot = JournalEntryWaveformPlot.make(
+                    for: context,
+                    spikes: spikes,
+                    model: waveformModel,
+                    parabolaA: parabolaA,
+                    options: options
+                )
+                let lunarTicks = LunarRulerTickBuilder.ticks(in: plot.interval, moonService: moonService)
+                return (plot, lunarTicks)
             }.value
-            plot = generated
+            plot = generated.0
+            lunarTicks = generated.1
         }
+    }
+
+    private var waveformTaskID: String {
+        [
+            context.waveformCacheKey,
+            waveformModelRawValue,
+            "\(Int((waveformParabolaA * 100).rounded()))",
+            waveformMergeCloseSpikes ? "merged" : "raw",
+            waveformNormalizedAmplitude ? "norm" : "weighted",
+            "\(clampedSubdivisionDepth)"
+        ].joined(separator: "-")
+    }
+
+    private var clampedSubdivisionDepth: Int {
+        min(
+            max(waveformSubdivisionDepth, JournalWaveformSettings.subdivisionDepthRange.lowerBound),
+            JournalWaveformSettings.subdivisionDepthRange.upperBound
+        )
     }
 }
 
 private struct JournalEntryWaveformPlot {
     let interval: DateInterval
     let samples: [JournalEventWaveSample]
-    let visibleSpikes: [JournalSpikeReference]
+    let visibleSpikeGroups: [JournalEntryWaveformSpikeGroup]
+    let midpointDates: [Date]
     let energyBySpikeID: [String: Double]
     let eventEnergy: Double
     let maxEnergy: Double
@@ -2491,7 +2566,8 @@ private struct JournalEntryWaveformPlot {
     static let empty = JournalEntryWaveformPlot(
         interval: DateInterval(start: Date(), duration: 86_400),
         samples: [],
-        visibleSpikes: [],
+        visibleSpikeGroups: [],
+        midpointDates: [],
         energyBySpikeID: [:],
         eventEnergy: 0,
         maxEnergy: 1
@@ -2499,35 +2575,66 @@ private struct JournalEntryWaveformPlot {
 
     static func make(
         for context: JournalEventContext,
-        spikes: [JournalSpikeReference]
+        spikes: [JournalSpikeReference],
+        model: JournalWaveformModel = JournalWaveformModel.current,
+        parabolaA: Double = JournalWaveformSettings.currentParabolaA,
+        options: JournalWaveformOptions = .current
     ) -> JournalEntryWaveformPlot {
-        let interval = JournalEventWaveform.displayInterval(centeredOn: context.eventDate)
+        let interval = JournalEventWaveform.displayInterval(
+            centeredOn: context.eventDate,
+            duration: JournalEntryWaveform.displayDuration
+        )
         let sortedSpikes = spikes.sorted { $0.date < $1.date }
-        let field = JournalEventWaveform.field(spikes: sortedSpikes)
+        let field = JournalEventWaveform.field(
+            spikes: sortedSpikes,
+            model: model,
+            parabolaA: parabolaA,
+            options: options
+        )
         let waveSamples = field.samples(
             in: interval,
             sampleCount: 1_024,
             spikes: sortedSpikes
         )
-        let visibleSpikes = JournalEventWaveform.visibleSpikes(
-            in: interval,
-            spikes: sortedSpikes
-        )
+        let visibleSpikeGroups = field.components
+            .filter { interval.contains($0.spike.date) }
+            .sorted {
+                if $0.spike.date != $1.spike.date {
+                    return $0.spike.date < $1.spike.date
+                }
+                return $0.spike.rarity > $1.spike.rarity
+            }
+            .map {
+                JournalEntryWaveformSpikeGroup(
+                    primary: $0.spike,
+                    contributors: $0.contributorSpikes
+                )
+            }
         let eventEnergy = field.energy(at: context.eventDate)
         let localMaxEnergy = waveSamples.points.map(\.energy).max() ?? eventEnergy
-        let visibleSpikeMaxEnergy = visibleSpikes
-            .compactMap { waveSamples.eventEnergyByID[$0.id] }
+        let visibleSpikeMaxEnergy = visibleSpikeGroups
+            .compactMap { waveSamples.eventEnergyByID[$0.primary.id] }
             .max() ?? 0
+        let midpointDates = field.components
+            .flatMap { [$0.period.leftBoundary, $0.period.rightBoundary] }
+            .filter { interval.contains($0) }
+            .sorted()
         let maxEnergy = max(localMaxEnergy, visibleSpikeMaxEnergy, eventEnergy, 0.000_001)
         return JournalEntryWaveformPlot(
             interval: interval,
             samples: waveSamples.points,
-            visibleSpikes: visibleSpikes,
+            visibleSpikeGroups: visibleSpikeGroups,
+            midpointDates: midpointDates,
             energyBySpikeID: waveSamples.eventEnergyByID,
             eventEnergy: eventEnergy,
             maxEnergy: maxEnergy
         )
     }
+}
+
+private struct JournalEntryWaveformSpikeGroup {
+    let primary: JournalSpikeReference
+    let contributors: [JournalSpikeReference]
 }
 
 private extension JournalEventContext {
@@ -2586,6 +2693,10 @@ private struct JournalDirectionMetadataRow: View {
 }
 
 private enum JournalEntryWaveform {
+    static let displayDuration: TimeInterval = 86_400 + 20 * 3_600 + 5 * 60
+    static let lunarRulerTopInset: CGFloat = 10
+    static let lunarRulerRowSpacing: CGFloat = 15
+
     static func dotSize(for rarity: FlipRarity) -> CGFloat {
         switch rarity.baseRarity {
         case .mythic: 9

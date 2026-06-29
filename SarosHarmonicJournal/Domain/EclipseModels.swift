@@ -42,6 +42,10 @@ enum EclipseType: String, Codable, CaseIterable {
         case .unknown: "?"
         }
     }
+
+    var isPartialSolar: Bool {
+        self == .partialSolar
+    }
 }
 
 struct Eclipse: Identifiable, Codable, Hashable {

@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(JournalSettings.deviceIDKey) private var deviceID = ""
     @AppStorage(JournalSettings.deviceNameKey) private var deviceName = ""
     @AppStorage(JournalSettings.deviceEmojiKey) private var deviceEmoji = ""
+    @AppStorage(JournalSettings.lastSyncAtKey) private var lastSyncAt = 0.0
     @State private var diagnosticMessage = ""
     @State private var syncMessage = ""
     @State private var errorMessage: String?
@@ -39,6 +40,12 @@ struct SettingsView: View {
                     RarityPeriodsSettingsView()
                 } label: {
                     Label("Periods", systemImage: "clock.arrow.circlepath")
+                }
+
+                NavigationLink {
+                    WaveformSettingsView()
+                } label: {
+                    Label("Waveform", systemImage: "waveform.path.ecg")
                 }
 
                 NavigationLink {
@@ -80,6 +87,7 @@ struct SettingsView: View {
                     Task {
                         await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                             eclipseService: services.eclipseService,
+                            moonPhaseService: services.moonPhaseService,
                             harmonicDepth: harmonicDepth
                         )
                         diagnosticMessage = "Notification schedule refreshed."
@@ -144,6 +152,10 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                Text(lastSyncText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Data") {
@@ -166,6 +178,7 @@ struct SettingsView: View {
             Task {
                 await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                     eclipseService: services.eclipseService,
+                    moonPhaseService: services.moonPhaseService,
                     harmonicDepth: newDepth
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
@@ -197,7 +210,7 @@ struct SettingsView: View {
                 syncMessage = "Server OK. No records have been uploaded yet."
             }
         } catch {
-            errorMessage = error.localizedDescription
+            syncMessage = "Offline. Sync will retry when the relay is reachable."
         }
     }
 
@@ -216,8 +229,16 @@ struct SettingsView: View {
             )
             syncMessage = "Relayed \(summary.uploadedRecordCount + summary.restoredRecordCount) record commands, \(summary.restoredEntityCount) tag commands, \(summary.uploadedMediaCount + summary.restoredMediaCount) media files."
         } catch {
-            errorMessage = error.localizedDescription
+            syncMessage = "Offline. Local changes are safe on this device."
         }
+    }
+
+    private var lastSyncText: String {
+        guard lastSyncAt > 0 else {
+            return "Last sync: never"
+        }
+        let elapsed = max(Date().timeIntervalSince1970 - lastSyncAt, 0)
+        return "Last sync: \(elapsed.compactDuration) ago"
     }
 
     private func scheduleDeviceProfileUpdate() {
@@ -235,12 +256,16 @@ struct SettingsView: View {
         defer { isStartingLiveTracking = false }
 
         let contextService = services.sarosEventContextService
+        let eclipseService = services.eclipseService
+        let moonPhaseService = services.moonPhaseService
         let depth = harmonicDepth
 
         do {
             let snapshot = try await Task.detached(priority: .userInitiated) {
                 try ThreadLiveActivityService.journalSnapshot(
                     contextService: contextService,
+                    eclipseService: eclipseService,
+                    moonService: moonPhaseService,
                     date: Date(),
                     harmonicDepth: depth
                 )
@@ -252,6 +277,91 @@ struct SettingsView: View {
         }
     }
 
+}
+
+private struct WaveformSettingsView: View {
+    @AppStorage(JournalSettings.waveformModelKey) private var waveformModelRawValue = JournalWaveformModel.gaussian.rawValue
+    @AppStorage(JournalSettings.waveformParabolaAKey) private var parabolaA = JournalWaveformSettings.defaultParabolaA
+    @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var mergeCloseSpikes = false
+    @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var normalizedAmplitude = false
+    @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var subdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
+
+    private var selectedModel: JournalWaveformModel {
+        JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Model", selection: $waveformModelRawValue) {
+                    ForEach(JournalWaveformModel.allCases) { model in
+                        Text(model.title).tag(model.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(selectedModel.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Parabola") {
+                HStack {
+                    Text("A")
+                    Slider(
+                        value: $parabolaA,
+                        in: JournalWaveformSettings.parabolaARange,
+                        step: 0.1
+                    )
+                    Text(parabolaA.formatted(.number.precision(.fractionLength(1))))
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("Higher A values make the peak narrower and move more acceleration toward the selected side of each half-wave.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Spikes") {
+                Toggle("Merge close spikes", isOn: $mergeCloseSpikes)
+                Toggle("Normalized amplitude", isOn: $normalizedAmplitude)
+
+                Stepper(
+                    "Subdivision depth \(clampedSubdivisionDepth)",
+                    value: $subdivisionDepth,
+                    in: JournalWaveformSettings.subdivisionDepthRange
+                )
+
+                Text("Merged spikes use a 1 kilosaros window (36m 10s). Sampling always includes spike and midpoint anchors, then subdivides each segment.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Behavior") {
+                MetadataRow(title: "Current model", value: selectedModel.title)
+                MetadataRow(title: "Energy", value: energyDescription)
+                MetadataRow(title: "Momentum", value: selectedModel == .saw ? "Segment slope" : "Sampled slope")
+            }
+        }
+        .navigationTitle("Waveform")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var energyDescription: String {
+        switch selectedModel {
+        case .gaussian: "Gaussian mixture"
+        case .saw: "Linear interpolation"
+        case .parabola: "Parabolic halves"
+        }
+    }
+
+    private var clampedSubdivisionDepth: Int {
+        min(
+            max(subdivisionDepth, JournalWaveformSettings.subdivisionDepthRange.lowerBound),
+            JournalWaveformSettings.subdivisionDepthRange.upperBound
+        )
+    }
 }
 
 private struct PulseSettingsView: View {

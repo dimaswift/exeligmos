@@ -14,6 +14,7 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let momentum: Double?
     let waveDirectionRawValue: String?
     let waveformSamples: [Double]?
+    let waveformSamplePositions: [Double]?
     let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
     let waveformStartDate: Date?
     let waveformEndDate: Date?
@@ -34,6 +35,15 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let nextRarityColorHex: String?
     let nextRaritySecondaryColorHex: String?
     let nextFlipDate: Date?
+    let pulseSaros: Int?
+    let pulseCycleStartDate: Date?
+    let pulseCycleEndDate: Date?
+    let moonSynodicStartDate: Date?
+    let moonSynodicEndDate: Date?
+    let moonAnomalisticStartDate: Date?
+    let moonAnomalisticEndDate: Date?
+    let moonDraconicStartDate: Date?
+    let moonDraconicEndDate: Date?
 
     var deepLinkURL: URL? {
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
@@ -93,6 +103,7 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let momentum: Double?
         let waveDirectionRawValue: String?
         let waveformSamples: [Double]?
+        let waveformSamplePositions: [Double]?
         let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
         let waveformStartDate: Date?
         let waveformEndDate: Date?
@@ -113,6 +124,15 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let nextRarityColorHex: String?
         let nextRaritySecondaryColorHex: String?
         let nextFlipDate: Date?
+        let pulseSaros: Int?
+        let pulseCycleStartDate: Date?
+        let pulseCycleEndDate: Date?
+        let moonSynodicStartDate: Date?
+        let moonSynodicEndDate: Date?
+        let moonAnomalisticStartDate: Date?
+        let moonAnomalisticEndDate: Date?
+        let moonDraconicStartDate: Date?
+        let moonDraconicEndDate: Date?
     }
 
     let threadID: String

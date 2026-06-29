@@ -48,6 +48,7 @@ enum ThreadLiveActivityService {
             momentum: nil,
             waveDirectionRawValue: nil,
             waveformSamples: nil,
+            waveformSamplePositions: nil,
             waveformSpikeMarkers: nil,
             waveformStartDate: nil,
             waveformEndDate: nil,
@@ -67,12 +68,23 @@ enum ThreadLiveActivityService {
             nextRaritySymbolName: nextPayload?.rarity.symbolName,
             nextRarityColorHex: nextPayload.map { trackingPrimaryColorHex(for: $0.rarity) },
             nextRaritySecondaryColorHex: nextPayload.map { trackingSecondaryColorHex(for: $0.rarity) },
-            nextFlipDate: nextPayload?.flipDate
+            nextFlipDate: nextPayload?.flipDate,
+            pulseSaros: nil,
+            pulseCycleStartDate: nil,
+            pulseCycleEndDate: nil,
+            moonSynodicStartDate: nil,
+            moonSynodicEndDate: nil,
+            moonAnomalisticStartDate: nil,
+            moonAnomalisticEndDate: nil,
+            moonDraconicStartDate: nil,
+            moonDraconicEndDate: nil
         )
     }
 
     static func journalSnapshot(
         contextService: SarosEventContextService,
+        eclipseService: any EclipseService,
+        moonService: any MoonPhaseService,
         date: Date = Date(),
         harmonicDepth rawHarmonicDepth: Int
     ) throws -> ThreadTrackingSnapshot {
@@ -96,6 +108,11 @@ enum ThreadLiveActivityService {
             ?? upcomingSpike?.octalAddress
             ?? String(repeating: "0", count: harmonicDepth)
         let metrics = journalMetrics(at: date, spikes: waveformSpikes)
+        let pulseBounds = livePulseBounds(
+            at: date,
+            eclipseService: eclipseService
+        )
+        let moonBounds = liveMoonBounds(at: date, moonService: moonService)
 
         return ThreadTrackingSnapshot(
             threadID: ThreadTrackingSharedStore.journalTrackingID,
@@ -107,6 +124,7 @@ enum ThreadLiveActivityService {
             momentum: metrics.momentum,
             waveDirectionRawValue: metrics.waveDirectionRawValue,
             waveformSamples: metrics.waveformSamples,
+            waveformSamplePositions: metrics.waveformSamplePositions,
             waveformSpikeMarkers: metrics.spikeMarkers,
             waveformStartDate: metrics.waveformStartDate,
             waveformEndDate: metrics.waveformEndDate,
@@ -126,7 +144,16 @@ enum ThreadLiveActivityService {
             nextRaritySymbolName: followingSpike?.rarity.symbolName,
             nextRarityColorHex: followingSpike.map { trackingPrimaryColorHex(for: $0.rarity) },
             nextRaritySecondaryColorHex: followingSpike.map { trackingSecondaryColorHex(for: $0.rarity) },
-            nextFlipDate: followingSpike?.date
+            nextFlipDate: followingSpike?.date,
+            pulseSaros: pulseBounds?.saros,
+            pulseCycleStartDate: pulseBounds?.startDate,
+            pulseCycleEndDate: pulseBounds?.endDate,
+            moonSynodicStartDate: moonBounds?.synodic.startDate,
+            moonSynodicEndDate: moonBounds?.synodic.endDate,
+            moonAnomalisticStartDate: moonBounds?.anomalistic.startDate,
+            moonAnomalisticEndDate: moonBounds?.anomalistic.endDate,
+            moonDraconicStartDate: moonBounds?.draconic.startDate,
+            moonDraconicEndDate: moonBounds?.draconic.endDate
         )
     }
 
@@ -154,6 +181,7 @@ enum ThreadLiveActivityService {
             momentum: snapshot.momentum,
             waveDirectionRawValue: snapshot.waveDirectionRawValue,
             waveformSamples: snapshot.waveformSamples,
+            waveformSamplePositions: snapshot.waveformSamplePositions,
             waveformSpikeMarkers: snapshot.waveformSpikeMarkers,
             waveformStartDate: snapshot.waveformStartDate,
             waveformEndDate: snapshot.waveformEndDate,
@@ -173,11 +201,25 @@ enum ThreadLiveActivityService {
             nextRaritySymbolName: snapshot.nextRaritySymbolName,
             nextRarityColorHex: snapshot.nextRarityColorHex,
             nextRaritySecondaryColorHex: snapshot.nextRaritySecondaryColorHex,
-            nextFlipDate: snapshot.nextFlipDate
+            nextFlipDate: snapshot.nextFlipDate,
+            pulseSaros: snapshot.pulseSaros,
+            pulseCycleStartDate: snapshot.pulseCycleStartDate,
+            pulseCycleEndDate: snapshot.pulseCycleEndDate,
+            moonSynodicStartDate: snapshot.moonSynodicStartDate,
+            moonSynodicEndDate: snapshot.moonSynodicEndDate,
+            moonAnomalisticStartDate: snapshot.moonAnomalisticStartDate,
+            moonAnomalisticEndDate: snapshot.moonAnomalisticEndDate,
+            moonDraconicStartDate: snapshot.moonDraconicStartDate,
+            moonDraconicEndDate: snapshot.moonDraconicEndDate
         )
         let content = ActivityContent(
             state: state,
-            staleDate: snapshot.waveformEndDate ?? snapshot.flipDate.addingTimeInterval(5 * 60)
+            staleDate: [
+                snapshot.waveformEndDate?.addingTimeInterval(60 * 60),
+                snapshot.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay + 60 * 60)
+            ]
+                .compactMap { $0 }
+                .max()
         )
 
         for activity in Activity<ThreadTrackingAttributes>.activities where activity.attributes.threadID != snapshot.threadID {
@@ -239,6 +281,72 @@ enum ThreadLiveActivityService {
 
     private static func trackingSecondaryColorHex(for rarity: FlipRarity) -> String {
         rarity.secondaryColor.hexRGBString
+    }
+
+    private struct LiveCycleBounds {
+        let startDate: Date
+        let endDate: Date
+    }
+
+    private struct LivePulseBounds {
+        let saros: Int
+        let startDate: Date
+        let endDate: Date
+    }
+
+    private struct LiveMoonBounds {
+        let synodic: LiveCycleBounds
+        let anomalistic: LiveCycleBounds
+        let draconic: LiveCycleBounds
+    }
+
+    private static func livePulseBounds(
+        at date: Date,
+        eclipseService: any EclipseService
+    ) -> LivePulseBounds? {
+        let configuredSaros = UserDefaults.standard.integer(forKey: JournalSettings.pulseSarosKey)
+        let saros: Int?
+        if configuredSaros > 0 {
+            saros = configuredSaros
+        } else {
+            saros = try? SarosPulseCalculator.defaultActiveSaros(
+                at: date,
+                eclipseService: eclipseService
+            )
+        }
+
+        guard let saros,
+              let interval = try? eclipseService.previousAndNextEclipse(saros: saros, around: date)
+        else {
+            return nil
+        }
+
+        return LivePulseBounds(
+            saros: saros,
+            startDate: interval.previous.date,
+            endDate: interval.next.date
+        )
+    }
+
+    private static func liveMoonBounds(
+        at date: Date,
+        moonService: any MoonPhaseService
+    ) -> LiveMoonBounds? {
+        guard let reading = try? moonService.reading(for: date) else { return nil }
+        return LiveMoonBounds(
+            synodic: LiveCycleBounds(
+                startDate: reading.synodicCycle.previousEvent.date,
+                endDate: reading.synodicCycle.nextEvent.date
+            ),
+            anomalistic: LiveCycleBounds(
+                startDate: reading.anomalisticCycle.previousEvent.date,
+                endDate: reading.anomalisticCycle.nextEvent.date
+            ),
+            draconic: LiveCycleBounds(
+                startDate: reading.draconicCycle.previousEvent.date,
+                endDate: reading.draconicCycle.nextEvent.date
+            )
+        )
     }
 
     private static func scheduleFlipAlarm(for snapshot: ThreadTrackingSnapshot) async {
@@ -318,19 +426,21 @@ enum ThreadLiveActivityService {
         momentum: Double,
         waveDirectionRawValue: String,
         waveformSamples: [Double],
+        waveformSamplePositions: [Double],
         spikeMarkers: [TrackingWaveformSpikeMarker],
         waveformStartDate: Date,
         waveformEndDate: Date
     ) {
         let interval = JournalEventWaveform.displayInterval(centeredOn: date)
         let field = JournalEventWaveform.field(spikes: spikes)
-        let samples = field.samples(in: interval, sampleCount: 42, spikes: spikes)
+        let samples = field.samples(in: interval, sampleCount: 96, spikes: spikes)
         let currentEnergy = field.energy(at: date)
         let visibleMaxEnergy = samples.points.map(\.energy).max() ?? 0
         let maxEnergy = max(visibleMaxEnergy, currentEnergy, 0.000_000_001)
         let normalizedSamples = samples.points.map { point in
             min(max(point.energy / maxEnergy, 0), 1)
         }
+        let samplePositions = samples.points.map(\.position)
         let visibleSpikes = JournalEventWaveform.visibleSpikes(in: interval, spikes: spikes)
         let spikeMarkers = visibleSpikes.map { spike in
             TrackingWaveformSpikeMarker(
@@ -346,6 +456,7 @@ enum ThreadLiveActivityService {
             momentum: dynamics.momentum,
             waveDirectionRawValue: dynamics.direction.rawValue,
             waveformSamples: normalizedSamples,
+            waveformSamplePositions: samplePositions,
             spikeMarkers: spikeMarkers,
             waveformStartDate: interval.start,
             waveformEndDate: interval.end

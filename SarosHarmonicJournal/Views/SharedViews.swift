@@ -90,6 +90,11 @@ enum JournalRecordMarkers {
 
 enum JournalSettings {
     static let harmonicDepthKey = "harmonicDepth"
+    static let waveformModelKey = "waveformModel"
+    static let waveformParabolaAKey = "waveformParabolaA"
+    static let waveformMergeCloseSpikesKey = "waveformMergeCloseSpikes"
+    static let waveformNormalizedAmplitudeKey = "waveformNormalizedAmplitude"
+    static let waveformSubdivisionDepthKey = "waveformSubdivisionDepth"
     static let notificationRarityPreferencesKey = "notificationRarityPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
@@ -99,6 +104,7 @@ enum JournalSettings {
     static let deviceNameKey = "syncDeviceName"
     static let deviceEmojiKey = "syncDeviceEmoji"
     static let pulseSarosKey = "pulseSaros"
+    static let lastSyncAtKey = "lastSyncAt"
     static let lastWeatherCodeKey = "lastWeatherCode"
     static let lastWeatherEmojiKey = "lastWeatherEmoji"
     static let lastWeatherTemperatureKey = "lastWeatherTemperatureC"
@@ -181,6 +187,126 @@ enum JournalSettings {
         }
         return "\(century)\(suffix)"
     }
+}
+
+enum JournalWaveformModel: String, CaseIterable, Identifiable, Sendable {
+    case gaussian
+    case saw
+    case parabola
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .gaussian: "Gaussian"
+        case .saw: "Saw"
+        case .parabola: "Parabola"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .gaussian:
+            "Smooth peak fitted between neighbouring spike midpoints."
+        case .saw:
+            "Straight rise from midpoint to spike, then straight fall to the next midpoint."
+        case .parabola:
+            "Curved rise and fall, alternating acceleration by the Saros north/south state."
+        }
+    }
+
+    static var current: JournalWaveformModel {
+        let rawValue = UserDefaults.standard.string(forKey: JournalSettings.waveformModelKey)
+        return rawValue.flatMap(JournalWaveformModel.init(rawValue:)) ?? .gaussian
+    }
+}
+
+enum JournalWaveformSettings {
+    static let defaultParabolaA = 2.6
+    static let parabolaARange = 1.0...8.0
+    static let mergeCloseSpikeThreshold: TimeInterval = 36 * 60 + 10
+    static let defaultSubdivisionDepth = 5
+    static let subdivisionDepthRange = 1...8
+
+    static var currentParabolaA: Double {
+        let stored = UserDefaults.standard.double(forKey: JournalSettings.waveformParabolaAKey)
+        guard stored.isFinite, stored > 0 else { return defaultParabolaA }
+        return min(max(stored, parabolaARange.lowerBound), parabolaARange.upperBound)
+    }
+
+    static var currentSubdivisionDepth: Int {
+        let stored = UserDefaults.standard.integer(forKey: JournalSettings.waveformSubdivisionDepthKey)
+        let raw = stored == 0 ? defaultSubdivisionDepth : stored
+        return min(max(raw, subdivisionDepthRange.lowerBound), subdivisionDepthRange.upperBound)
+    }
+}
+
+struct JournalWaveformOptions: Hashable, Sendable {
+    var ignorePartialEclipses: Bool
+    var mergeCloseSpikes: Bool
+    var normalizedAmplitude: Bool
+    var subdivisionDepth: Int
+    var mergeThreshold: TimeInterval
+
+    static var current: JournalWaveformOptions {
+        JournalWaveformOptions(
+            ignorePartialEclipses: false,
+            mergeCloseSpikes: UserDefaults.standard.bool(forKey: JournalSettings.waveformMergeCloseSpikesKey),
+            normalizedAmplitude: UserDefaults.standard.bool(forKey: JournalSettings.waveformNormalizedAmplitudeKey),
+            subdivisionDepth: JournalWaveformSettings.currentSubdivisionDepth,
+            mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+        )
+    }
+
+    static let `default` = JournalWaveformOptions(
+        ignorePartialEclipses: false,
+        mergeCloseSpikes: false,
+        normalizedAmplitude: false,
+        subdivisionDepth: JournalWaveformSettings.defaultSubdivisionDepth,
+        mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold
+    )
+}
+
+enum SarosDurationUnitFormatter {
+    static func verboseDuration(
+        _ duration: TimeInterval,
+        maxUnits: Int = 3
+    ) -> String {
+        guard duration.isFinite, duration > 0 else {
+            return "0 nanosaros"
+        }
+
+        var remaining = duration
+        var parts: [String] = []
+
+        for unit in units {
+            guard remaining >= unit.duration || !parts.isEmpty || unit.name == units.last?.name else {
+                continue
+            }
+            let count = Int(remaining / unit.duration)
+            guard count > 0 else { continue }
+            parts.append("\(count) \(unit.name)")
+            remaining -= Double(count) * unit.duration
+            if parts.count >= maxUnits {
+                break
+            }
+        }
+
+        if parts.isEmpty {
+            parts.append("1 nanosaros")
+        }
+
+        return parts.joined(separator: " ")
+    }
+
+    private static let units: [(name: String, duration: TimeInterval)] = [
+        ("gigasaros", SarosPulseCalculator.averageDuration(for: .giga)),
+        ("megasaros", SarosPulseCalculator.averageDuration(for: .mega)),
+        ("kilosaros", SarosPulseCalculator.averageDuration(for: .kilo)),
+        ("saros", SarosPulseCalculator.averageDuration(for: .saros)),
+        ("milisaros", SarosPulseCalculator.averageDuration(for: .mili)),
+        ("nanosaros", SarosPulseCalculator.averageDuration(for: .nano))
+    ]
 }
 
 enum SarosPulseUnit: String, CaseIterable, Identifiable, Hashable {
@@ -321,6 +447,253 @@ struct SarosPulseGlyph: View {
         )
         .frame(width: size, height: size)
         .accessibilityLabel(reading.accessibilityTitle)
+    }
+}
+
+enum LunarRulerTickLevel: Int, Hashable {
+    case major
+    case eighth
+    case sixtyFourth
+    case fiveHundredTwelfth
+
+    var color: Color {
+        switch self {
+        case .major: .red
+        case .eighth: .yellow
+        case .sixtyFourth: .blue
+        case .fiveHundredTwelfth: .white
+        }
+    }
+
+    var height: CGFloat {
+        15
+    }
+
+    var lineWidth: CGFloat {
+        1.2
+    }
+
+    var opacity: Double {
+        switch self {
+        case .major: 0.95
+        case .eighth: 0.82
+        case .sixtyFourth: 0.62
+        case .fiveHundredTwelfth: 0.28
+        }
+    }
+}
+
+struct LunarRulerTick: Identifiable, Hashable {
+    let cycle: MoonCycleKind
+    let level: LunarRulerTickLevel
+    let date: Date
+    let label: String?
+
+    var id: String {
+        "\(cycle.rawValue)-\(level.rawValue)-\(Int(date.timeIntervalSince1970))-\(label ?? "")"
+    }
+}
+
+enum LunarRulerTickBuilder {
+    static func ticks(
+        in interval: DateInterval,
+        moonService: any MoonPhaseService
+    ) -> [LunarRulerTick] {
+        var ticks: [LunarRulerTick] = []
+
+        for cycle in MoonCycleKind.allCases {
+            appendSubdivisionTicks(
+                cycle: cycle,
+                interval: interval,
+                moonService: moonService,
+                into: &ticks
+            )
+        }
+
+        appendMajorSynodicEvents(
+            interval: interval,
+            moonService: moonService,
+            into: &ticks
+        )
+
+        if let orbitalEvents = try? moonService.orbitalEvents(from: interval.start, through: interval.end) {
+            for event in orbitalEvents {
+                let cycle: MoonCycleKind
+                switch event.kind {
+                case .apogee, .perigee:
+                    cycle = .anomalistic
+                case .ascendingNode, .descendingNode:
+                    cycle = .draconic
+                }
+                ticks.append(
+                    LunarRulerTick(
+                        cycle: cycle,
+                        level: .major,
+                        date: event.date,
+                        label: label(for: event.kind)
+                    )
+                )
+            }
+        }
+
+        return ticks
+            .filter { interval.contains($0.date) }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date < rhs.date }
+                if lhs.cycle != rhs.cycle { return lhs.cycle.rawValue < rhs.cycle.rawValue }
+                return lhs.level.rawValue < rhs.level.rawValue
+            }
+    }
+
+    private static func appendSubdivisionTicks(
+        cycle: MoonCycleKind,
+        interval: DateInterval,
+        moonService: any MoonPhaseService,
+        into ticks: inout [LunarRulerTick]
+    ) {
+        guard let initialReading = try? moonService.reading(for: interval.start) else { return }
+        var cycleReading = moonCycle(cycle, from: initialReading)
+        var safety = 0
+
+        while cycleReading.previousEvent.date < interval.end, safety < 128 {
+            appendSubdivisions(
+                cycle: cycle,
+                cycleStart: cycleReading.previousEvent.date,
+                cycleEnd: cycleReading.nextEvent.date,
+                interval: interval,
+                into: &ticks
+            )
+
+            let seed = cycleReading.nextEvent.date.addingTimeInterval(1)
+            guard let nextReading = try? moonService.reading(for: seed) else { break }
+            let nextCycle = moonCycle(cycle, from: nextReading)
+            guard nextCycle.nextEvent.date > cycleReading.nextEvent.date else { break }
+            cycleReading = nextCycle
+            safety += 1
+        }
+    }
+
+    private static func appendSubdivisions(
+        cycle: MoonCycleKind,
+        cycleStart: Date,
+        cycleEnd: Date,
+        interval: DateInterval,
+        into ticks: inout [LunarRulerTick]
+    ) {
+        let duration = max(cycleEnd.timeIntervalSince(cycleStart), 1)
+
+        for index in 1..<512 {
+            let level: LunarRulerTickLevel
+            if index.isMultiple(of: 64) {
+                level = .eighth
+            } else if index.isMultiple(of: 8) {
+                level = .sixtyFourth
+            } else {
+                level = .fiveHundredTwelfth
+            }
+            let date = cycleStart.addingTimeInterval(Double(index) / 512 * duration)
+            guard interval.contains(date) else { continue }
+            ticks.append(LunarRulerTick(cycle: cycle, level: level, date: date, label: nil))
+        }
+    }
+
+    private static func appendMajorSynodicEvents(
+        interval: DateInterval,
+        moonService: any MoonPhaseService,
+        into ticks: inout [LunarRulerTick]
+    ) {
+        var cursor = interval.start.addingTimeInterval(-32 * 86_400)
+        var seen = Set<Int>()
+        var safety = 0
+
+        while cursor <= interval.end, safety < 96 {
+            guard let reading = try? moonService.reading(for: cursor) else { break }
+            let event = reading.nextEvent
+            let key = Int(event.date.timeIntervalSince1970)
+            if seen.insert(key).inserted, interval.contains(event.date) {
+                ticks.append(
+                    LunarRulerTick(
+                        cycle: .synodic,
+                        level: .major,
+                        date: event.date,
+                        label: event.kind == .new ? "New" : "Full"
+                    )
+                )
+            }
+            cursor = event.date.addingTimeInterval(1)
+            safety += 1
+        }
+    }
+
+    private static func moonCycle(_ cycle: MoonCycleKind, from reading: MoonPhaseReading) -> MoonCycleReading {
+        switch cycle {
+        case .synodic:
+            reading.synodicCycle
+        case .anomalistic:
+            reading.anomalisticCycle
+        case .draconic:
+            reading.draconicCycle
+        }
+    }
+
+    private static func label(for kind: MoonOrbitalEventKind) -> String {
+        switch kind {
+        case .apogee: "Apo"
+        case .perigee: "Peri"
+        case .ascendingNode: "Asc"
+        case .descendingNode: "Desc"
+        }
+    }
+}
+
+struct LunarRulerCanvas: View {
+    let ticks: [LunarRulerTick]
+    let displayInterval: DateInterval
+    var topInset: CGFloat = 8
+    var rowSpacing: CGFloat = 15
+    var labelOffset: CGFloat = 15
+
+    var body: some View {
+        Canvas { context, size in
+            guard displayInterval.duration > 0 else { return }
+
+            for tick in ticks {
+                let x = xPosition(for: tick.date, width: size.width)
+                let y = topInset + CGFloat(rowIndex(for: tick.cycle)) * rowSpacing
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: y))
+                line.addLine(to: CGPoint(x: x, y: y + tick.level.height))
+                context.stroke(
+                    line,
+                    with: .color(tick.level.color.opacity(tick.level.opacity)),
+                    lineWidth: tick.level.lineWidth
+                )
+
+                if let label = tick.label {
+                    context.draw(
+                        Text(label)
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(tick.level.color.opacity(0.92)),
+                        at: CGPoint(x: x, y: y + labelOffset),
+                        anchor: .top
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func rowIndex(for cycle: MoonCycleKind) -> Int {
+        switch cycle {
+        case .synodic: 0
+        case .anomalistic: 1
+        case .draconic: 2
+        }
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
     }
 }
 

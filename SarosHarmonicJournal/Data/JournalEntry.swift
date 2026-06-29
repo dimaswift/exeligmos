@@ -41,6 +41,10 @@ struct JournalSpikeReference: Codable, Hashable, Identifiable {
     let rarityRawValue: String
     let gamma: Double?
     let magnitude: Double?
+    let eclipseTypeRawValue: String?
+    let sarosSequence: Int?
+    let sarosSeriesCount: Int?
+    let seriesProgressesSouthToNorth: Bool?
 
     var id: String {
         "\(saros)-\(unixTimestamp)-\(octalAddress)-\(rarityRawValue)"
@@ -52,6 +56,21 @@ struct JournalSpikeReference: Codable, Hashable, Identifiable {
 
     var rarity: FlipRarity {
         FlipRarity(rawValue: rarityRawValue) ?? .common
+    }
+
+    var eclipseType: EclipseType? {
+        eclipseTypeRawValue.flatMap(EclipseType.init(rawValue:))
+    }
+
+    var isPartialEclipse: Bool {
+        eclipseType?.isPartialSolar == true
+    }
+
+    var isPastSeriesMidpoint: Bool? {
+        guard let sarosSequence, let sarosSeriesCount, sarosSeriesCount > 0 else {
+            return nil
+        }
+        return Double(sarosSequence) >= Double(sarosSeriesCount) / 2
     }
 
     var displayLine: String {

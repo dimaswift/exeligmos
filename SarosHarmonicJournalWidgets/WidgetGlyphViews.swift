@@ -11,6 +11,7 @@ struct TrackingDisplayPayload {
     let momentum: Double?
     let waveDirectionRawValue: String?
     let waveformSamples: [Double]?
+    let waveformSamplePositions: [Double]?
     let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
     let waveformStartDate: Date?
     let waveformEndDate: Date?
@@ -23,6 +24,15 @@ struct TrackingDisplayPayload {
     let raritySecondaryColorHex: String?
     let flipDate: Date
     let isFlipWindow: Bool
+    let pulseSaros: Int?
+    let pulseCycleStartDate: Date?
+    let pulseCycleEndDate: Date?
+    let moonSynodicStartDate: Date?
+    let moonSynodicEndDate: Date?
+    let moonAnomalisticStartDate: Date?
+    let moonAnomalisticEndDate: Date?
+    let moonDraconicStartDate: Date?
+    let moonDraconicEndDate: Date?
 }
 
 struct TrackingCountdownText: View {
@@ -83,6 +93,7 @@ extension ThreadTrackingSnapshot {
                 momentum: momentum,
                 waveDirectionRawValue: waveDirectionRawValue,
                 waveformSamples: waveformSamples,
+                waveformSamplePositions: waveformSamplePositions,
                 waveformSpikeMarkers: waveformSpikeMarkers,
                 waveformStartDate: waveformStartDate,
                 waveformEndDate: waveformEndDate,
@@ -94,7 +105,16 @@ extension ThreadTrackingSnapshot {
                 rarityColorHex: nextRarityColorHex,
                 raritySecondaryColorHex: nextRaritySecondaryColorHex,
                 flipDate: nextFlipDate,
-                isFlipWindow: false
+                isFlipWindow: false,
+                pulseSaros: pulseSaros,
+                pulseCycleStartDate: pulseCycleStartDate,
+                pulseCycleEndDate: pulseCycleEndDate,
+                moonSynodicStartDate: moonSynodicStartDate,
+                moonSynodicEndDate: moonSynodicEndDate,
+                moonAnomalisticStartDate: moonAnomalisticStartDate,
+                moonAnomalisticEndDate: moonAnomalisticEndDate,
+                moonDraconicStartDate: moonDraconicStartDate,
+                moonDraconicEndDate: moonDraconicEndDate
             )
         }
 
@@ -105,6 +125,7 @@ extension ThreadTrackingSnapshot {
             momentum: momentum,
             waveDirectionRawValue: waveDirectionRawValue,
             waveformSamples: waveformSamples,
+            waveformSamplePositions: waveformSamplePositions,
             waveformSpikeMarkers: waveformSpikeMarkers,
             waveformStartDate: waveformStartDate,
             waveformEndDate: waveformEndDate,
@@ -116,7 +137,16 @@ extension ThreadTrackingSnapshot {
             rarityColorHex: rarityColorHex,
             raritySecondaryColorHex: raritySecondaryColorHex,
             flipDate: flipDate,
-            isFlipWindow: now >= flipDate
+            isFlipWindow: now >= flipDate,
+            pulseSaros: pulseSaros,
+            pulseCycleStartDate: pulseCycleStartDate,
+            pulseCycleEndDate: pulseCycleEndDate,
+            moonSynodicStartDate: moonSynodicStartDate,
+            moonSynodicEndDate: moonSynodicEndDate,
+            moonAnomalisticStartDate: moonAnomalisticStartDate,
+            moonAnomalisticEndDate: moonAnomalisticEndDate,
+            moonDraconicStartDate: moonDraconicStartDate,
+            moonDraconicEndDate: moonDraconicEndDate
         )
     }
 }
@@ -140,6 +170,7 @@ extension ThreadTrackingAttributes.ContentState {
                 momentum: momentum,
                 waveDirectionRawValue: waveDirectionRawValue,
                 waveformSamples: waveformSamples,
+                waveformSamplePositions: waveformSamplePositions,
                 waveformSpikeMarkers: waveformSpikeMarkers,
                 waveformStartDate: waveformStartDate,
                 waveformEndDate: waveformEndDate,
@@ -151,7 +182,16 @@ extension ThreadTrackingAttributes.ContentState {
                 rarityColorHex: nextRarityColorHex,
                 raritySecondaryColorHex: nextRaritySecondaryColorHex,
                 flipDate: nextFlipDate,
-                isFlipWindow: false
+                isFlipWindow: false,
+                pulseSaros: pulseSaros,
+                pulseCycleStartDate: pulseCycleStartDate,
+                pulseCycleEndDate: pulseCycleEndDate,
+                moonSynodicStartDate: moonSynodicStartDate,
+                moonSynodicEndDate: moonSynodicEndDate,
+                moonAnomalisticStartDate: moonAnomalisticStartDate,
+                moonAnomalisticEndDate: moonAnomalisticEndDate,
+                moonDraconicStartDate: moonDraconicStartDate,
+                moonDraconicEndDate: moonDraconicEndDate
             )
         }
 
@@ -162,6 +202,7 @@ extension ThreadTrackingAttributes.ContentState {
             momentum: momentum,
             waveDirectionRawValue: waveDirectionRawValue,
             waveformSamples: waveformSamples,
+            waveformSamplePositions: waveformSamplePositions,
             waveformSpikeMarkers: waveformSpikeMarkers,
             waveformStartDate: waveformStartDate,
             waveformEndDate: waveformEndDate,
@@ -173,7 +214,16 @@ extension ThreadTrackingAttributes.ContentState {
             rarityColorHex: rarityColorHex,
             raritySecondaryColorHex: raritySecondaryColorHex,
             flipDate: flipDate,
-            isFlipWindow: now >= flipDate
+            isFlipWindow: now >= flipDate,
+            pulseSaros: pulseSaros,
+            pulseCycleStartDate: pulseCycleStartDate,
+            pulseCycleEndDate: pulseCycleEndDate,
+            moonSynodicStartDate: moonSynodicStartDate,
+            moonSynodicEndDate: moonSynodicEndDate,
+            moonAnomalisticStartDate: moonAnomalisticStartDate,
+            moonAnomalisticEndDate: moonAnomalisticEndDate,
+            moonDraconicStartDate: moonDraconicStartDate,
+            moonDraconicEndDate: moonDraconicEndDate
         )
     }
 }
@@ -181,6 +231,7 @@ extension ThreadTrackingAttributes.ContentState {
 
 struct WidgetWaveformSegmentView: View {
     let samples: [Double]
+    var samplePositions: [Double] = []
     var spikeMarkers: [TrackingWaveformSpikeMarker] = []
     let color: Color
     var showsCurrentMarker = true
@@ -189,10 +240,7 @@ struct WidgetWaveformSegmentView: View {
     var waveformEndDate: Date?
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            canvas(currentPosition: markerPosition(at: timeline.date))
-                .id(Int(timeline.date.timeIntervalSince1970))
-        }
+        canvas(currentPosition: currentPosition)
         .accessibilityHidden(true)
     }
 
@@ -207,13 +255,13 @@ struct WidgetWaveformSegmentView: View {
             let visualValue: (Double) -> Double = { value in
                 min(max(value, 0) * visualScale, 1)
             }
-            let step = size.width / CGFloat(clamped.count - 1)
+            let positions = resolvedSamplePositions(count: clamped.count)
             let baselineY = size.height - 2
             var line = Path()
             var fill = Path()
 
             for index in clamped.indices {
-                let x = CGFloat(index) * step
+                let x = CGFloat(positions[index]) * size.width
                 let y = baselineY - CGFloat(visualValue(clamped[index])) * (size.height - 5)
                 let point = CGPoint(x: x, y: y)
                 if index == clamped.startIndex {
@@ -249,17 +297,15 @@ struct WidgetWaveformSegmentView: View {
         }
     }
 
-    private func markerPosition(at date: Date) -> Double {
-        guard let waveformStartDate,
-              let waveformEndDate,
-              waveformEndDate > waveformStartDate
-        else {
-            return min(max(currentPosition, 0), 1)
+    private func resolvedSamplePositions(count: Int) -> [Double] {
+        guard samplePositions.count == count else {
+            guard count > 1 else { return [0] }
+            return (0..<count).map { Double($0) / Double(count - 1) }
         }
 
-        let ratio = date.timeIntervalSince(waveformStartDate) / waveformEndDate.timeIntervalSince(waveformStartDate)
-        return min(max(ratio, 0), 1)
+        return samplePositions.map { min(max($0, 0), 1) }
     }
+
 }
 
 extension TrackingDisplayPayload {
@@ -267,14 +313,16 @@ extension TrackingDisplayPayload {
         eventName?.nilIfBlank ?? rarityTitle
     }
 
-    var energyText: String {
-        guard let energyPercent else { return "E --" }
-        return "E \(Int((min(max(energyPercent, 0), 1) * 100).rounded()))%"
+    func energyText(at date: Date) -> String {
+        let energy = sampledEnergy(at: date) ?? energyPercent
+        guard let energy else { return "E --" }
+        return "E \(Int((min(max(energy, 0), 1) * 100).rounded()))%"
     }
 
-    var momentumText: String {
-        guard let momentum else { return "M --" }
-        let percent = Int((min(max(momentum, -1), 1) * 100).rounded())
+    func momentumText(at date: Date) -> String {
+        let value = sampledMomentum(at: date) ?? momentum
+        guard let value else { return "M --" }
+        let percent = Int((min(max(value, -1), 1) * 100).rounded())
         return percent > 0 ? "M +\(percent)%" : "M \(percent)%"
     }
 
@@ -286,6 +334,110 @@ extension TrackingDisplayPayload {
             return 0.5
         }
         return min(max(date.timeIntervalSince(waveformStartDate) / waveformEndDate.timeIntervalSince(waveformStartDate), 0), 1)
+    }
+
+    func pulseGlyph(at date: Date) -> String? {
+        guard let pulseCycleStartDate,
+              let pulseCycleEndDate,
+              pulseCycleEndDate > pulseCycleStartDate
+        else {
+            return nil
+        }
+
+        let duration = pulseCycleEndDate.timeIntervalSince(pulseCycleStartDate)
+        let phase = date.timeIntervalSince(pulseCycleStartDate) / duration
+        let localPhase = Self.positiveFraction(phase * 512)
+        let binCount = 262_144
+        let bin = min(max(Int(floor(localPhase * Double(binCount))), 0), binCount - 1)
+        return String(bin, radix: 8).leftPadded(toLength: 6, withPad: "0")
+    }
+
+    func pulseColor(at date: Date) -> Color {
+        guard let glyph = pulseGlyph(at: date) else { return .white.opacity(0.82) }
+        let trailingZeroes = glyph.reversed().prefix { $0 == "0" }.count
+        switch trailingZeroes {
+        case 5...: return .red
+        case 4: return .yellow
+        case 3: return .purple
+        case 2: return .blue
+        default: return .white
+        }
+    }
+
+    func moonGlyph(at date: Date) -> String? {
+        guard let synodic = moonDigit(at: date, start: moonSynodicStartDate, end: moonSynodicEndDate),
+              let anomalistic = moonDigit(at: date, start: moonAnomalisticStartDate, end: moonAnomalisticEndDate),
+              let draconic = moonDigit(at: date, start: moonDraconicStartDate, end: moonDraconicEndDate)
+        else {
+            return nil
+        }
+
+        return "\(synodic)\(anomalistic)\(draconic)"
+    }
+
+    func moonColor(at date: Date) -> Color {
+        guard let moonSynodicStartDate,
+              let moonSynodicEndDate,
+              moonSynodicEndDate > moonSynodicStartDate
+        else {
+            return .white.opacity(0.82)
+        }
+
+        let phase = Self.positiveFraction(
+            date.timeIntervalSince(moonSynodicStartDate)
+                / moonSynodicEndDate.timeIntervalSince(moonSynodicStartDate)
+        )
+        let bin = min(max(Int(floor(phase * 512)), 0), 511)
+        let address = String(bin, radix: 8).leftPadded(toLength: 3, withPad: "0")
+
+        if address == "000" || address == "777" {
+            return .purple
+        }
+
+        let leadingZeroes = address.prefix { $0 == "0" }.count
+        let leadingSevens = address.prefix { $0 == "7" }.count
+        switch max(leadingZeroes, leadingSevens) {
+        case 2...: return .blue
+        case 1: return .gray
+        default: return .white
+        }
+    }
+
+    private func sampledEnergy(at date: Date) -> Double? {
+        guard let waveformSamples, waveformSamples.count > 1 else { return nil }
+        let position = waveformPosition(at: date)
+        let scaled = position * Double(waveformSamples.count - 1)
+        let lower = min(max(Int(floor(scaled)), 0), waveformSamples.count - 1)
+        let upper = min(lower + 1, waveformSamples.count - 1)
+        let fraction = scaled - Double(lower)
+        return waveformSamples[lower] + (waveformSamples[upper] - waveformSamples[lower]) * fraction
+    }
+
+    private func sampledMomentum(at date: Date) -> Double? {
+        guard let waveformSamples, waveformSamples.count > 2 else { return nil }
+        let position = waveformPosition(at: date)
+        let scaled = position * Double(waveformSamples.count - 1)
+        let index = min(max(Int(round(scaled)), 1), waveformSamples.count - 2)
+        let delta = waveformSamples[index + 1] - waveformSamples[index - 1]
+        return min(max(delta * 4, -1), 1)
+    }
+
+    private func moonDigit(at date: Date, start: Date?, end: Date?) -> Int? {
+        guard let start,
+              let end,
+              end > start
+        else {
+            return nil
+        }
+
+        let phase = Self.positiveFraction(date.timeIntervalSince(start) / end.timeIntervalSince(start))
+        return min(max(Int(floor(phase * 8)), 0), 7)
+    }
+
+    private static func positiveFraction(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        let fraction = value - floor(value)
+        return fraction >= 0 ? fraction : fraction + 1
     }
 }
 
@@ -325,10 +477,47 @@ struct WidgetWaveDirectionIcon: View {
     }
 }
 
+struct WidgetAuxiliaryGlyphsView: View {
+    let payload: TrackingDisplayPayload
+    let date: Date
+    var size: CGFloat = 22
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let pulseGlyph = payload.pulseGlyph(at: date) {
+                WidgetOctalGlyph(
+                    value: pulseGlyph,
+                    depth: 6,
+                    color: payload.pulseColor(at: date)
+                )
+                .frame(width: size, height: size)
+                .id("pulse-\(pulseGlyph)")
+                .accessibilityLabel("Pulse glyph")
+            }
+
+            if let moonGlyph = payload.moonGlyph(at: date) {
+                WidgetOctalGlyph(
+                    value: moonGlyph,
+                    depth: 3,
+                    color: payload.moonColor(at: date)
+                )
+                .frame(width: size, height: size)
+                .id("moon-\(moonGlyph)")
+                .accessibilityLabel("Lunar glyph")
+            }
+        }
+    }
+}
+
 private extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func leftPadded(toLength length: Int, withPad pad: Character) -> String {
+        guard count < length else { return String(suffix(length)) }
+        return String(repeating: String(pad), count: length - count) + self
     }
 }
 

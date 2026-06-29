@@ -158,6 +158,7 @@ struct RootView: View {
         Task {
             await services.notificationScheduler.refreshGlobalSarosEventSchedules(
                 eclipseService: services.eclipseService,
+                moonPhaseService: services.moonPhaseService,
                 harmonicDepth: harmonicDepth
             )
         }
@@ -191,7 +192,6 @@ private struct FeedView: View {
     @State private var selectedEntry: JournalEntry?
     @State private var captureRequest: FeedCaptureRequest?
     @State private var isFilterPresented = false
-    @State private var syncErrorMessage: String?
 
     private var filteredEntries: [JournalEntry] {
         entries.filter { entry in
@@ -319,11 +319,6 @@ private struct FeedView: View {
                 )
             }
         }
-        .alert("Sync failed", isPresented: Binding(get: { syncErrorMessage != nil }, set: { _ in syncErrorMessage = nil })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(syncErrorMessage ?? "")
-        }
     }
 
     @MainActor
@@ -337,9 +332,7 @@ private struct FeedView: View {
                 entries: entries,
                 commands: syncCommands
             )
-        } catch {
-            syncErrorMessage = error.localizedDescription
-        }
+        } catch {}
     }
 
     private func matchesMoonFilters(_ date: Date) -> Bool {
@@ -1226,10 +1219,14 @@ private struct LiveTrackingRolloverObserver: View {
         do {
             if snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID {
                 let contextService = services.sarosEventContextService
+                let eclipseService = services.eclipseService
+                let moonPhaseService = services.moonPhaseService
                 let harmonicDepth = snapshot.harmonicDepth
                 let nextSnapshot = try await Task.detached(priority: .userInitiated) {
                     try ThreadLiveActivityService.journalSnapshot(
                         contextService: contextService,
+                        eclipseService: eclipseService,
+                        moonService: moonPhaseService,
                         date: date,
                         harmonicDepth: harmonicDepth
                     )

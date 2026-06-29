@@ -141,6 +141,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
     func refreshGlobalSarosEventSchedules(
         eclipseService: any EclipseService,
+        moonPhaseService: any MoonPhaseService,
         harmonicDepth rawHarmonicDepth: Int,
         horizon: TimeInterval = 14 * 86_400,
         peakLimit: Int = 32,
@@ -216,6 +217,12 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
                 horizon: horizon
             )
         }
+
+        await scheduleLunarTickNotifications(
+            moonPhaseService: moonPhaseService,
+            now: now,
+            horizon: horizon
+        )
     }
 
     private func scheduleGigaPulseNotifications(
@@ -300,6 +307,58 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             repeats: false
         )
         let identifier = "\(identifierPrefix)pulse.giga.\(tick.saros).\(Int(tick.date.timeIntervalSince1970))"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        )
+    }
+
+    private func scheduleLunarTickNotifications(
+        moonPhaseService: any MoonPhaseService,
+        now: Date,
+        horizon: TimeInterval,
+        limit: Int = 64
+    ) async {
+        let interval = DateInterval(
+            start: now,
+            end: now.addingTimeInterval(horizon)
+        )
+        let ticks = LunarRulerTickBuilder.ticks(in: interval, moonService: moonPhaseService)
+            .filter { ($0.level == .major || $0.level == .eighth) && $0.date.addingTimeInterval(-33) > now }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date < rhs.date }
+                if lhs.level != rhs.level { return lhs.level.rawValue < rhs.level.rawValue }
+                return lhs.cycle.rawValue < rhs.cycle.rawValue
+            }
+            .prefix(limit)
+
+        for tick in ticks {
+            await scheduleLunarTickNotification(tick)
+        }
+    }
+
+    private func scheduleLunarTickNotification(_ tick: LunarRulerTick) async {
+        let notifyDate = tick.date.addingTimeInterval(-33)
+        let content = UNMutableNotificationContent()
+        content.title = tick.label ?? "\(tick.cycle.displayName) lunar tick"
+        content.subtitle = "T minus 33 seconds"
+        content.body = "\(tick.cycle.displayName) \(tick.level.notificationName) at \(JournalFormatters.dateTime.string(from: tick.date))."
+        content.sound = .default
+        content.interruptionLevel = tick.level == .major ? .timeSensitive : .active
+        content.threadIdentifier = "lunar-\(tick.cycle.rawValue)"
+        content.relevanceScore = tick.level == .major ? 0.78 : 0.56
+        content.userInfo = [
+            "trigger": "lunarTick",
+            "cycle": tick.cycle.rawValue,
+            "level": tick.level.rawValue,
+            "date": tick.date.timeIntervalSince1970,
+            "label": tick.label ?? ""
+        ]
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)lunar.\(tick.cycle.rawValue).\(tick.level.rawValue).\(Int(tick.date.timeIntervalSince1970))"
         try? await UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         )
@@ -617,6 +676,21 @@ private struct SarosBoundaryNotification: Hashable {
     let previous: ScheduledSarosEvent
     let next: ScheduledSarosEvent
     let date: Date
+}
+
+private extension LunarRulerTickLevel {
+    var notificationName: String {
+        switch self {
+        case .major:
+            "event"
+        case .eighth:
+            "1/8"
+        case .sixtyFourth:
+            "1/64"
+        case .fiveHundredTwelfth:
+            "1/512"
+        }
+    }
 }
 
 private extension NotificationScheduler {
