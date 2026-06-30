@@ -25,14 +25,23 @@ struct TrackedThreadProvider: TimelineProvider {
             .compactMap { $0 }
             .filter { $0 > now.addingTimeInterval(2) }
         let naturalRefresh = refreshCandidates.min() ?? now.addingTimeInterval(Self.timelineHorizon)
-        completion(
-            Timeline(
-                entries: [TrackedThreadEntry(date: now, snapshot: snapshot)],
-                policy: .after(naturalRefresh)
-            )
-        )
+        let horizonEnd = min(naturalRefresh, now.addingTimeInterval(Self.timelineHorizon))
+        var entries: [TrackedThreadEntry] = []
+        var cursor = now
+
+        while cursor <= horizonEnd {
+            entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
+            cursor = cursor.addingTimeInterval(Self.timelineStep)
+        }
+
+        if entries.isEmpty {
+            entries = [TrackedThreadEntry(date: now, snapshot: snapshot)]
+        }
+
+        completion(Timeline(entries: entries, policy: .after(horizonEnd)))
     }
 
+    private static let timelineStep: TimeInterval = 5
     private static let timelineHorizon: TimeInterval = 15 * 60
 }
 
