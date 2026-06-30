@@ -23,9 +23,17 @@ enum ThreadLiveActivityError: LocalizedError {
 
 enum ThreadLiveActivityService {
     private static let alarmIdentifierPrefix = "saros-journal.live-tracking."
-    private static let waveformDisplayDuration = SarosPulseCalculator.averageDuration(for: .mega) * 2
     private static let liveWaveformPayloadSampleCount = 96
     private static let liveWaveformPayloadMarkerLimit = 10
+
+    private static var widgetWaveformKilosarosRange: Int {
+        JournalWaveformSettings.currentWidgetWaveformKilosarosRange
+    }
+
+    private static var waveformDisplayDuration: TimeInterval {
+        SarosPulseCalculator.averageDuration(for: .kilo)
+            * Double(widgetWaveformKilosarosRange)
+    }
 
     static func snapshot(
         entity: TrackedEntity,
@@ -55,6 +63,7 @@ enum ThreadLiveActivityService {
             waveformSpikeMarkers: nil,
             waveformStartDate: nil,
             waveformEndDate: nil,
+            widgetRangeKilosaros: widgetWaveformKilosarosRange,
             glyph: currentPayload.glyph,
             rarityRawValue: currentPayload.rarity.rawValue,
             rarityTitle: currentPayload.rarity.title,
@@ -92,11 +101,16 @@ enum ThreadLiveActivityService {
         harmonicDepth rawHarmonicDepth: Int
     ) throws -> ThreadTrackingSnapshot {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        let pulseBounds = livePulseBounds(
+            at: date,
+            eclipseService: eclipseService
+        )
+        let waveformInterval = liveWaveformInterval(at: date, pulseBounds: pulseBounds)
         let context = try contextService.context(for: date, harmonicDepth: harmonicDepth)
         let waveformSpikes = try contextService.waveformSpikes(
             around: date,
             harmonicDepth: harmonicDepth,
-            displayDuration: waveformDisplayDuration,
+            displayDuration: waveformInterval.duration,
             paddingDuration: 172_800
         )
         let upcomingSpike = nextSpike(after: date, in: waveformSpikes)
@@ -110,10 +124,10 @@ enum ThreadLiveActivityService {
             ?? context.closestSpike?.octalAddress
             ?? upcomingSpike?.octalAddress
             ?? String(repeating: "0", count: harmonicDepth)
-        let metrics = journalMetrics(at: date, spikes: waveformSpikes)
-        let pulseBounds = livePulseBounds(
+        let metrics = journalMetrics(
             at: date,
-            eclipseService: eclipseService
+            spikes: waveformSpikes,
+            interval: waveformInterval
         )
         let moonBounds = liveMoonBounds(at: date, moonService: moonService)
 
@@ -131,6 +145,7 @@ enum ThreadLiveActivityService {
             waveformSpikeMarkers: metrics.spikeMarkers,
             waveformStartDate: metrics.waveformStartDate,
             waveformEndDate: metrics.waveformEndDate,
+            widgetRangeKilosaros: widgetWaveformKilosarosRange,
             glyph: phaseGlyph,
             rarityRawValue: rarity.rawValue,
             rarityTitle: rarity.title,
@@ -188,6 +203,7 @@ enum ThreadLiveActivityService {
             waveformSpikeMarkers: snapshot.waveformSpikeMarkers,
             waveformStartDate: snapshot.waveformStartDate,
             waveformEndDate: snapshot.waveformEndDate,
+            widgetRangeKilosaros: snapshot.widgetRangeKilosaros,
             glyph: snapshot.glyph,
             rarityRawValue: snapshot.rarityRawValue,
             rarityTitle: snapshot.rarityTitle,
@@ -217,12 +233,7 @@ enum ThreadLiveActivityService {
         )
         let content = ActivityContent(
             state: state,
-            staleDate: [
-                snapshot.waveformEndDate?.addingTimeInterval(60 * 60),
-                snapshot.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay + 60 * 60)
-            ]
-                .compactMap { $0 }
-                .max()
+            staleDate: liveActivityStaleDate(for: snapshot, after: Date())
         )
 
         for activity in Activity<ThreadTrackingAttributes>.activities where activity.attributes.threadID != snapshot.threadID {
@@ -241,6 +252,21 @@ enum ThreadLiveActivityService {
         #else
         throw ThreadLiveActivityError.unavailable
         #endif
+    }
+
+    private static func liveActivityStaleDate(for snapshot: ThreadTrackingSnapshot, after date: Date) -> Date {
+        if let pulseCycleStartDate = snapshot.pulseCycleStartDate,
+           let pulseCycleEndDate = snapshot.pulseCycleEndDate,
+           pulseCycleEndDate > pulseCycleStartDate {
+            let cycleDuration = pulseCycleEndDate.timeIntervalSince(pulseCycleStartDate)
+            let megaDuration = cycleDuration / 512
+            let miliDuration = max(megaDuration / 512, 1)
+            let elapsed = max(date.timeIntervalSince(pulseCycleStartDate), 0)
+            let nextIndex = floor(elapsed / miliDuration) + 1
+            return pulseCycleStartDate.addingTimeInterval(nextIndex * miliDuration)
+        }
+
+        return date.addingTimeInterval(33)
     }
 
     private static func flipPayload(
@@ -331,6 +357,37 @@ enum ThreadLiveActivityService {
         )
     }
 
+    private static func liveWaveformInterval(
+        at date: Date,
+        pulseBounds: LivePulseBounds?
+    ) -> DateInterval {
+        guard let pulseBounds,
+              pulseBounds.endDate > pulseBounds.startDate
+        else {
+            return JournalEventWaveform.displayInterval(
+                centeredOn: date,
+                duration: waveformDisplayDuration
+            )
+        }
+
+        let cycleDuration = pulseBounds.endDate.timeIntervalSince(pulseBounds.startDate)
+        let kiloDuration = cycleDuration / pow(8, 6)
+        guard kiloDuration > 0 else {
+            return JournalEventWaveform.displayInterval(
+                centeredOn: date,
+                duration: waveformDisplayDuration
+            )
+        }
+
+        let range = widgetWaveformKilosarosRange
+        let windowDuration = kiloDuration * Double(range)
+        let elapsed = date.timeIntervalSince(pulseBounds.startDate)
+        let kiloIndex = floor(elapsed / kiloDuration)
+        let windowIndex = floor(kiloIndex / Double(range))
+        let start = pulseBounds.startDate.addingTimeInterval(windowIndex * windowDuration)
+        return DateInterval(start: start, duration: windowDuration)
+    }
+
     private static func liveMoonBounds(
         at date: Date,
         moonService: any MoonPhaseService
@@ -372,10 +429,9 @@ enum ThreadLiveActivityService {
         let content = UNMutableNotificationContent()
         content.title = "Approaching \(snapshot.eventName ?? snapshot.rarityTitle) peak"
         content.subtitle = "T-minus 1 milisaros"
-        let energy = snapshot.energyPercent.map { "Energy \(Int((min(max($0, 0), 1) * 100).rounded()))%" }
+        let energy = snapshot.energyPercent.map { "Energy \(JournalWaveEventDescriptorFormatter.energyText($0).replacingOccurrences(of: "E ", with: ""))" }
         let momentum = snapshot.momentum.map { value in
-            let percent = Int((min(max(value, -1), 1) * 100).rounded())
-            return percent > 0 ? "Momentum +\(percent)%" : "Momentum \(percent)%"
+            "Momentum \(JournalWaveEventDescriptorFormatter.momentumText(value).replacingOccurrences(of: "M ", with: ""))"
         }
         content.body = [energy, momentum]
             .compactMap { $0 }
@@ -424,7 +480,8 @@ enum ThreadLiveActivityService {
 
     private static func journalMetrics(
         at date: Date,
-        spikes: [JournalSpikeReference]
+        spikes: [JournalSpikeReference],
+        interval: DateInterval? = nil
     ) -> (
         energyPercent: Double,
         momentum: Double,
@@ -435,16 +492,20 @@ enum ThreadLiveActivityService {
         waveformStartDate: Date,
         waveformEndDate: Date
     ) {
-        let interval = JournalEventWaveform.displayInterval(
+        let interval = interval ?? JournalEventWaveform.displayInterval(
             centeredOn: date,
             duration: waveformDisplayDuration
         )
         let field = JournalEventWaveform.field(spikes: spikes)
+        let metrics = JournalWaveMetricsCalculator.metrics(at: date, spikes: spikes)
         let samples = field.samples(in: interval, sampleCount: liveWaveformPayloadSampleCount, spikes: spikes)
         let payloadPoints = compactWaveformPoints(samples.points, maxCount: liveWaveformPayloadSampleCount)
-        let currentEnergy = field.energy(at: date)
-        let visibleMaxEnergy = samples.points.map(\.energy).max() ?? 0
-        let maxEnergy = max(visibleMaxEnergy, currentEnergy, 0.000_000_001)
+        let maxEnergy = max(
+            metrics.energyPercent > 0 ? metrics.energy / metrics.energyPercent : 0,
+            metrics.energy,
+            field.maxPeakHeight,
+            0.000_000_001
+        )
         let normalizedSamples = payloadPoints.map { point in
             min(max(point.energy / maxEnergy, 0), 1)
         }
@@ -467,12 +528,10 @@ enum ThreadLiveActivityService {
                 colorHex: trackingPrimaryColorHex(for: spike.rarity)
             )
         }
-        let energyPercent = min(max(currentEnergy / maxEnergy, 0), 1)
-        let dynamics = JournalWaveMetricsCalculator.dynamics(at: date, spikes: spikes)
         return (
-            energyPercent: energyPercent,
-            momentum: dynamics.momentum,
-            waveDirectionRawValue: dynamics.direction.rawValue,
+            energyPercent: metrics.energyPercent,
+            momentum: metrics.momentum,
+            waveDirectionRawValue: metrics.direction.rawValue,
             waveformSamples: normalizedSamples,
             waveformSamplePositions: samplePositions,
             spikeMarkers: spikeMarkers,

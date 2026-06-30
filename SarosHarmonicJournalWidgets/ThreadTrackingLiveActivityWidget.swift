@@ -50,7 +50,7 @@ private struct ThreadTrackingLockScreenView: View {
     let context: ActivityViewContext<ThreadTrackingAttributes>
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             lockScreenContent(payload: payload, now: timeline.date)
         }
@@ -58,6 +58,8 @@ private struct ThreadTrackingLockScreenView: View {
 
     private func lockScreenContent(payload: TrackingDisplayPayload, now: Date) -> some View {
         let color = Color(hexString: payload.rarityColorHex)
+        let pulseWindow = WidgetPulseWindow(payload: payload, at: now)
+        let signature = payload.waveSignature(at: now)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
@@ -65,10 +67,13 @@ private struct ThreadTrackingLockScreenView: View {
                     Text(payload.displayEventName)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(payload.secondaryEventDescription(at: now))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(signature.type.emoji)
+                        Text(signature.label)
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
                     HStack(spacing: 10) {
                         Text(payload.energyText(at: now))
                         Text(payload.momentumText(at: now))
@@ -103,11 +108,14 @@ private struct ThreadTrackingLockScreenView: View {
                 samplePositions: payload.waveformSamplePositions ?? [],
                 spikeMarkers: payload.waveformSpikeMarkers ?? [],
                 color: color,
-                currentPosition: payload.waveformPosition(at: now),
-                waveformStartDate: payload.waveformStartDate,
-                waveformEndDate: payload.waveformEndDate,
+                currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
                 pulseCycleStartDate: payload.pulseCycleStartDate,
-                pulseCycleEndDate: payload.pulseCycleEndDate
+                pulseCycleEndDate: payload.pulseCycleEndDate,
+                pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
             )
             .frame(maxWidth: .infinity)
             .frame(height: 68)
@@ -124,7 +132,7 @@ private struct LiveTrackingGlyphView: View {
     let size: CGFloat
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             WidgetOctalGlyph(
                 value: payload.glyph,
@@ -142,18 +150,22 @@ private struct LiveTrackingCenterView: View {
     let context: ActivityViewContext<ThreadTrackingAttributes>
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             let color = Color(hexString: payload.rarityColorHex)
+            let signature = payload.waveSignature(at: timeline.date)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(payload.displayEventName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(payload.secondaryEventDescription(at: timeline.date))
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.72))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(signature.type.emoji)
+                    Text(signature.label)
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(1)
                 HStack(spacing: 5) {
                     Text(payload.energyText(at: timeline.date))
                     Text(payload.momentumText(at: timeline.date))
@@ -172,7 +184,7 @@ private struct LiveTrackingRarityIconView: View {
     let context: ActivityViewContext<ThreadTrackingAttributes>
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             WidgetRarityGlyphIcon(
                 rawValue: payload.rarityRawValue,
@@ -189,9 +201,10 @@ private struct LiveTrackingWaveTimerView: View {
     let context: ActivityViewContext<ThreadTrackingAttributes>
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             let color = Color(hexString: payload.rarityColorHex)
+            let pulseWindow = WidgetPulseWindow(payload: payload, at: timeline.date)
 
             VStack(alignment: .leading, spacing: 5) {
                 WidgetWaveformSegmentView(
@@ -199,11 +212,14 @@ private struct LiveTrackingWaveTimerView: View {
                     samplePositions: payload.waveformSamplePositions ?? [],
                     spikeMarkers: payload.waveformSpikeMarkers ?? [],
                     color: color,
-                    currentPosition: payload.waveformPosition(at: timeline.date),
-                    waveformStartDate: payload.waveformStartDate,
-                    waveformEndDate: payload.waveformEndDate,
+                    currentPosition: pulseWindow?.discretePosition(at: timeline.date) ?? payload.waveformPosition(at: timeline.date),
+                    currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                    waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                    waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
                     pulseCycleStartDate: payload.pulseCycleStartDate,
-                    pulseCycleEndDate: payload.pulseCycleEndDate
+                    pulseCycleEndDate: payload.pulseCycleEndDate,
+                    pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                    pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
                 )
                 .frame(height: 52)
                 HStack {
@@ -221,7 +237,7 @@ private struct LiveTrackingTimerView: View {
     let compact: Bool
 
     var body: some View {
-        TimelineView(.periodic(from: context.state.updatedAt, by: 1)) { timeline in
+        TimelineView(.periodic(from: Date.now, by: 1)) { timeline in
             let payload = context.state.displayPayload(at: timeline.date)
             VStack(alignment: .leading, spacing: compact ? 0 : 6) {
                 Group {

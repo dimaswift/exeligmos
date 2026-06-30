@@ -126,7 +126,7 @@ struct JournalEntryRow: View {
                         .font(.caption)
                 }
                 Spacer(minLength: 8)
-                JournalWaveDirectionIcon(direction: context.direction, size: 12)
+                JournalWaveEventIcon(signature: context.waveSignature, size: 15)
             }
         }
         .padding(.vertical, 4)
@@ -170,7 +170,6 @@ struct JournalEntryDetailView: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var isEditingEntry = false
     @State private var errorMessage: String?
-    @State private var localWaveDynamics: JournalWaveDynamicsSnapshot?
 
     private var context: JournalEventContext {
         entry.context
@@ -211,8 +210,7 @@ struct JournalEntryDetailView: View {
     }
 
     var body: some View {
-        let displayedDirection = localWaveDynamics?.direction ?? context.direction
-        let displayedMomentum = localWaveDynamics?.momentum ?? context.effectiveMomentum
+        let waveSignature = context.waveSignature
 
         List {
             Section {
@@ -277,7 +275,7 @@ struct JournalEntryDetailView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.74)
                         Spacer(minLength: 0)
-                        JournalWaveDirectionIcon(direction: displayedDirection, size: 9)
+                        JournalWaveEventIcon(signature: waveSignature, size: 13)
                     }
                 }
                 .padding(.vertical, 0)
@@ -388,9 +386,9 @@ struct JournalEntryDetailView: View {
                 MetadataRow(title: "Sync", value: syncStatusTitle)
                 MetadataRow(title: "Version", value: "\(entry.version)")
                 MetadataRow(title: "Unix timestamp", value: "\(entry.unixTimestamp)")
-                JournalDirectionMetadataRow(direction: displayedDirection)
-                MetadataRow(title: "Momentum", value: Self.momentumPercentText(displayedMomentum))
-                MetadataRow(title: "Energy", value: "\(Int((context.energyPercent * 100).rounded()))%")
+                JournalWaveEventMetadataRow(signature: waveSignature)
+                MetadataRow(title: "Momentum", value: waveSignature.momentumText)
+                MetadataRow(title: "Energy", value: waveSignature.energyText)
                 MetadataRow(
                     title: "\(context.eventDescriptor.segmentKind == .descent ? "Descent" : "Ascent") period",
                     value: SarosDurationUnitFormatter.verboseDuration(context.eventDescriptor.segmentDuration)
@@ -444,23 +442,6 @@ struct JournalEntryDetailView: View {
         .onDisappear {
             audioPlayer.stop()
         }
-        .task(id: context.waveformCacheKey) {
-            let context = context
-            let contextService = services.sarosEventContextService
-            let dynamics = await Task.detached(priority: .userInitiated) { () -> JournalWaveDynamicsSnapshot in
-                let spikes = (
-                    try? contextService.waveformSpikes(
-                        around: context.eventDate,
-                        harmonicDepth: context.waveformHarmonicDepth
-                    )
-                ) ?? context.spikes
-                return JournalWaveMetricsCalculator.dynamics(
-                    at: context.eventDate,
-                    spikes: spikes
-                )
-            }.value
-            localWaveDynamics = dynamics
-        }
         .confirmationDialog("Delete this entry?", isPresented: $isDeleteConfirmationPresented, titleVisibility: .visible) {
             Button("Delete Record", role: .destructive) {
                 deleteEntry()
@@ -485,7 +466,7 @@ struct JournalEntryDetailView: View {
     private var pulseReading: SarosPulseReading? {
         let selectedSaros = pulseSaros > 0
             ? pulseSaros
-            : ((try? SarosPulseCalculator.defaultActiveSaros(
+            : (context.closestSpike?.saros ?? (try? SarosPulseCalculator.defaultActiveSaros(
                 at: entry.eventDate,
                 eclipseService: services.eclipseService
             )) ?? 0)
@@ -504,14 +485,6 @@ struct JournalEntryDetailView: View {
                 && command.subjectID == entry.id.uuidString
                 && (command.type == .entryUpsert || command.type == .entryDelete)
         } ? "Pending" : "Synced"
-    }
-
-    private static func momentumPercentText(_ momentum: Double) -> String {
-        let percent = Int((momentum * 100).rounded())
-        if percent > 0 {
-            return "+\(percent)%"
-        }
-        return "\(percent)%"
     }
 
     private func displayAddress(for spike: JournalSpikeReference) -> String {
@@ -2035,7 +2008,7 @@ private struct JournalTagEntriesView: View {
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
             let matchesTag = entry.tagIDs.contains(tag.compactID)
             let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
-            let matchesDirection = selectedDirection.map { context.direction == $0 } ?? true
+            let matchesDirection = selectedDirection.map { context.waveSignature.direction == $0 } ?? true
             let matchesExtremum = selectedExtremum.map { context.extremum == $0 } ?? true
             let matchesMoon = matchesMoonFilters(entry.eventDate)
             let matchesSpikesOnly = !spikesOnly || context.closestSpike?.saros == tag.saros
@@ -2487,8 +2460,6 @@ private struct JournalEntrySpikeRow: View {
 
 private struct JournalEntryWaveformView: View {
     @EnvironmentObject private var services: AppServices
-    @AppStorage(JournalSettings.waveformModelKey) private var waveformModelRawValue = JournalWaveformModel.gaussian.rawValue
-    @AppStorage(JournalSettings.waveformParabolaAKey) private var waveformParabolaA = JournalWaveformSettings.defaultParabolaA
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
@@ -2678,11 +2649,7 @@ private struct JournalEntryWaveformView: View {
             let pulseSaros = pulseSaros
             let endDate = resolvedEndDate
             let displayDuration = JournalEntryWaveform.displayDuration(megaUnits: displayMegaUnits)
-            let waveformModel = JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
-            let parabolaA = min(
-                max(waveformParabolaA, JournalWaveformSettings.parabolaARange.lowerBound),
-                JournalWaveformSettings.parabolaARange.upperBound
-            )
+            let parabolaA = JournalWaveformSettings.currentParabolaA
             let options = JournalWaveformOptions(
                 ignorePartialEclipses: false,
                 mergeCloseSpikes: waveformMergeCloseSpikes,
@@ -2705,7 +2672,7 @@ private struct JournalEntryWaveformView: View {
                     endDate: endDate,
                     spikes: spikes,
                     displayDuration: displayDuration,
-                    model: waveformModel,
+                    model: .parabola,
                     parabolaA: parabolaA,
                     options: options
                 )
@@ -2714,10 +2681,10 @@ private struct JournalEntryWaveformView: View {
                 if pulseSaros > 0 {
                     resolvedPulseSaros = pulseSaros
                 } else {
-                    resolvedPulseSaros = try? SarosPulseCalculator.defaultActiveSaros(
+                    resolvedPulseSaros = context.closestSpike?.saros ?? (try? SarosPulseCalculator.defaultActiveSaros(
                         at: context.eventDate,
                         eclipseService: eclipseService
-                    )
+                    ))
                 }
                 let pulseTicks: [SarosPulseTick]
                 if let resolvedPulseSaros {
@@ -2742,8 +2709,7 @@ private struct JournalEntryWaveformView: View {
         [
             context.waveformCacheKey,
             "\(Int(resolvedEndDate.timeIntervalSince1970))",
-            waveformModelRawValue,
-            "\(Int((waveformParabolaA * 100).rounded()))",
+            "\(Int((JournalWaveformSettings.currentParabolaA * 100).rounded()))",
             waveformMergeCloseSpikes ? "merged" : "raw",
             waveformNormalizedAmplitude ? "norm" : "weighted",
             "\(clampedSubdivisionDepth)",
@@ -2881,50 +2847,31 @@ private extension JournalEventContext {
     }
 }
 
-private struct JournalWaveDirectionIcon: View {
-    let direction: JournalWaveDirection
+private struct JournalWaveEventIcon: View {
+    let signature: JournalWaveSignature
     var size: CGFloat = 18
 
     var body: some View {
-        Image(systemName: symbolName)
-            .font(.system(size: size, weight: .bold))
-            .foregroundStyle(color)
+        Text(signature.type.emoji)
+            .font(.system(size: size))
             .frame(width: size + 4, height: size + 4)
-            .accessibilityLabel(direction.title)
-    }
-
-    private var symbolName: String {
-        switch direction {
-        case .ascending:
-            "arrow.up"
-        case .descending:
-            "arrow.down"
-        case .flat:
-            "minus"
-        }
-    }
-
-    private var color: Color {
-        switch direction {
-        case .ascending:
-            .green
-        case .descending:
-            .red
-        case .flat:
-            .white
-        }
+            .accessibilityLabel(signature.type.title)
     }
 }
 
-private struct JournalDirectionMetadataRow: View {
-    let direction: JournalWaveDirection
+private struct JournalWaveEventMetadataRow: View {
+    let signature: JournalWaveSignature
 
     var body: some View {
         HStack(alignment: .center) {
-            Text("Direction")
+            Text("Event")
                 .foregroundStyle(.secondary)
             Spacer(minLength: 12)
-            JournalWaveDirectionIcon(direction: direction, size: 18)
+            HStack(spacing: 6) {
+                Text(signature.label)
+                    .foregroundStyle(.primary)
+                JournalWaveEventIcon(signature: signature, size: 18)
+            }
         }
         .font(.subheadline)
     }
@@ -3185,11 +3132,7 @@ private extension JournalEventContext {
     }
 
     var momentumPercentText: String {
-        let percent = Int((effectiveMomentum * 100).rounded())
-        if percent > 0 {
-            return "+\(percent)%"
-        }
-        return "\(percent)%"
+        waveSignature.momentumText
     }
 }
 

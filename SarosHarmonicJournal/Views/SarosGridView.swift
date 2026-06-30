@@ -488,6 +488,7 @@ private struct SarosSpikeWaveState: Hashable {
     let energy: Double
     let normalizedDerivative: Double
     let derivative: Double
+    let momentumEnergyPerSaros: Double
     let hasPassedSpike: Bool
 
     var slopeDirection: String {
@@ -507,7 +508,6 @@ private struct SarosSpikeWaveComponent: Hashable {
     let leftBoundary: Date
     let rightBoundary: Date
     let peakHeight: Double
-    let gaussianExtent: Double
     let waveformModel: JournalWaveformModel
     let parabolaA: Double
     let parabolaAscentAccelerates: Bool
@@ -655,6 +655,10 @@ private struct SarosSpikeWaveField {
         let offset = date.timeIntervalSince(period.spike.date)
         let width = component.width(for: offset)
         let peakHeight = max(component.peakHeight, 0.000_000_001)
+        let sarosDuration = SarosPulseCalculator.averageDuration(for: .saros)
+        let beforeEnergy = energy(at: date.addingTimeInterval(-sarosDuration))
+        let afterEnergy = energy(at: date.addingTimeInterval(sarosDuration))
+        let momentumEnergyPerSaros = (afterEnergy - beforeEnergy) / peakHeight
 
         return SarosSpikeWaveState(
             period: period,
@@ -666,6 +670,7 @@ private struct SarosSpikeWaveField {
             energy: totalEnergy,
             normalizedDerivative: totalDerivative / peakHeight,
             derivative: totalDerivative,
+            momentumEnergyPerSaros: momentumEnergyPerSaros,
             hasPassedSpike: date >= period.spike.date
         )
     }
@@ -733,45 +738,6 @@ private struct SarosSpikeWaveField {
             guard component.contains(date) else { return total }
             return total + component.energy(at: date)
         }
-    }
-
-    private func sawSamples(
-        in interval: DateInterval,
-        components visibleComponents: [SarosSpikeWaveComponent],
-        events: [SarosGlobalFlipEvent]
-    ) -> SarosSpikeWaveSamples {
-        let dates = Set(
-            visibleComponents.flatMap { component in
-                [
-                    interval.start,
-                    component.leftBoundary,
-                    component.period.spike.date,
-                    component.rightBoundary,
-                    interval.end
-                ]
-                .filter { $0 >= interval.start && $0 <= interval.end }
-            }
-        )
-        .sorted()
-
-        var maxEnergy = 0.0
-        let points = dates.map { date in
-            let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
-            let energy = energy(at: date, in: visibleComponents)
-            maxEnergy = max(maxEnergy, energy)
-            return SarosSpikeWaveSample(position: position, energy: energy)
-        }
-
-        let eventEnergyByID = Dictionary(uniqueKeysWithValues: events.map { event in
-            (event.id, energy(at: event.date, in: visibleComponents))
-        })
-
-        return SarosSpikeWaveSamples(
-            interval: interval,
-            points: points,
-            maxEnergy: max(maxEnergy, maxPeakHeight, 0.000_000_001),
-            eventEnergyByID: eventEnergyByID
-        )
     }
 
     func maxEnergy(in interval: DateInterval) -> Double {
@@ -996,16 +962,6 @@ private enum SarosSpikeWaveCalculator {
         return min(max(magnitude, 0.18), 1.8)
     }
 
-    private static func gaussianExtent(forGamma gamma: Double?) -> Double {
-        guard let gamma, gamma.isFinite else {
-            return SarosSpikeWaveComponent.defaultGaussianExtent
-        }
-
-        // Lower absolute gamma means a more central eclipse, so the contribution spreads wider.
-        let gammaScale = min(max(sqrt(max(abs(gamma), 0.02)), 0.45), 1.45)
-        return SarosSpikeWaveComponent.defaultGaussianExtent * gammaScale
-    }
-
     private static func component(
         cluster: EventCluster,
         previous: SarosGlobalFlipEvent?,
@@ -1044,7 +1000,6 @@ private enum SarosSpikeWaveCalculator {
                     )
                 }
                 .reduce(0, +),
-            gaussianExtent: gaussianExtent(forGamma: source.seriesEclipseGamma),
             waveformModel: model,
             parabolaA: parabolaA,
             parabolaAscentAccelerates: parabolaAscentAccelerates(
@@ -1154,8 +1109,6 @@ private enum SarosSpikeWaveCalculator {
 }
 
 private extension SarosSpikeWaveComponent {
-    static let defaultGaussianExtent = 3.2
-
     var periodInterval: DateInterval {
         DateInterval(start: leftBoundary, end: rightBoundary)
     }
@@ -1166,32 +1119,11 @@ private extension SarosSpikeWaveComponent {
 
     func energy(at date: Date) -> Double {
         guard contains(date) else { return 0 }
-
-        if waveformModel == .saw {
-            return sawEnergy(at: date)
-        }
-
-        if waveformModel == .parabola {
-            return parabolaEnergy(at: date)
-        }
-
-        let x = gaussianCoordinate(at: date)
-        let boundaryValue = exp(-0.5 * gaussianExtent * gaussianExtent)
-        let raw = exp(-0.5 * x * x)
-        let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
-
-        return peakHeight * normalized
+        return parabolaEnergy(at: date)
     }
 
     func derivative(at date: Date) -> Double {
         guard contains(date) else { return 0 }
-
-        if waveformModel == .saw {
-            let offset = date.timeIntervalSince(period.spike.date)
-            let span = width(for: offset)
-            guard span > 0 else { return 0 }
-            return (offset < 0 ? peakHeight : -peakHeight) / span
-        }
 
         let step = min(max(width(for: date.timeIntervalSince(period.spike.date)) / 600, 60), 1_800)
         let before = max(leftBoundary, date.addingTimeInterval(-step))
@@ -1199,13 +1131,6 @@ private extension SarosSpikeWaveComponent {
         let duration = max(after.timeIntervalSince(before), 1)
 
         return (energy(at: after) - energy(at: before)) / duration
-    }
-
-    private func gaussianCoordinate(at date: Date) -> Double {
-        let offset = date.timeIntervalSince(period.spike.date)
-        let span = max(width(for: offset), 1)
-        let normalized = min(max(offset / span, -1), 1)
-        return normalized * gaussianExtent
     }
 
     private func parabolaEnergy(at date: Date) -> Double {
@@ -1227,18 +1152,6 @@ private extension SarosSpikeWaveComponent {
         }
 
         return peakHeight * min(max(value, 0), 1)
-    }
-
-    private func sawEnergy(at date: Date) -> Double {
-        if date <= period.spike.date {
-            let duration = max(period.spike.date.timeIntervalSince(leftBoundary), 1)
-            let progress = min(max(date.timeIntervalSince(leftBoundary) / duration, 0), 1)
-            return peakHeight * progress
-        }
-
-        let duration = max(rightBoundary.timeIntervalSince(period.spike.date), 1)
-        let progress = min(max(date.timeIntervalSince(period.spike.date) / duration, 0), 1)
-        return peakHeight * (1 - progress)
     }
 }
 
@@ -1287,8 +1200,6 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var pendingPageScrollDate: Date?
     @State private var isEdgeLoading = false
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
-    @AppStorage(JournalSettings.waveformModelKey) private var waveformModelRawValue = JournalWaveformModel.gaussian.rawValue
-    @AppStorage(JournalSettings.waveformParabolaAKey) private var waveformParabolaA = JournalWaveformSettings.defaultParabolaA
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
@@ -1341,9 +1252,11 @@ private struct SarosSpikeWaveTimelineView: View {
                         scrollToPresent(proxy: scrollProxy)
                     } label: {
                         TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                            let panelState = displayedWaveState ?? currentState
                             SarosSpikeWaveStatePanel(
-                                state: displayedWaveState ?? currentState,
-                                pulseReading: pulseReading(at: timeline.date)
+                                state: panelState,
+                                sarosReading: sarosReading(for: panelState),
+                                pulseReading: pulseReading(at: panelState.date)
                             )
                         }
                         .contentShape(Rectangle())
@@ -1669,8 +1582,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var waveformTaskID: String {
         [
-            waveformModelRawValue,
-            "\(Self.parabolaCacheKey(waveformParabolaA))",
+            "\(Self.parabolaCacheKey(JournalWaveformSettings.currentParabolaA))",
             waveformMergeCloseSpikes ? "merged" : "raw",
             waveformNormalizedAmplitude ? "norm" : "weighted",
             "\(clampedSubdivisionDepth)",
@@ -1780,6 +1692,23 @@ private struct SarosSpikeWaveTimelineView: View {
         )
     }
 
+    private func sarosReading(for state: SarosSpikeWaveState) -> SarosClockReading? {
+        guard let interval = try? services.eclipseService.previousAndNextEclipse(
+            saros: state.period.spike.saros,
+            around: state.date
+        ) else {
+            return nil
+        }
+
+        return try? SarosClockCalculator.reading(
+            saros: state.period.spike.saros,
+            previous: interval.previous,
+            next: interval.next,
+            now: state.date,
+            harmonicDepth: state.period.spike.harmonicDepth
+        )
+    }
+
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -1878,8 +1807,8 @@ private struct SarosSpikeWaveTimelineView: View {
 
         let eclipseService = services.eclipseService
         let harmonicDepth = flip.harmonicDepth
-        let waveformModel = JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
-        let parabolaA = Self.clampedParabolaA(waveformParabolaA)
+        let waveformModel = JournalWaveformModel.parabola
+        let parabolaA = JournalWaveformSettings.currentParabolaA
         let waveformOptions = currentWaveformOptions
         let loadInterval = loadInterval
         let displayInterval = displayInterval
@@ -2294,7 +2223,6 @@ private struct SarosSpikeWaveTimelineView: View {
         let eclipseService = services.eclipseService
         let displayInterval = displayInterval
         let harmonicDepth = flip.harmonicDepth
-        let now = Date()
 
         let result = await Task.detached(priority: .utility) {
             Result<(Int?, [SarosPulseTick]), Error> {
@@ -2302,10 +2230,7 @@ private struct SarosSpikeWaveTimelineView: View {
                 if configuredSaros > 0 {
                     resolvedSaros = configuredSaros
                 } else {
-                    resolvedSaros = try SarosPulseCalculator.defaultActiveSaros(
-                        at: now,
-                        eclipseService: eclipseService
-                    )
+                    resolvedSaros = flip.saros
                 }
 
                 guard let resolvedSaros else {
@@ -2423,11 +2348,20 @@ private struct SarosSpikeWaveSegment: Identifiable, Hashable {
     }
 
     var title: String {
-        "\(speedLabel) \(kind.title) from \(fromSaros) to \(toSaros) Saros"
+        switch kind {
+        case .descent:
+            "From \(fromSaros) peak to \(toSaros) valley"
+        case .ascent:
+            "From \(fromSaros) valley towards \(toSaros) peak"
+        }
     }
 
     var durationText: String {
         SarosDurationUnitFormatter.verboseDuration(duration)
+    }
+
+    var civilDurationText: String {
+        Self.civilDurationFormatter.string(from: duration) ?? "0m"
     }
 
     func distance(to date: Date) -> TimeInterval {
@@ -2440,14 +2374,15 @@ private struct SarosSpikeWaveSegment: Identifiable, Hashable {
         )
     }
 
-    private var speedLabel: String {
-        switch kind {
-        case .ascent:
-            accelerates ? "Rapid" : "Slow"
-        case .descent:
-            accelerates ? "Slow" : "Rapid"
-        }
-    }
+    private static let civilDurationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.day, .hour, .minute]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 3
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter
+    }()
+
 }
 
 private struct SarosSpikeWaveSegmentInfoView: View {
@@ -2463,6 +2398,9 @@ private struct SarosSpikeWaveSegmentInfoView: View {
                 Text(segment.durationText)
                     .font(.caption.monospacedDigit().weight(.medium))
                     .foregroundStyle(.secondary)
+                Text(segment.civilDurationText)
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary.opacity(0.85))
             }
             Spacer(minLength: 0)
         }
@@ -2504,38 +2442,39 @@ private struct SarosSpikeContentMinXPreferenceKey: PreferenceKey {
 
 private struct SarosSpikeWaveStatePanel: View {
     let state: SarosSpikeWaveState
+    var sarosReading: SarosClockReading? = nil
     var pulseReading: SarosPulseReading? = nil
 
-    private var momentumPercent: Int {
-        let gradient = state.normalizedDerivative * SarosPulseCalculator.averageDuration(for: .mega) * 2
-        let momentum = JournalWaveMomentumMapper.momentum(forGradient: gradient)
-        return Int((min(max(abs(momentum), 0), 1) * 100).rounded())
+    private var displayedSarosGlyph: String {
+        sarosReading?.octalAddress ?? state.period.spike.octalAddress
     }
 
-    private var energyPercent: Int {
-        Int((min(max(state.normalizedEnergy, 0), 1) * 100).rounded())
+    private var displayedSarosDepth: Int {
+        sarosReading?.harmonicDepth ?? state.period.spike.harmonicDepth
     }
 
-    private var directionSymbol: String {
-        if abs(state.derivative) < 0.000_000_1 {
-            return "minus"
-        }
-        return state.derivative > 0 ? "arrow.up" : "arrow.down"
+    private var displayedSarosColor: Color {
+        guard let sarosReading else { return state.period.spike.rarity.color }
+        return FlipRarity.rarity(
+            forOctalAddress: sarosReading.octalAddress,
+            harmonicDepth: sarosReading.harmonicDepth
+        ).color
     }
 
-    private var directionColor: Color {
-        if abs(state.derivative) < 0.000_000_1 {
-            return .white
-        }
-        return state.derivative > 0 ? .green : .red
+    private var waveSignature: JournalWaveSignature {
+        JournalWaveEventDescriptorFormatter.signature(
+            energyPercent: state.normalizedEnergy,
+            momentumEnergyPerSaros: state.momentumEnergyPerSaros,
+            valleySpacing: state.width * 2
+        )
     }
 
     var body: some View {
         HStack(spacing: 12) {
             OctalGlyph(
-                value: state.period.spike.octalAddress,
-                depth: state.period.spike.harmonicDepth,
-                color: state.period.spike.rarity.color
+                value: displayedSarosGlyph,
+                depth: displayedSarosDepth,
+                color: displayedSarosColor
             )
             .frame(width: 44, height: 44)
             .padding(8)
@@ -2557,12 +2496,11 @@ private struct SarosSpikeWaveStatePanel: View {
             }
 
             VStack(alignment: .trailing, spacing: 5) {
-                Image(systemName: directionSymbol)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(directionColor)
-                Text("Energy \(energyPercent)%")
+                Text(waveSignature.type.emoji)
+                    .font(.caption)
+                Text(waveSignature.energyText)
                     .font(.caption.monospacedDigit().weight(.semibold))
-                Text("Momentum \(momentumPercent)%")
+                Text(waveSignature.momentumText)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -2577,51 +2515,7 @@ private struct SarosSpikeWaveStatePanel: View {
     }
 
     private var eventDescription: String {
-        SarosSpikeWaveEventDescription.label(at: state.date, period: state.period)
-    }
-}
-
-private enum SarosSpikeWaveEventDescription {
-    static func label(at date: Date, period: SarosSpikePeriod) -> String {
-        let kilo = SarosPulseCalculator.averageDuration(for: .kilo)
-        let isAscent = date <= period.spike.date
-        let boundary = isAscent ? period.leftBoundary : period.rightBoundary
-        let segmentDuration = isAscent ? period.leftDuration : period.rightDuration
-        let peakDistance = abs(date.timeIntervalSince(period.spike.date))
-        let valleyDistance = abs(date.timeIntervalSince(boundary))
-
-        if peakDistance <= kilo, peakDistance <= valleyDistance {
-            return "\(peakModifier(for: segmentDuration)) peak"
-        }
-        if valleyDistance <= kilo, valleyDistance < peakDistance {
-            return "\(valleyModifier(for: segmentDuration)) valley"
-        }
-
-        return "\(paceModifier(for: segmentDuration)) \(isAscent ? "ascent" : "descent")"
-    }
-
-    private static func peakModifier(for duration: TimeInterval) -> String {
-        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
-            return "explosive"
-        }
-        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
-            return "sharp"
-        }
-        return "dull"
-    }
-
-    private static func valleyModifier(for duration: TimeInterval) -> String {
-        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
-            return "narrow"
-        }
-        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
-            return "wide"
-        }
-        return "giant"
-    }
-
-    private static func paceModifier(for duration: TimeInterval) -> String {
-        duration < SarosPulseCalculator.averageDuration(for: .mega) ? "rapid" : "slow"
+        waveSignature.label
     }
 }
 
@@ -3138,7 +3032,7 @@ private struct SarosPhaseDetailView: View {
             let context = entry.context
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
             let matchesRarity = selectedRecordRarity.map { closestRarity == $0.baseRarity } ?? true
-            let matchesDirection = selectedRecordDirection.map { context.direction == $0 } ?? true
+            let matchesDirection = selectedRecordDirection.map { context.waveSignature.direction == $0 } ?? true
             let matchesExtremum = selectedRecordExtremum.map { context.extremum == $0 } ?? true
             let matchesMoon = matchesMoonFilters(entry.eventDate)
             let matchesSpikesOnly = !spikesOnly || context.closestSpike?.saros == series.saros

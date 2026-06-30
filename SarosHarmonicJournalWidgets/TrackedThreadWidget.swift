@@ -18,20 +18,20 @@ struct TrackedThreadProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<TrackedThreadEntry>) -> Void) {
         let snapshot = ThreadTrackingSharedStore.load()
         let now = Date.now
-        let refreshCandidates = [
-            snapshot?.flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay),
-            snapshot?.waveformEndDate
-        ]
-            .compactMap { $0 }
-            .filter { $0 > now.addingTimeInterval(2) }
-        let naturalRefresh = refreshCandidates.min() ?? now.addingTimeInterval(Self.timelineHorizon)
-        let horizonEnd = min(naturalRefresh, now.addingTimeInterval(Self.timelineHorizon))
+
+        if let snapshot,
+           let pulseWindow = WidgetPulseWindow(payload: snapshot.displayPayload(at: now), at: now) {
+            completion(pulseTimeline(snapshot: snapshot, now: now, pulseWindow: pulseWindow))
+            return
+        }
+
+        let horizonEnd = now.addingTimeInterval(Self.fallbackTimelineHorizon)
         var entries: [TrackedThreadEntry] = []
         var cursor = now
 
         while cursor <= horizonEnd {
             entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
-            cursor = cursor.addingTimeInterval(Self.timelineStep)
+            cursor = cursor.addingTimeInterval(Self.fallbackTimelineStep)
         }
 
         if entries.isEmpty {
@@ -41,8 +41,32 @@ struct TrackedThreadProvider: TimelineProvider {
         completion(Timeline(entries: entries, policy: .after(horizonEnd)))
     }
 
-    private static let timelineStep: TimeInterval = 5
-    private static let timelineHorizon: TimeInterval = 15 * 60
+    private func pulseTimeline(
+        snapshot: ThreadTrackingSnapshot,
+        now: Date,
+        pulseWindow: WidgetPulseWindow
+    ) -> Timeline<TrackedThreadEntry> {
+        var entries = [TrackedThreadEntry(date: now, snapshot: snapshot)]
+        var cursor = pulseWindow.nextMiliBoundary(after: now)
+
+        while cursor <= pulseWindow.endDate, entries.count < Self.maxPulseTimelineEntries {
+            entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
+            cursor = cursor.addingTimeInterval(pulseWindow.miliDuration)
+        }
+
+        let refreshDate = cursor <= pulseWindow.endDate
+            ? cursor
+            : pulseWindow.endDate.addingTimeInterval(1)
+
+        return Timeline(
+            entries: entries,
+            policy: .after(refreshDate)
+        )
+    }
+
+    private static let maxPulseTimelineEntries = 24
+    private static let fallbackTimelineStep: TimeInterval = 30
+    private static let fallbackTimelineHorizon: TimeInterval = 15 * 60
 }
 
 struct TrackedThreadWidget: Widget {
@@ -86,6 +110,8 @@ private struct TrackedThreadWidgetView: View {
         now: Date
     ) -> some View {
         let color = Color(hexString: payload.rarityColorHex)
+        let pulseWindow = WidgetPulseWindow(payload: payload, at: now)
+        let signature = payload.waveSignature(at: now)
 
         return Group {
             switch family {
@@ -96,10 +122,13 @@ private struct TrackedThreadWidgetView: View {
                             Text(payload.displayEventName)
                                 .font(.headline)
                                 .lineLimit(1)
-                            Text(payload.secondaryEventDescription(at: now))
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.white.opacity(0.72))
-                                .lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text(signature.type.emoji)
+                                Text(signature.label)
+                            }
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .lineLimit(1)
                             HStack(spacing: 10) {
                                 Text(payload.energyText(at: now))
                                 Text(payload.momentumText(at: now))
@@ -137,11 +166,14 @@ private struct TrackedThreadWidgetView: View {
                         samplePositions: payload.waveformSamplePositions ?? [],
                         spikeMarkers: payload.waveformSpikeMarkers ?? [],
                         color: color,
-                        currentPosition: payload.waveformPosition(at: now),
-                        waveformStartDate: payload.waveformStartDate,
-                        waveformEndDate: payload.waveformEndDate,
+                        currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                        currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                        waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                        waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
                         pulseCycleStartDate: payload.pulseCycleStartDate,
-                        pulseCycleEndDate: payload.pulseCycleEndDate
+                        pulseCycleEndDate: payload.pulseCycleEndDate,
+                        pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                        pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
                     )
                     .frame(maxWidth: .infinity)
                     .frame(height: 62)
@@ -153,10 +185,13 @@ private struct TrackedThreadWidgetView: View {
                             Text(payload.displayEventName)
                                 .font(.headline)
                                 .lineLimit(1)
-                            Text(payload.secondaryEventDescription(at: now))
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.white.opacity(0.72))
-                                .lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text(signature.type.emoji)
+                                Text(signature.label)
+                            }
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .lineLimit(1)
                         }
                         Spacer(minLength: 0)
                         HStack(spacing: 5) {
@@ -188,11 +223,14 @@ private struct TrackedThreadWidgetView: View {
                         samplePositions: payload.waveformSamplePositions ?? [],
                         spikeMarkers: payload.waveformSpikeMarkers ?? [],
                         color: color,
-                        currentPosition: payload.waveformPosition(at: now),
-                        waveformStartDate: payload.waveformStartDate,
-                        waveformEndDate: payload.waveformEndDate,
+                        currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                        currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                        waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                        waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
                         pulseCycleStartDate: payload.pulseCycleStartDate,
-                        pulseCycleEndDate: payload.pulseCycleEndDate
+                        pulseCycleEndDate: payload.pulseCycleEndDate,
+                        pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                        pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
                     )
                     .frame(height: 50)
                 }
@@ -234,6 +272,7 @@ extension ThreadTrackingSnapshot {
         ],
         waveformStartDate: Date.now.addingTimeInterval(-6 * 60 * 60),
         waveformEndDate: Date.now.addingTimeInterval(6 * 60 * 60),
+        widgetRangeKilosaros: 8,
         glyph: "7210230",
         rarityRawValue: "rare-7",
         rarityTitle: "Omega Triplex",

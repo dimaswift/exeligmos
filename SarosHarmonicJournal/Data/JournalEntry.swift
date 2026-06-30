@@ -34,22 +34,222 @@ enum JournalWaveExtremum: String, Codable, CaseIterable, Identifiable {
 }
 
 enum JournalWaveMomentumMapper {
-    private static let flatAngle = 5.0 * Double.pi / 180.0
-    private static let verticalAngle = 88.0 * Double.pi / 180.0
-
     static func momentum(forGradient gradient: Double) -> Double {
         guard gradient.isFinite else { return 0 }
-
-        let angle = atan(abs(gradient))
-        let normalized = min(max((angle - flatAngle) / (verticalAngle - flatAngle), 0), 1)
-        guard normalized > 0 else { return 0 }
-        return normalized * (gradient >= 0 ? 1 : -1)
+        return gradient
     }
 
     static func direction(forGradient gradient: Double) -> JournalWaveDirection {
         let momentum = momentum(forGradient: gradient)
-        guard abs(momentum) > 0 else { return .flat }
+        guard abs(momentum) > 0.000_001 else { return .flat }
         return gradient > 0 ? .ascending : .descending
+    }
+}
+
+enum JournalWaveEventType: String, Codable, Hashable, CaseIterable, Identifiable {
+    case peak
+    case valley
+    case ascent
+    case descent
+    case flat
+
+    var id: String { rawValue }
+
+    var emoji: String {
+        switch self {
+        case .peak: "🎯"
+        case .valley: "🕳️"
+        case .ascent: "📈"
+        case .descent: "📉"
+        case .flat: "━"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .peak: "Peak"
+        case .valley: "Valley"
+        case .ascent: "Ascent"
+        case .descent: "Descent"
+        case .flat: "Flat"
+        }
+    }
+
+    var direction: JournalWaveDirection {
+        switch self {
+        case .ascent:
+            .ascending
+        case .descent:
+            .descending
+        case .peak, .valley, .flat:
+            .flat
+        }
+    }
+}
+
+struct JournalWaveSignature: Codable, Hashable {
+    let type: JournalWaveEventType
+    let label: String
+    let energyBin: Int
+    let momentumBin: Int
+    let momentumSign: Int
+
+    var direction: JournalWaveDirection {
+        type.direction
+    }
+
+    var energyText: String {
+        "E \(JournalWaveEventDescriptorFormatter.octalString(forBin: energyBin))"
+    }
+
+    var momentumText: String {
+        let sign = momentumSign > 0 ? "+" : momentumSign < 0 ? "-" : ""
+        return "M \(sign)\(JournalWaveEventDescriptorFormatter.octalString(forBin: momentumBin))"
+    }
+}
+
+enum JournalWaveEventDescriptorFormatter {
+    static let maximumDisplayBin = 511
+    static let peakEnergyThreshold = 504
+    static let valleyEnergyThreshold = 0.20
+
+    static func label(
+        energyPercent: Double,
+        momentumEnergyPerSaros: Double,
+        valleySpacing: TimeInterval?
+    ) -> String {
+        signature(
+            energyPercent: energyPercent,
+            momentumEnergyPerSaros: momentumEnergyPerSaros,
+            valleySpacing: valleySpacing
+        ).label
+    }
+
+    static func signature(
+        energyPercent: Double,
+        momentumEnergyPerSaros: Double,
+        valleySpacing: TimeInterval?
+    ) -> JournalWaveSignature {
+        let energyBin = energyBin(for: energyPercent)
+        let momentumBin = momentumBin(for: momentumEnergyPerSaros)
+        let momentumSign = momentumEnergyPerSaros > 0 ? 1 : momentumEnergyPerSaros < 0 ? -1 : 0
+
+        if energyBin >= peakEnergyThreshold {
+            return JournalWaveSignature(
+                type: .peak,
+                label: "\(peakModifier(for: momentumBin)) peak",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+
+        if energyPercent <= valleyEnergyThreshold {
+            return JournalWaveSignature(
+                type: .valley,
+                label: "\(valleyModifier(for: valleySpacing)) valley",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+
+        if momentumBin < 1 {
+            return JournalWaveSignature(
+                type: .flat,
+                label: "flat",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: 0
+            )
+        }
+
+        if momentumEnergyPerSaros > 0 {
+            return JournalWaveSignature(
+                type: .ascent,
+                label: "\(ascentModifier(for: momentumBin)) ascent",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+        return JournalWaveSignature(
+            type: .descent,
+            label: "\(descentModifier(for: momentumBin)) descent",
+            energyBin: energyBin,
+            momentumBin: momentumBin,
+            momentumSign: momentumSign
+        )
+    }
+
+    static func momentumText(_ momentumEnergyPerSaros: Double?) -> String {
+        guard let momentumEnergyPerSaros else { return "M --" }
+        let sign = momentumEnergyPerSaros > 0 ? "+" : momentumEnergyPerSaros < 0 ? "-" : ""
+        return "M \(sign)\(octalString(forBin: momentumBin(for: momentumEnergyPerSaros)))"
+    }
+
+    static func energyText(_ energyPercent: Double?) -> String {
+        guard let energyPercent else { return "E --" }
+        return "E \(octalString(forBin: energyBin(for: energyPercent)))"
+    }
+
+    static func energyBin(for energyPercent: Double) -> Int {
+        guard energyPercent.isFinite else { return 0 }
+        let clamped = min(max(energyPercent, 0), 1)
+        return min(max(Int(floor(clamped * 512)), 0), maximumDisplayBin)
+    }
+
+    static func momentumBin(for momentumEnergyPerSaros: Double) -> Int {
+        guard momentumEnergyPerSaros.isFinite else { return 0 }
+        let clamped = min(max(abs(momentumEnergyPerSaros), 0), 1)
+        return min(max(Int(floor(clamped * 512)), 0), maximumDisplayBin)
+    }
+
+    static func octalString(forBin bin: Int) -> String {
+        String(min(max(bin, 0), maximumDisplayBin), radix: 8)
+            .leftPadded(toLength: 3, withPad: "0")
+    }
+
+    static func direction(for momentumEnergyPerSaros: Double) -> JournalWaveDirection {
+        if momentumBin(for: momentumEnergyPerSaros) < 1 {
+            return .flat
+        }
+        return momentumEnergyPerSaros > 0 ? .ascending : .descending
+    }
+
+    private static func valleyModifier(for spacing: TimeInterval?) -> String {
+        guard let spacing else { return "vast" }
+        if spacing <= SarosPulseCalculator.averageDuration(for: .saros) {
+            return "gorge"
+        }
+        if spacing <= SarosPulseCalculator.averageDuration(for: .kilo) {
+            return "narrow"
+        }
+        if spacing <= SarosPulseCalculator.averageDuration(for: .mega) {
+            return "wide"
+        }
+        return "vast"
+    }
+
+    private static func peakModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "creeping" }
+        if momentumBin <= 8 { return "gradual" }
+        if momentumBin <= 32 { return "sharp" }
+        return "exploding"
+    }
+
+    private static func ascentModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "crawling" }
+        if momentumBin <= 8 { return "slow" }
+        if momentumBin <= 32 { return "rapid" }
+        return "rocketing"
+    }
+
+    private static func descentModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "creeping" }
+        if momentumBin <= 8 { return "gradual" }
+        if momentumBin <= 32 { return "rapid" }
+        return "plunging"
     }
 }
 

@@ -96,6 +96,7 @@ enum JournalSettings {
     static let waveformNormalizedAmplitudeKey = "waveformNormalizedAmplitude"
     static let waveformSubdivisionDepthKey = "waveformSubdivisionDepth"
     static let waveformAmplitudeMultiplierKey = "waveformAmplitudeMultiplier"
+    static let widgetWaveformKilosarosRangeKey = "widgetWaveformKilosarosRange"
     static let notificationRarityPreferencesKey = "notificationRarityPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
@@ -191,50 +192,36 @@ enum JournalSettings {
 }
 
 enum JournalWaveformModel: String, CaseIterable, Identifiable, Sendable {
-    case gaussian
-    case saw
     case parabola
 
     var id: String { rawValue }
 
     var title: String {
-        switch self {
-        case .gaussian: "Gaussian"
-        case .saw: "Saw"
-        case .parabola: "Parabola"
-        }
+        "Parabola"
     }
 
     var detail: String {
-        switch self {
-        case .gaussian:
-            "Smooth peak fitted between neighbouring spike midpoints."
-        case .saw:
-            "Straight rise from midpoint to spike, then straight fall to the next midpoint."
-        case .parabola:
-            "Curved rise and fall, alternating acceleration by the Saros north/south state."
-        }
+        "Curved rise and fall, alternating acceleration by the Saros north/south state."
     }
 
     static var current: JournalWaveformModel {
-        let rawValue = UserDefaults.standard.string(forKey: JournalSettings.waveformModelKey)
-        return rawValue.flatMap(JournalWaveformModel.init(rawValue:)) ?? .gaussian
+        .parabola
     }
 }
 
 enum JournalWaveformSettings {
-    static let defaultParabolaA = 2.6
+    static let defaultParabolaA = 2.0
     static let parabolaARange = 1.0...8.0
     static let defaultAmplitudeMultiplier = 1.0
     static let amplitudeMultiplierRange = 0.25...4.0
     static let mergeCloseSpikeThreshold: TimeInterval = 36 * 60 + 10
     static let defaultSubdivisionDepth = 5
     static let subdivisionDepthRange = 1...8
+    static let defaultWidgetWaveformKilosarosRange = 8
+    static let widgetWaveformKilosarosRange = 1...16
 
     static var currentParabolaA: Double {
-        let stored = UserDefaults.standard.double(forKey: JournalSettings.waveformParabolaAKey)
-        guard stored.isFinite, stored > 0 else { return defaultParabolaA }
-        return min(max(stored, parabolaARange.lowerBound), parabolaARange.upperBound)
+        defaultParabolaA
     }
 
     static var currentSubdivisionDepth: Int {
@@ -247,6 +234,16 @@ enum JournalWaveformSettings {
         let stored = UserDefaults.standard.double(forKey: JournalSettings.waveformAmplitudeMultiplierKey)
         guard stored.isFinite, stored > 0 else { return defaultAmplitudeMultiplier }
         return min(max(stored, amplitudeMultiplierRange.lowerBound), amplitudeMultiplierRange.upperBound)
+    }
+
+    static var currentWidgetWaveformKilosarosRange: Int {
+        let stored = UserDefaults.standard.integer(forKey: JournalSettings.widgetWaveformKilosarosRangeKey)
+        let raw = stored == 0 ? defaultWidgetWaveformKilosarosRange : stored
+        return min(max(raw, widgetWaveformKilosarosRange.lowerBound), widgetWaveformKilosarosRange.upperBound)
+    }
+
+    static func clampedWidgetWaveformKilosarosRange(_ value: Int) -> Int {
+        min(max(value, widgetWaveformKilosarosRange.lowerBound), widgetWaveformKilosarosRange.upperBound)
     }
 }
 

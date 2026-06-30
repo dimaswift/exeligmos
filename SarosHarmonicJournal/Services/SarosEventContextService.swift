@@ -598,14 +598,11 @@ struct JournalEventWavePeriod {
 }
 
 struct JournalEventWaveComponent {
-    static let defaultGaussianExtent = 3.2
-
     let id: String
     let sourceSpikeID: String
     let contributorSpikes: [JournalSpikeReference]
     let period: JournalEventWavePeriod
     let peakHeight: Double
-    let gaussianExtent: Double
     let waveformModel: JournalWaveformModel
     let parabolaA: Double
     let parabolaAscentAccelerates: Bool
@@ -625,32 +622,11 @@ struct JournalEventWaveComponent {
 
     func energy(at date: Date) -> Double {
         guard contains(date) else { return 0 }
-
-        if waveformModel == .saw {
-            return sawEnergy(at: date)
-        }
-
-        if waveformModel == .parabola {
-            return parabolaEnergy(at: date)
-        }
-
-        let x = gaussianCoordinate(at: date)
-        let boundaryValue = exp(-0.5 * gaussianExtent * gaussianExtent)
-        let raw = exp(-0.5 * x * x)
-        let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
-
-        return peakHeight * normalized
+        return parabolaEnergy(at: date)
     }
 
     func derivative(at date: Date) -> Double {
         guard contains(date) else { return 0 }
-
-        if waveformModel == .saw {
-            let offset = date.timeIntervalSince(spike.date)
-            let span = width(for: offset)
-            guard span > 0 else { return 0 }
-            return (offset < 0 ? peakHeight : -peakHeight) / span
-        }
 
         let step = min(max(width(for: date.timeIntervalSince(spike.date)) / 600, 60), 1_800)
         let before = max(period.leftBoundary, date.addingTimeInterval(-step))
@@ -677,18 +653,6 @@ struct JournalEventWaveComponent {
             : max(period.rightBoundary.timeIntervalSince(spike.date), 1)
     }
 
-    private func sawEnergy(at date: Date) -> Double {
-        if date <= spike.date {
-            let duration = max(spike.date.timeIntervalSince(period.leftBoundary), 1)
-            let progress = min(max(date.timeIntervalSince(period.leftBoundary) / duration, 0), 1)
-            return peakHeight * progress
-        }
-
-        let duration = max(period.rightBoundary.timeIntervalSince(spike.date), 1)
-        let progress = min(max(date.timeIntervalSince(spike.date) / duration, 0), 1)
-        return peakHeight * (1 - progress)
-    }
-
     private func parabolaEnergy(at date: Date) -> Double {
         let a = min(max(parabolaA, 1.0), 8.0)
         let value: Double
@@ -709,12 +673,6 @@ struct JournalEventWaveComponent {
 
         return peakHeight * min(max(value, 0), 1)
     }
-
-    private func gaussianCoordinate(at date: Date) -> Double {
-        let offset = date.timeIntervalSince(spike.date)
-        let normalized = min(max(offset / width(for: offset), -1), 1)
-        return normalized * gaussianExtent
-    }
 }
 
 enum JournalWaveEventLabeler {
@@ -726,6 +684,7 @@ enum JournalWaveEventLabeler {
         }
 
         let label: String
+        let signature: JournalWaveSignature
         let segmentDuration: TimeInterval
         let segmentKind: SegmentKind
     }
@@ -741,89 +700,41 @@ enum JournalWaveEventLabeler {
         at date: Date,
         spikes: [JournalSpikeReference]
     ) -> Descriptor {
-        let field = JournalEventWaveform.field(spikes: spikes)
-        guard let component = activeComponent(at: date, in: field.components) else {
-            return Descriptor(label: "flat", segmentDuration: 0, segmentKind: .flat)
-        }
-
-        let isAscent = date <= component.spike.date
-        let midpoint = isAscent ? component.period.leftBoundary : component.period.rightBoundary
-        let segmentDuration = abs(component.spike.date.timeIntervalSince(midpoint))
-        let peakDistance = abs(date.timeIntervalSince(component.spike.date))
-        let valleyDistance = abs(date.timeIntervalSince(midpoint))
-        let kilo = SarosPulseCalculator.averageDuration(for: .kilo)
-
-        if peakDistance <= kilo, peakDistance <= valleyDistance {
-            return Descriptor(
-                label: "\(peakModifier(for: segmentDuration)) peak",
-                segmentDuration: segmentDuration,
-                segmentKind: isAscent ? .ascent : .descent
+        guard let sample = JournalTemporalEngine.sample(at: date, spikes: spikes) else {
+            let signature = JournalWaveEventDescriptorFormatter.signature(
+                energyPercent: 0,
+                momentumEnergyPerSaros: 0,
+                valleySpacing: nil
             )
+            return Descriptor(label: signature.label, signature: signature, segmentDuration: 0, segmentKind: .flat)
         }
 
-        if valleyDistance <= kilo, valleyDistance < peakDistance {
-            return Descriptor(
-                label: "\(valleyModifier(for: segmentDuration)) valley",
-                segmentDuration: segmentDuration,
-                segmentKind: isAscent ? .ascent : .descent
-            )
+        let segmentKind: Descriptor.SegmentKind
+        switch sample.type {
+        case .ascent:
+            segmentKind = .ascent
+        case .descent:
+            segmentKind = .descent
+        case .peak, .valley, .flat:
+            segmentKind = .flat
         }
 
-        let segmentKind: Descriptor.SegmentKind = isAscent ? .ascent : .descent
         return Descriptor(
-            label: "\(paceModifier(for: segmentDuration)) \(segmentKind.rawValue)",
-            segmentDuration: segmentDuration,
+            label: sample.signature.label,
+            signature: sample.signature,
+            segmentDuration: sample.segment.duration,
             segmentKind: segmentKind
         )
-    }
-
-    private static func activeComponent(
-        at date: Date,
-        in components: [JournalEventWaveComponent]
-    ) -> JournalEventWaveComponent? {
-        if let component = components.first(where: { $0.contains(date) }) {
-            return component
-        }
-
-        return components.min { lhs, rhs in
-            distance(from: date, to: lhs.periodInterval) < distance(from: date, to: rhs.periodInterval)
-        }
-    }
-
-    private static func distance(from date: Date, to interval: DateInterval) -> TimeInterval {
-        if interval.contains(date) { return 0 }
-        if date < interval.start { return interval.start.timeIntervalSince(date) }
-        return date.timeIntervalSince(interval.end)
-    }
-
-    private static func peakModifier(for duration: TimeInterval) -> String {
-        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
-            return "explosive"
-        }
-        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
-            return "sharp"
-        }
-        return "dull"
-    }
-
-    private static func valleyModifier(for duration: TimeInterval) -> String {
-        if duration < SarosPulseCalculator.averageDuration(for: .kilo) {
-            return "narrow"
-        }
-        if duration < SarosPulseCalculator.averageDuration(for: .mega) {
-            return "wide"
-        }
-        return "giant"
-    }
-
-    private static func paceModifier(for duration: TimeInterval) -> String {
-        duration < SarosPulseCalculator.averageDuration(for: .mega) ? "rapid" : "slow"
     }
 }
 
 extension JournalEventContext {
     var secondaryEventLabel: String {
-        eventDescriptor.label
+        waveSignature.label
+    }
+
+    var waveSignature: JournalWaveSignature {
+        eventDescriptor.signature
     }
 
     var eventDescriptor: JournalWaveEventLabeler.Descriptor {
@@ -975,39 +886,6 @@ struct JournalEventWaveField {
             guard component.contains(date) else { return total }
             return total + component.energy(at: date)
         }
-    }
-
-    private func sawSamples(
-        in interval: DateInterval,
-        components visibleComponents: [JournalEventWaveComponent],
-        spikes: [JournalSpikeReference]
-    ) -> JournalEventWaveSamples {
-        let dates = Set(visibleComponents.flatMap { $0.controlDates(in: interval) })
-            .sorted()
-        var maxEnergy = 0.0
-        let points = dates.map { date in
-            let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
-            let energy = energy(at: date, in: visibleComponents)
-            maxEnergy = max(maxEnergy, energy)
-
-            return JournalEventWaveSample(
-                date: date,
-                position: position,
-                energy: energy
-            )
-        }
-
-        var eventEnergyByID: [String: Double] = [:]
-        for spike in spikes {
-            eventEnergyByID[spike.id] = energy(at: spike.date, in: visibleComponents)
-        }
-
-        return JournalEventWaveSamples(
-            interval: interval,
-            points: points,
-            maxEnergy: max(maxEnergy, maxPeakHeight, 0.000_000_001),
-            eventEnergyByID: eventEnergyByID
-        )
     }
 
     private func adaptiveSampleDates(
@@ -1242,7 +1120,6 @@ enum JournalEventWaveform {
                     )
                 }
                 .reduce(0, +),
-            gaussianExtent: gaussianExtent(forGamma: spike.gamma),
             waveformModel: model,
             parabolaA: parabolaA,
             parabolaAscentAccelerates: parabolaAscentAccelerates(spike: spike, fallbackSeed: spike.saros + index),
@@ -1287,15 +1164,6 @@ enum JournalEventWaveform {
     private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
         guard let magnitude, magnitude.isFinite else { return 1 }
         return min(max(magnitude, 0.18), 1.8)
-    }
-
-    private static func gaussianExtent(forGamma gamma: Double?) -> Double {
-        guard let gamma, gamma.isFinite else {
-            return JournalEventWaveComponent.defaultGaussianExtent
-        }
-
-        let gammaScale = min(max(sqrt(max(abs(gamma), 0.02)), 0.45), 1.45)
-        return JournalEventWaveComponent.defaultGaussianExtent * gammaScale
     }
 
     private static func previousDistinctSpike(
@@ -1370,222 +1238,28 @@ enum JournalEventWaveform {
 }
 
 enum JournalWaveMetricsCalculator {
-    private static let visualWindow: TimeInterval = SarosPulseCalculator.averageDuration(for: .mega) * 2
-    private static let visualStep: TimeInterval = 900
     static let flatMomentumThreshold = 0.000_1
 
     static func metrics(
         at date: Date,
         spikes: [JournalSpikeReference]
     ) -> JournalWaveMetricsSnapshot {
-        let sorted = spikes.sorted { $0.date < $1.date }
-        let majorPeriod: TimeInterval
-        if let first = sorted.first?.date, let last = sorted.last?.date {
-            majorPeriod = Swift.max(last.timeIntervalSince(first), 0.0)
-        } else {
-            majorPeriod = 0.0
-        }
-
-        let field = JournalEventWaveform.field(spikes: sorted)
-        let energy = field.energy(at: date)
-        let maxEnergy = field.coveredInterval.map { field.maxEnergy(in: $0) } ?? 0
-        let normalizedEnergy = Swift.max(energy / Swift.max(maxEnergy, 1.0), 0.0)
-        let energyPercent = maxEnergy > 0 ? Swift.min(normalizedEnergy, 1.0) : 0.0
-        let dynamics = dynamics(at: date, spikes: sorted)
-
-        let extremum: JournalWaveExtremum
-        if energyPercent >= 0.99 {
-            extremum = .localMaximum
-        } else if energyPercent <= 0.01 {
-            extremum = .localMinimum
-        } else {
-            extremum = .none
-        }
-
-        return JournalWaveMetricsSnapshot(
-            energy: energy,
-            energyPercent: energyPercent,
-            slope: dynamics.slope,
-            momentum: dynamics.momentum,
-            direction: dynamics.direction,
-            extremum: extremum,
-            majorPeriodSeconds: majorPeriod
-        )
+        JournalTemporalEngine.metrics(at: date, spikes: spikes)
     }
 
     static func dynamics(
         at date: Date,
         spikes: [JournalSpikeReference]
     ) -> JournalWaveDynamicsSnapshot {
-        let sorted = spikes.sorted { $0.date < $1.date }
-        guard !sorted.isEmpty else {
+        let metrics = JournalTemporalEngine.metrics(at: date, spikes: spikes)
+        guard !spikes.isEmpty else {
             return JournalWaveDynamicsSnapshot(slope: 0, momentum: 0, direction: .flat)
         }
-
-        let interval = JournalEventWaveform.displayInterval(centeredOn: date)
-        let field = JournalEventWaveform.field(spikes: sorted)
-        let before = date.addingTimeInterval(-visualStep)
-        let after = date.addingTimeInterval(visualStep)
-        let beforeEnergy = field.energy(at: before)
-        let afterEnergy = field.energy(at: after)
-        let slope = (afterEnergy - beforeEnergy) / Swift.max(after.timeIntervalSince(before), 1.0)
-        let range = field.energyRange(in: interval)
-        guard range > 0.000_000_001 else {
-            return JournalWaveDynamicsSnapshot(slope: slope, momentum: 0, direction: .flat)
-        }
-
-        let rise = (afterEnergy - beforeEnergy) / range
-        let run = after.timeIntervalSince(before) / visualWindow
-        let gradient = rise / Swift.max(run, 0.000_000_001)
-        let direction = JournalWaveMomentumMapper.direction(forGradient: gradient)
-        let momentum = direction == .flat ? 0.0 : JournalWaveMomentumMapper.momentum(forGradient: gradient)
         return JournalWaveDynamicsSnapshot(
-            slope: slope,
-            momentum: momentum,
-            direction: direction
+            slope: metrics.slope,
+            momentum: metrics.momentum,
+            direction: metrics.direction
         )
-    }
-
-    private static func mixtureEnergy(
-        at date: Date,
-        spikes: [JournalSpikeReference]
-    ) -> Double {
-        spikes.enumerated().reduce(0) { energy, item in
-            let (index, spike) = item
-            let left = boundaryBefore(index: index, spikes: spikes)
-            let right = boundaryAfter(index: index, spikes: spikes)
-            return energy + gaussianEnergy(at: date, spike: spike, leftBoundary: left, rightBoundary: right)
-        }
-    }
-
-    private static func sampledMaxEnergy(spikes: [JournalSpikeReference]) -> Double {
-        guard let first = spikes.first?.date, let last = spikes.last?.date else { return 0 }
-        let duration = max(last.timeIntervalSince(first), 1)
-        let sampleCount = 256
-
-        return (0...sampleCount).reduce(0) { maximum, index in
-            let date = first.addingTimeInterval(duration * Double(index) / Double(sampleCount))
-            return max(maximum, mixtureEnergy(at: date, spikes: spikes))
-        }
-    }
-
-    private static func sampledMaxSlope(spikes: [JournalSpikeReference]) -> Double {
-        guard let first = spikes.first?.date, let last = spikes.last?.date else { return 0 }
-        let duration = max(last.timeIntervalSince(first), 1)
-        let sampleCount = 256
-        let step = max(duration / Double(sampleCount), 1)
-        var maximum = 0.0
-
-        for index in 0...sampleCount {
-            let date = first.addingTimeInterval(duration * Double(index) / Double(sampleCount))
-            let before = date.addingTimeInterval(-step)
-            let after = date.addingTimeInterval(step)
-            let slope = (mixtureEnergy(at: after, spikes: spikes) - mixtureEnergy(at: before, spikes: spikes)) / (step * 2)
-            maximum = max(maximum, abs(slope))
-        }
-
-        return maximum
-    }
-
-    private static func sampledEnergyRange(
-        in interval: DateInterval,
-        spikes: [JournalSpikeReference]
-    ) -> Double {
-        let sampleCount = 192
-        var minimum = Double.greatestFiniteMagnitude
-        var maximum = 0.0
-
-        for index in 0...sampleCount {
-            let date = interval.start.addingTimeInterval(interval.duration * Double(index) / Double(sampleCount))
-            let energy = mixtureEnergy(at: date, spikes: spikes)
-            minimum = min(minimum, energy)
-            maximum = max(maximum, energy)
-        }
-
-        guard minimum.isFinite else { return 0 }
-        return max(maximum - minimum, 0)
-    }
-
-    private static func sampledSplineEnergyRange(
-        in interval: DateInterval,
-        controlPoints: [JournalSplineWaveformPoint]
-    ) -> Double {
-        let sampleCount = 192
-        var minimum = Double.greatestFiniteMagnitude
-        var maximum = 0.0
-
-        for index in 0...sampleCount {
-            let date = interval.start.addingTimeInterval(interval.duration * Double(index) / Double(sampleCount))
-            let energy = JournalEventSplineWaveform.energy(at: date, controlPoints: controlPoints)
-            minimum = min(minimum, energy)
-            maximum = max(maximum, energy)
-        }
-
-        guard minimum.isFinite else { return 0 }
-        return max(maximum - minimum, 0)
-    }
-
-    private static func boundaryBefore(index: Int, spikes: [JournalSpikeReference]) -> Date {
-        let spike = spikes[index]
-        guard index > spikes.startIndex else {
-            let next = spikes.dropFirst().first?.date ?? spike.date.addingTimeInterval(86_400)
-            return spike.date.addingTimeInterval(-max(next.timeIntervalSince(spike.date), 1) / 2)
-        }
-        return midpoint(spikes[index - 1].date, spike.date)
-    }
-
-    private static func boundaryAfter(index: Int, spikes: [JournalSpikeReference]) -> Date {
-        let spike = spikes[index]
-        guard index < spikes.index(before: spikes.endIndex) else {
-            let previous = index > spikes.startIndex ? spikes[index - 1].date : spike.date.addingTimeInterval(-86_400)
-            return spike.date.addingTimeInterval(max(spike.date.timeIntervalSince(previous), 1) / 2)
-        }
-        return midpoint(spike.date, spikes[index + 1].date)
-    }
-
-    private static func gaussianEnergy(
-        at date: Date,
-        spike: JournalSpikeReference,
-        leftBoundary: Date,
-        rightBoundary: Date
-    ) -> Double {
-        guard date >= leftBoundary, date <= rightBoundary else { return 0 }
-        let offset = date.timeIntervalSince(spike.date)
-        let span = max(offset < 0 ? spike.date.timeIntervalSince(leftBoundary) : rightBoundary.timeIntervalSince(spike.date), 1)
-        let extent = gaussianExtent(forGamma: spike.gamma)
-        let x = min(max(offset / span, -1), 1) * extent
-        let boundaryValue = exp(-0.5 * extent * extent)
-        let raw = exp(-0.5 * x * x)
-        let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
-        return peakHeight(for: spike) * normalized
-    }
-
-    private static func peakHeight(for spike: JournalSpikeReference) -> Double {
-        basePeakHeight(for: spike.rarity) * 2.5 * magnitudeAmplitudeMultiplier(for: spike.magnitude)
-    }
-
-    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
-        switch rarity.baseRarity {
-        case .mythic: 4
-        case .legendary: 2
-        case .epic: 1
-        case .rare: 0.5
-        default: 0.25
-        }
-    }
-
-    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
-        guard let magnitude, magnitude.isFinite else { return 1 }
-        return min(max(magnitude, 0.18), 1.8)
-    }
-
-    private static func gaussianExtent(forGamma gamma: Double?) -> Double {
-        guard let gamma, gamma.isFinite else { return 3.2 }
-        return 3.2 * min(max(sqrt(max(abs(gamma), 0.02)), 0.45), 1.45)
-    }
-
-    private static func midpoint(_ lhs: Date, _ rhs: Date) -> Date {
-        lhs.addingTimeInterval(rhs.timeIntervalSince(lhs) / 2)
     }
 }
 
@@ -1614,109 +1288,5 @@ extension SarosEventContextService {
             extremum: metrics.extremum,
             majorPeriodSeconds: metrics.majorPeriodSeconds
         )
-    }
-
-    fileprivate static func mixtureEnergy(
-        at date: Date,
-        spikes: [JournalSpikeReference]
-    ) -> Double {
-        spikes.enumerated().reduce(0) { energy, item in
-            let (index, spike) = item
-            let left = boundaryBefore(index: index, spikes: spikes)
-            let right = boundaryAfter(index: index, spikes: spikes)
-            return energy + gaussianEnergy(at: date, spike: spike, leftBoundary: left, rightBoundary: right)
-        }
-    }
-
-    private static func sampledMaxEnergy(spikes: [JournalSpikeReference]) -> Double {
-        guard let first = spikes.first?.date, let last = spikes.last?.date else { return 0 }
-        let duration = max(last.timeIntervalSince(first), 1)
-        let sampleCount = 256
-
-        return (0...sampleCount).reduce(0) { maximum, index in
-            let date = first.addingTimeInterval(duration * Double(index) / Double(sampleCount))
-            return max(maximum, mixtureEnergy(at: date, spikes: spikes))
-        }
-    }
-
-    private static func sampledMaxSlope(spikes: [JournalSpikeReference]) -> Double {
-        guard let first = spikes.first?.date, let last = spikes.last?.date else { return 0 }
-        let duration = max(last.timeIntervalSince(first), 1)
-        let sampleCount = 256
-        let step = max(duration / Double(sampleCount), 1)
-        var maximum = 0.0
-
-        for index in 0...sampleCount {
-            let date = first.addingTimeInterval(duration * Double(index) / Double(sampleCount))
-            let before = date.addingTimeInterval(-step)
-            let after = date.addingTimeInterval(step)
-            let slope = (mixtureEnergy(at: after, spikes: spikes) - mixtureEnergy(at: before, spikes: spikes)) / (step * 2)
-            maximum = max(maximum, abs(slope))
-        }
-
-        return maximum
-    }
-
-    private static func boundaryBefore(index: Int, spikes: [JournalSpikeReference]) -> Date {
-        let spike = spikes[index]
-        guard index > spikes.startIndex else {
-            let next = spikes.dropFirst().first?.date ?? spike.date.addingTimeInterval(86_400)
-            return spike.date.addingTimeInterval(-max(next.timeIntervalSince(spike.date), 1) / 2)
-        }
-        return midpoint(spikes[index - 1].date, spike.date)
-    }
-
-    private static func boundaryAfter(index: Int, spikes: [JournalSpikeReference]) -> Date {
-        let spike = spikes[index]
-        guard index < spikes.index(before: spikes.endIndex) else {
-            let previous = index > spikes.startIndex ? spikes[index - 1].date : spike.date.addingTimeInterval(-86_400)
-            return spike.date.addingTimeInterval(max(spike.date.timeIntervalSince(previous), 1) / 2)
-        }
-        return midpoint(spike.date, spikes[index + 1].date)
-    }
-
-    private static func gaussianEnergy(
-        at date: Date,
-        spike: JournalSpikeReference,
-        leftBoundary: Date,
-        rightBoundary: Date
-    ) -> Double {
-        guard date >= leftBoundary, date <= rightBoundary else { return 0 }
-        let offset = date.timeIntervalSince(spike.date)
-        let span = max(offset < 0 ? spike.date.timeIntervalSince(leftBoundary) : rightBoundary.timeIntervalSince(spike.date), 1)
-        let extent = gaussianExtent(forGamma: spike.gamma)
-        let x = min(max(offset / span, -1), 1) * extent
-        let boundaryValue = exp(-0.5 * extent * extent)
-        let raw = exp(-0.5 * x * x)
-        let normalized = max((raw - boundaryValue) / max(1 - boundaryValue, 0.000_000_001), 0)
-        return peakHeight(for: spike) * normalized
-    }
-
-    private static func peakHeight(for spike: JournalSpikeReference) -> Double {
-        basePeakHeight(for: spike.rarity) * 2.5 * magnitudeAmplitudeMultiplier(for: spike.magnitude)
-    }
-
-    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
-        switch rarity.baseRarity {
-        case .mythic: 4
-        case .legendary: 2
-        case .epic: 1
-        case .rare: 0.5
-        default: 0.25
-        }
-    }
-
-    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
-        guard let magnitude, magnitude.isFinite else { return 1 }
-        return min(max(magnitude, 0.18), 1.8)
-    }
-
-    private static func gaussianExtent(forGamma gamma: Double?) -> Double {
-        guard let gamma, gamma.isFinite else { return 3.2 }
-        return 3.2 * min(max(sqrt(max(abs(gamma), 0.02)), 0.45), 1.45)
-    }
-
-    private static func midpoint(_ lhs: Date, _ rhs: Date) -> Date {
-        lhs.addingTimeInterval(rhs.timeIntervalSince(lhs) / 2)
     }
 }

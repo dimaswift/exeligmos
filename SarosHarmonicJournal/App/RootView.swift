@@ -200,7 +200,7 @@ private struct FeedView: View {
             let context = entry.context
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
             let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
-            let matchesDirection = selectedDirection.map { context.direction == $0 } ?? true
+            let matchesDirection = selectedDirection.map { context.waveSignature.direction == $0 } ?? true
             let matchesExtremum = selectedExtremum.map { context.extremum == $0 } ?? true
             let matchesSaros = selectedSaros.map { context.sarosNumbers.contains($0) } ?? true
             let matchesMoon = matchesMoonFilters(entry.eventDate)
@@ -1177,6 +1177,7 @@ private struct LiveTrackingRolloverObserver: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @AppStorage(JournalSettings.widgetWaveformKilosarosRangeKey) private var widgetWaveformKilosarosRange = JournalWaveformSettings.defaultWidgetWaveformKilosarosRange
 
     @State private var isUpdating = false
     @State private var now = Date()
@@ -1202,10 +1203,15 @@ private struct LiveTrackingRolloverObserver: View {
                     await rollOverIfNeeded(at: now)
                 }
             }
+            .onChange(of: widgetWaveformKilosarosRange) { _, _ in
+                Task {
+                    await rollOverIfNeeded(at: Date(), forceJournalRefresh: true)
+                }
+            }
     }
 
     @MainActor
-    private func rollOverIfNeeded(at date: Date) async {
+    private func rollOverIfNeeded(at date: Date, forceJournalRefresh: Bool = false) async {
         guard !isUpdating,
               let snapshot = ThreadTrackingSharedStore.load()
         else {
@@ -1216,7 +1222,7 @@ private struct LiveTrackingRolloverObserver: View {
             && snapshot.waveformEndDate.map { date >= $0 } == true
         let shouldRefreshForCycle = snapshot.threadID == ThreadTrackingSharedStore.journalTrackingID
             && snapshot.liveCycleEndDates.contains { date >= $0 }
-        guard shouldRefreshForFlip || shouldRefreshForWaveform || shouldRefreshForCycle else { return }
+        guard forceJournalRefresh || shouldRefreshForFlip || shouldRefreshForWaveform || shouldRefreshForCycle else { return }
 
         isUpdating = true
         defer { isUpdating = false }
@@ -1236,7 +1242,8 @@ private struct LiveTrackingRolloverObserver: View {
                         harmonicDepth: harmonicDepth
                     )
                 }.value
-                guard shouldRefreshForWaveform
+                guard forceJournalRefresh
+                    || shouldRefreshForWaveform
                     || shouldRefreshForCycle
                     || nextSnapshot.flipDate > snapshot.flipDate.addingTimeInterval(0.5)
                 else { return }

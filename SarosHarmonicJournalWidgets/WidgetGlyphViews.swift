@@ -15,6 +15,7 @@ struct TrackingDisplayPayload {
     let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
     let waveformStartDate: Date?
     let waveformEndDate: Date?
+    let widgetRangeKilosaros: Int?
     let glyph: String
     let rarityRawValue: String
     let rarityTitle: String
@@ -97,6 +98,7 @@ extension ThreadTrackingSnapshot {
                 waveformSpikeMarkers: waveformSpikeMarkers,
                 waveformStartDate: waveformStartDate,
                 waveformEndDate: waveformEndDate,
+                widgetRangeKilosaros: widgetRangeKilosaros,
                 glyph: nextGlyph,
                 rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
@@ -129,6 +131,7 @@ extension ThreadTrackingSnapshot {
             waveformSpikeMarkers: waveformSpikeMarkers,
             waveformStartDate: waveformStartDate,
             waveformEndDate: waveformEndDate,
+            widgetRangeKilosaros: widgetRangeKilosaros,
             glyph: glyph,
             rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
@@ -175,6 +178,7 @@ extension ThreadTrackingAttributes.ContentState {
                 waveformSpikeMarkers: waveformSpikeMarkers,
                 waveformStartDate: waveformStartDate,
                 waveformEndDate: waveformEndDate,
+                widgetRangeKilosaros: widgetRangeKilosaros,
                 glyph: nextGlyph,
                 rarityRawValue: nextRarityRawValue ?? rarityRawValue,
                 rarityTitle: nextRarityTitle,
@@ -207,6 +211,7 @@ extension ThreadTrackingAttributes.ContentState {
             waveformSpikeMarkers: waveformSpikeMarkers,
             waveformStartDate: waveformStartDate,
             waveformEndDate: waveformEndDate,
+            widgetRangeKilosaros: widgetRangeKilosaros,
             glyph: glyph,
             rarityRawValue: rarityRawValue,
             rarityTitle: rarityTitle,
@@ -238,10 +243,13 @@ struct WidgetWaveformSegmentView: View {
     let color: Color
     var showsCurrentMarker = true
     var currentPosition: Double = 0.5
+    var currentMarkerWidth: Double = 0
     var waveformStartDate: Date?
     var waveformEndDate: Date?
     var pulseCycleStartDate: Date?
     var pulseCycleEndDate: Date?
+    var pulseRulerMode: WidgetPulseRulerMode = .cycle
+    var pulseWindowKilosarosRange: Int = 8
 
     var body: some View {
         canvas(currentPosition: currentPosition)
@@ -260,9 +268,10 @@ struct WidgetWaveformSegmentView: View {
                 min(max(value, 0) * visualScale, 1)
             }
             let positions = resolvedSamplePositions(count: clamped.count)
-            let baselineY = size.height
-            let extendedWidth = size.width + 160
-            let xOffset: CGFloat = -80
+            let baselineY = size.height - (pulseRulerMode == .megaWindow ? 5 : 2)
+            let fillBottomY = size.height + 2
+            let extendedWidth = pulseRulerMode == .megaWindow ? size.width : size.width + 160
+            let xOffset: CGFloat = pulseRulerMode == .megaWindow ? 0 : -80
             var line = Path()
             var fill = Path()
 
@@ -272,7 +281,7 @@ struct WidgetWaveformSegmentView: View {
                 let point = CGPoint(x: x, y: y)
                 if index == clamped.startIndex {
                     line.move(to: point)
-                    fill.move(to: CGPoint(x: x, y: baselineY))
+                    fill.move(to: CGPoint(x: x, y: fillBottomY))
                     fill.addLine(to: point)
                 } else {
                     line.addLine(to: point)
@@ -280,7 +289,7 @@ struct WidgetWaveformSegmentView: View {
                 }
             }
 
-            fill.addLine(to: CGPoint(x: size.width + 80, y: baselineY))
+            fill.addLine(to: CGPoint(x: xOffset + extendedWidth, y: fillBottomY))
             fill.closeSubpath()
             context.fill(fill, with: .color(color.opacity(0.24)))
             context.stroke(line, with: .color(color.opacity(0.92)), lineWidth: 1.4)
@@ -302,6 +311,11 @@ struct WidgetWaveformSegmentView: View {
 
             if showsCurrentMarker {
                 let markerX = xOffset + CGFloat(min(max(currentPosition, 0), 1)) * extendedWidth
+                let markerWidth = max(CGFloat(min(max(currentMarkerWidth, 0), 1)) * extendedWidth, currentMarkerWidth > 0 ? 1.2 : 0)
+                if markerWidth > 0 {
+                    let rect = CGRect(x: markerX, y: 0, width: markerWidth, height: size.height)
+                    context.fill(Path(rect), with: .color(.green.opacity(0.16)))
+                }
                 var marker = Path()
                 marker.move(to: CGPoint(x: markerX, y: 0))
                 marker.addLine(to: CGPoint(x: markerX, y: size.height))
@@ -323,6 +337,16 @@ struct WidgetWaveformSegmentView: View {
               let pulseCycleEndDate,
               pulseCycleEndDate > pulseCycleStartDate
         else {
+            return
+        }
+
+        if pulseRulerMode == .megaWindow {
+            drawMegaWindowPulseTicks(
+                in: context,
+                size: size,
+                extendedWidth: extendedWidth,
+                xOffset: xOffset
+            )
             return
         }
 
@@ -359,6 +383,33 @@ struct WidgetWaveformSegmentView: View {
         }
     }
 
+    private func drawMegaWindowPulseTicks(
+        in context: GraphicsContext,
+        size: CGSize,
+        extendedWidth: CGFloat,
+        xOffset: CGFloat
+    ) {
+        let tickSpecs: [(divisions: Int, color: Color, height: CGFloat, lineWidth: CGFloat)] = [
+            (max(pulseWindowKilosarosRange * 8, 1), .white.opacity(0.58), min(size.height * 0.46, 24), 0.55),
+            (max(pulseWindowKilosarosRange, 1), .blue.opacity(0.82), min(size.height * 0.78, 38), 1.0)
+        ]
+
+        for spec in tickSpecs {
+            let pixelSpacing = extendedWidth / CGFloat(spec.divisions)
+            let stride = max(1, Int(ceil(1.5 / max(pixelSpacing, 0.000_001))))
+            var index = 0
+            while index <= spec.divisions {
+                let position = CGFloat(index) / CGFloat(spec.divisions)
+                let x = xOffset + position * extendedWidth
+                var tick = Path()
+                tick.move(to: CGPoint(x: x, y: size.height - spec.height))
+                tick.addLine(to: CGPoint(x: x, y: size.height))
+                context.stroke(tick, with: .color(spec.color), lineWidth: spec.lineWidth)
+                index += stride
+            }
+        }
+    }
+
     private func resolvedSamplePositions(count: Int) -> [Double] {
         guard samplePositions.count == count else {
             guard count > 1 else { return [0] }
@@ -370,46 +421,97 @@ struct WidgetWaveformSegmentView: View {
 
 }
 
+enum WidgetPulseRulerMode {
+    case cycle
+    case megaWindow
+}
+
+struct WidgetPulseWindow {
+    let startDate: Date
+    let endDate: Date
+    let miliDuration: TimeInterval
+    let rangeKilosaros: Int
+    let miliCount: Int
+
+    init?(payload: TrackingDisplayPayload, at date: Date) {
+        guard let cycleStartDate = payload.pulseCycleStartDate,
+              let cycleEndDate = payload.pulseCycleEndDate,
+              cycleEndDate > cycleStartDate
+        else {
+            return nil
+        }
+
+        let cycleDuration = cycleEndDate.timeIntervalSince(cycleStartDate)
+        let kiloDuration = cycleDuration / pow(8, 6)
+        guard kiloDuration > 0 else { return nil }
+
+        let rangeKilosaros = min(max(payload.widgetRangeKilosaros ?? 8, 1), 16)
+        let elapsed = date.timeIntervalSince(cycleStartDate)
+        let kiloIndex = floor(elapsed / kiloDuration)
+        let windowIndex = floor(kiloIndex / Double(rangeKilosaros))
+        let windowDuration = kiloDuration * Double(rangeKilosaros)
+        let startDate = cycleStartDate.addingTimeInterval(windowIndex * windowDuration)
+        if let waveformStartDate = payload.waveformStartDate,
+           let waveformEndDate = payload.waveformEndDate {
+            let tolerance = max(kiloDuration * 0.005, 2)
+            guard abs(waveformStartDate.timeIntervalSince(startDate)) <= tolerance,
+                  abs(waveformEndDate.timeIntervalSince(startDate.addingTimeInterval(windowDuration))) <= tolerance
+            else {
+                return nil
+            }
+        }
+        self.startDate = startDate
+        self.endDate = startDate.addingTimeInterval(windowDuration)
+        self.miliDuration = max(kiloDuration / 64, 1)
+        self.rangeKilosaros = rangeKilosaros
+        self.miliCount = max(rangeKilosaros * 64, 1)
+    }
+
+    var markerWidthFraction: Double {
+        guard endDate > startDate else { return 0 }
+        return min(max(miliDuration / endDate.timeIntervalSince(startDate), 0), 1)
+    }
+
+    func discretePosition(at date: Date) -> Double {
+        guard endDate > startDate else { return 0 }
+        let elapsed = min(max(date.timeIntervalSince(startDate), 0), endDate.timeIntervalSince(startDate))
+        let index = min(max(floor(elapsed / miliDuration), 0), Double(miliCount - 1))
+        return index / Double(miliCount)
+    }
+
+    func nextMiliBoundary(after date: Date) -> Date {
+        guard date < endDate else { return endDate }
+        let elapsed = max(date.timeIntervalSince(startDate), 0)
+        let nextIndex = min(floor(elapsed / miliDuration) + 1, Double(miliCount))
+        return startDate.addingTimeInterval(nextIndex * miliDuration)
+    }
+}
+
 extension TrackingDisplayPayload {
     var displayEventName: String {
         eventName?.nilIfBlank ?? rarityTitle
     }
 
-    func secondaryEventDescription(at date: Date) -> String {
+    func waveSignature(at date: Date) -> WidgetWaveSignature {
         let energy = sampledEnergy(at: date) ?? energyPercent ?? 0
         let momentum = sampledMomentum(at: date) ?? momentum ?? 0
-        let magnitude = abs(momentum)
+        return WidgetWaveEventDescriptorFormatter.signature(
+            energyPercent: energy,
+            momentumEnergyPerSaros: momentum,
+            valleySpacing: valleySpacing(at: date)
+        )
+    }
 
-        if energy >= 0.88 {
-            let modifier = magnitude >= 0.72 ? "sharp" : "dull"
-            return "\(modifier) peak"
-        }
-        if energy <= 0.06 {
-            let modifier = magnitude >= 0.72 ? "narrow" : "giant"
-            return "\(modifier) valley"
-        }
-
-        let pace = magnitude >= 0.45 ? "rapid" : "slow"
-        if momentum > 0.02 {
-            return "\(pace) ascent"
-        }
-        if momentum < -0.02 {
-            return "\(pace) descent"
-        }
-        return "flat"
+    func secondaryEventDescription(at date: Date) -> String {
+        waveSignature(at: date).label
     }
 
     func energyText(at date: Date) -> String {
-        let energy = sampledEnergy(at: date) ?? energyPercent
-        guard let energy else { return "E --" }
-        return "E \(Int((min(max(energy, 0), 1) * 100).rounded()))%"
+        waveSignature(at: date).energyText
     }
 
     func momentumText(at date: Date) -> String {
-        let value = sampledMomentum(at: date) ?? momentum
-        guard let value else { return "M --" }
-        let percent = Int((min(max(value, -1), 1) * 100).rounded())
-        return percent > 0 ? "M +\(percent)%" : "M \(percent)%"
+        waveSignature(at: date).momentumText
     }
 
     func waveformPosition(at date: Date) -> Double {
@@ -490,6 +592,10 @@ extension TrackingDisplayPayload {
     }
 
     private func sampledEnergy(at date: Date) -> Double? {
+        sampledEnergyValue(at: date)
+    }
+
+    private func sampledEnergyValue(at date: Date) -> Double? {
         guard let waveformSamples, waveformSamples.count > 1 else { return nil }
         let position = waveformPosition(at: date)
         guard let pair = samplePair(at: position, sampleCount: waveformSamples.count) else { return nil }
@@ -498,22 +604,48 @@ extension TrackingDisplayPayload {
     }
 
     private func sampledMomentum(at date: Date) -> Double? {
-        guard let waveformSamples, waveformSamples.count > 2 else { return nil }
+        let sarosDuration = resolvedSarosDuration
+        guard let before = sampledEnergyValue(at: date.addingTimeInterval(-sarosDuration)),
+              let after = sampledEnergyValue(at: date.addingTimeInterval(sarosDuration))
+        else {
+            return nil
+        }
+        return after - before
+    }
+
+    private var resolvedSarosDuration: TimeInterval {
+        guard let pulseCycleStartDate,
+              let pulseCycleEndDate,
+              pulseCycleEndDate > pulseCycleStartDate
+        else {
+            return Self.fallbackSarosDuration
+        }
+
+        return pulseCycleEndDate.timeIntervalSince(pulseCycleStartDate) / pow(8, 7)
+    }
+
+    private func valleySpacing(at date: Date) -> TimeInterval? {
+        guard let waveformStartDate,
+              let waveformEndDate,
+              waveformEndDate > waveformStartDate,
+              let waveformSpikeMarkers,
+              !waveformSpikeMarkers.isEmpty
+        else {
+            return nil
+        }
+
         let position = waveformPosition(at: date)
-        let positions = resolvedPositions(sampleCount: waveformSamples.count)
-        let center = positions.enumerated()
-            .min { abs($0.element - position) < abs($1.element - position) }?
-            .offset ?? 1
-        let lower = max(center - 1, 0)
-        let upper = min(center + 1, waveformSamples.count - 1)
-        let dx = max(positions[upper] - positions[lower], 0.000_001)
-        let dy = waveformSamples[upper] - waveformSamples[lower]
-        let gradient = dy / dx
-        let angle = atan(abs(gradient))
-        let flatAngle = 5.0 * Double.pi / 180.0
-        let verticalAngle = 88.0 * Double.pi / 180.0
-        let normalized = min(max((angle - flatAngle) / (verticalAngle - flatAngle), 0), 1)
-        return normalized * (gradient >= 0 ? 1 : -1)
+        let sorted = waveformSpikeMarkers
+            .map { min(max($0.position, 0), 1) }
+            .sorted()
+        let left = sorted.last { $0 <= position }
+        let right = sorted.first { $0 >= position }
+
+        if let left, let right, right > left {
+            return (right - left) * waveformEndDate.timeIntervalSince(waveformStartDate)
+        }
+
+        return nil
     }
 
     private func samplePair(
@@ -567,42 +699,182 @@ extension TrackingDisplayPayload {
         let fraction = value - floor(value)
         return fraction >= 0 ? fraction : fraction + 1
     }
+
+    private static let fallbackSarosDuration: TimeInterval = 6_585.321_347 * 86_400 / pow(8, 7)
 }
 
-struct WidgetWaveDirectionIcon: View {
-    let rawValue: String?
-    var size: CGFloat = 13
+enum WidgetWaveEventType {
+    case peak
+    case valley
+    case ascent
+    case descent
+    case flat
 
-    var body: some View {
-        Image(systemName: symbolName)
-            .font(.system(size: size, weight: .bold))
-            .foregroundStyle(color)
-            .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var symbolName: String {
-        switch rawValue {
-        case "ascending": "arrow.up"
-        case "descending": "arrow.down"
-        default: "minus"
+    var emoji: String {
+        switch self {
+        case .peak: "🎯"
+        case .valley: "🕳️"
+        case .ascent: "📈"
+        case .descent: "📉"
+        case .flat: "━"
         }
     }
+}
 
-    private var color: Color {
-        switch rawValue {
-        case "ascending": .green
-        case "descending": .red
-        default: .white
-        }
+struct WidgetWaveSignature {
+    let type: WidgetWaveEventType
+    let label: String
+    let energyBin: Int
+    let momentumBin: Int
+    let momentumSign: Int
+
+    var energyText: String {
+        "E \(WidgetWaveEventDescriptorFormatter.octalString(forBin: energyBin))"
     }
 
-    private var accessibilityLabel: String {
-        switch rawValue {
-        case "ascending": "Ascending"
-        case "descending": "Descending"
-        default: "Flat"
-        }
+    var momentumText: String {
+        let sign = momentumSign > 0 ? "+" : momentumSign < 0 ? "-" : ""
+        return "M \(sign)\(WidgetWaveEventDescriptorFormatter.octalString(forBin: momentumBin))"
     }
+}
+
+private enum WidgetWaveEventDescriptorFormatter {
+    static let maximumDisplayBin = 511
+    static let peakEnergyThreshold = 504
+
+    static func label(
+        energyPercent: Double,
+        momentumEnergyPerSaros: Double,
+        valleySpacing: TimeInterval?
+    ) -> String {
+        signature(
+            energyPercent: energyPercent,
+            momentumEnergyPerSaros: momentumEnergyPerSaros,
+            valleySpacing: valleySpacing
+        ).label
+    }
+
+    static func signature(
+        energyPercent: Double,
+        momentumEnergyPerSaros: Double,
+        valleySpacing: TimeInterval?
+    ) -> WidgetWaveSignature {
+        let energyBin = energyBin(for: energyPercent)
+        let momentumBin = momentumBin(for: momentumEnergyPerSaros)
+        let momentumSign = momentumEnergyPerSaros > 0 ? 1 : momentumEnergyPerSaros < 0 ? -1 : 0
+
+        if energyBin >= peakEnergyThreshold {
+            return WidgetWaveSignature(
+                type: .peak,
+                label: "\(peakModifier(for: momentumBin)) peak",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+
+        if energyPercent <= 0.20 {
+            return WidgetWaveSignature(
+                type: .valley,
+                label: "\(valleyModifier(for: valleySpacing)) valley",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+
+        if momentumBin < 1 {
+            return WidgetWaveSignature(
+                type: .flat,
+                label: "flat",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: 0
+            )
+        }
+
+        if momentumEnergyPerSaros > 0 {
+            return WidgetWaveSignature(
+                type: .ascent,
+                label: "\(ascentModifier(for: momentumBin)) ascent",
+                energyBin: energyBin,
+                momentumBin: momentumBin,
+                momentumSign: momentumSign
+            )
+        }
+        return WidgetWaveSignature(
+            type: .descent,
+            label: "\(descentModifier(for: momentumBin)) descent",
+            energyBin: energyBin,
+            momentumBin: momentumBin,
+            momentumSign: momentumSign
+        )
+    }
+
+    static func momentumText(_ momentumEnergyPerSaros: Double?) -> String {
+        guard let momentumEnergyPerSaros else { return "M --" }
+        let sign = momentumEnergyPerSaros > 0 ? "+" : momentumEnergyPerSaros < 0 ? "-" : ""
+        return "M \(sign)\(octalString(forBin: momentumBin(for: momentumEnergyPerSaros)))"
+    }
+
+    static func energyText(_ energyPercent: Double?) -> String {
+        guard let energyPercent else { return "E --" }
+        return "E \(octalString(forBin: energyBin(for: energyPercent)))"
+    }
+
+    private static func energyBin(for energyPercent: Double) -> Int {
+        guard energyPercent.isFinite else { return 0 }
+        let clamped = min(max(energyPercent, 0), 1)
+        return min(max(Int(floor(clamped * 512)), 0), maximumDisplayBin)
+    }
+
+    private static func momentumBin(for momentumEnergyPerSaros: Double) -> Int {
+        guard momentumEnergyPerSaros.isFinite else { return 0 }
+        let clamped = min(max(abs(momentumEnergyPerSaros), 0), 1)
+        return min(max(Int(floor(clamped * 512)), 0), maximumDisplayBin)
+    }
+
+    static func octalString(forBin bin: Int) -> String {
+        String(min(max(bin, 0), maximumDisplayBin), radix: 8)
+            .leftPadded(toLength: 3, withPad: "0")
+    }
+
+    private static func valleyModifier(for spacing: TimeInterval?) -> String {
+        guard let spacing else { return "vast" }
+        if spacing <= fallbackSarosPeriod / pow(8, 7) {
+            return "gorge"
+        }
+        if spacing <= fallbackSarosPeriod / pow(8, 6) {
+            return "narrow"
+        }
+        if spacing <= fallbackSarosPeriod / pow(8, 5) {
+            return "wide"
+        }
+        return "vast"
+    }
+
+    private static func peakModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "creeping" }
+        if momentumBin <= 8 { return "gradual" }
+        if momentumBin <= 32 { return "sharp" }
+        return "exploding"
+    }
+
+    private static func ascentModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "crawling" }
+        if momentumBin <= 8 { return "slow" }
+        if momentumBin <= 32 { return "rapid" }
+        return "rocketing"
+    }
+
+    private static func descentModifier(for momentumBin: Int) -> String {
+        if momentumBin <= 1 { return "creeping" }
+        if momentumBin <= 8 { return "gradual" }
+        if momentumBin <= 32 { return "rapid" }
+        return "plunging"
+    }
+
+    private static let fallbackSarosPeriod: TimeInterval = 6_585.321_347 * 86_400
 }
 
 struct WidgetAuxiliaryGlyphsView: View {

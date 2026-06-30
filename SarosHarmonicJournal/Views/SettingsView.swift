@@ -278,46 +278,27 @@ struct SettingsView: View {
 }
 
 private struct WaveformSettingsView: View {
-    @AppStorage(JournalSettings.waveformModelKey) private var waveformModelRawValue = JournalWaveformModel.gaussian.rawValue
-    @AppStorage(JournalSettings.waveformParabolaAKey) private var parabolaA = JournalWaveformSettings.defaultParabolaA
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var mergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var normalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var subdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
     @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var amplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
-
-    private var selectedModel: JournalWaveformModel {
-        JournalWaveformModel(rawValue: waveformModelRawValue) ?? .gaussian
-    }
+    @AppStorage(JournalSettings.widgetWaveformKilosarosRangeKey) private var widgetKilosarosRange = JournalWaveformSettings.defaultWidgetWaveformKilosarosRange
 
     var body: some View {
         List {
             Section {
-                Picker("Model", selection: $waveformModelRawValue) {
-                    ForEach(JournalWaveformModel.allCases) { model in
-                        Text(model.title).tag(model.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Text(selectedModel.detail)
+                Text(JournalWaveformModel.current.detail)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Section("Parabola") {
-                HStack {
-                    Text("A")
-                    Slider(
-                        value: $parabolaA,
-                        in: JournalWaveformSettings.parabolaARange,
-                        step: 0.1
-                    )
-                    Text(parabolaA.formatted(.number.precision(.fractionLength(1))))
-                        .font(.body.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                MetadataRow(
+                    title: "A",
+                    value: JournalWaveformSettings.defaultParabolaA.formatted(.number.precision(.fractionLength(1)))
+                )
 
-                Text("Higher A values make the peak narrower and move more acceleration toward the selected side of each half-wave.")
+                Text("Parabola sharpness is shared by the app, widget, and Live Activity so energy and momentum stay synchronized.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -349,22 +330,26 @@ private struct WaveformSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Widget") {
+                Stepper(
+                    "Widget range \(clampedWidgetKilosarosRange) Ks",
+                    value: $widgetKilosarosRange,
+                    in: JournalWaveformSettings.widgetWaveformKilosarosRange
+                )
+
+                Text("Controls how many Kilosaros the widget waveform spans. 8 Ks matches the previous one-Megasaros window.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Behavior") {
-                MetadataRow(title: "Current model", value: selectedModel.title)
-                MetadataRow(title: "Energy", value: energyDescription)
-                MetadataRow(title: "Momentum", value: selectedModel == .saw ? "Segment slope" : "Sampled slope")
+                MetadataRow(title: "Current model", value: JournalWaveformModel.current.title)
+                MetadataRow(title: "Energy", value: "Parabolic segment")
+                MetadataRow(title: "Momentum", value: "Energy delta per Saros")
             }
         }
         .navigationTitle("Waveform")
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var energyDescription: String {
-        switch selectedModel {
-        case .gaussian: "Gaussian mixture"
-        case .saw: "Linear interpolation"
-        case .parabola: "Parabolic halves"
-        }
     }
 
     private var clampedSubdivisionDepth: Int {
@@ -379,6 +364,10 @@ private struct WaveformSettingsView: View {
             max(amplitudeMultiplier, JournalWaveformSettings.amplitudeMultiplierRange.lowerBound),
             JournalWaveformSettings.amplitudeMultiplierRange.upperBound
         )
+    }
+
+    private var clampedWidgetKilosarosRange: Int {
+        JournalWaveformSettings.clampedWidgetWaveformKilosarosRange(widgetKilosarosRange)
     }
 }
 

@@ -18,6 +18,7 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
     let waveformStartDate: Date?
     let waveformEndDate: Date?
+    let widgetRangeKilosaros: Int?
     let glyph: String
     let rarityRawValue: String
     let rarityTitle: String
@@ -107,6 +108,7 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let waveformSpikeMarkers: [TrackingWaveformSpikeMarker]?
         let waveformStartDate: Date?
         let waveformEndDate: Date?
+        let widgetRangeKilosaros: Int?
         let glyph: String
         let rarityRawValue: String
         let rarityTitle: String

@@ -60,6 +60,7 @@
 		A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */; };
 		A1B2C3D4E5F607182930A107 /* JournalEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
+		B4D1A2F43E6B4AF1920C1111 /* JournalTemporalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */; };
 		C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */; };
 		C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8072651E8AE5C7C39EC512D /* ArchiveView.swift */; };
 		CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */; };
@@ -157,6 +158,7 @@
 		82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioRecorder.swift; path = SarosHarmonicJournal/Services/AudioRecorder.swift; sourceTree = "<group>"; };
 		8BFEA87F6EA243E541D15FE7 /* AppServices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppServices.swift; path = SarosHarmonicJournal/App/AppServices.swift; sourceTree = "<group>"; };
 		9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseModels.swift; path = SarosHarmonicJournal/Domain/EclipseModels.swift; sourceTree = "<group>"; };
+		B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalTemporalEngine.swift; path = SarosHarmonicJournal/Domain/JournalTemporalEngine.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A104 /* JournalEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntry.swift; path = SarosHarmonicJournal/Data/JournalEntry.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosEventContextService.swift; path = SarosHarmonicJournal/Services/SarosEventContextService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryViews.swift; path = SarosHarmonicJournal/Views/JournalEntryViews.swift; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 				0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */,
 				59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */,
 				9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */,
+				B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */,
 				C16E33843D12AFBD6A69B9FA /* Resonance.swift */,
 				7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */,
 				82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */,
@@ -487,6 +490,7 @@
 				0F1A2B3C4D5E6F708192A001 /* RecordDraft.swift in Sources */,
 				31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */,
 				AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */,
+				B4D1A2F43E6B4AF1920C1111 /* JournalTemporalEngine.swift in Sources */,
 				EF3054358820F684AD5D315E /* Resonance.swift in Sources */,
 				EECF3B46E1C7D16EEC306A4B /* SarosClock.swift in Sources */,
 				89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */,
