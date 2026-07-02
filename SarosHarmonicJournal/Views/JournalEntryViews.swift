@@ -2,6 +2,7 @@ import AVFoundation
 import AVKit
 import CoreLocation
 import CoreTransferable
+import ImageIO
 import PhotosUI
 import SwiftData
 import SwiftUI
@@ -527,6 +528,8 @@ struct JournalEntryCaptureView: View {
 
     let recordStartedAt: Date
     let existingDraft: JournalEntryDraft?
+    private let initialLatitude: Double?
+    private let initialLongitude: Double?
 
     @StateObject private var audioRecorder = AudioRecorder()
     @StateObject private var locationProvider = JournalEntryLocationProvider()
@@ -554,17 +557,27 @@ struct JournalEntryCaptureView: View {
 
     private let editingEntry: JournalEntry?
 
-    init(recordStartedAt: Date = Date(), template: JournalTemplateSeed = .random, draft: JournalEntryDraft? = nil) {
+    init(
+        recordStartedAt: Date = Date(),
+        eventEndDate: Date? = nil,
+        template: JournalTemplateSeed = .random,
+        draft: JournalEntryDraft? = nil,
+        initialMediaItems: [JournalMediaItem] = [],
+        initialLatitude: Double? = nil,
+        initialLongitude: Double? = nil
+    ) {
         let startedAt = draft?.recordStartedAt ?? recordStartedAt
         let lastWeather = JournalWeatherDefaults.current()
         self.recordStartedAt = startedAt
         self.existingDraft = draft
         self.editingEntry = nil
+        self.initialLatitude = draft?.latitude ?? initialLatitude
+        self.initialLongitude = draft?.longitude ?? initialLongitude
         _eventDate = State(initialValue: draft?.eventDate ?? startedAt)
-        _eventEndDate = State(initialValue: draft?.endDate ?? draft?.eventDate ?? startedAt)
+        _eventEndDate = State(initialValue: draft?.endDate ?? eventEndDate ?? draft?.eventDate ?? startedAt)
         _noteText = State(initialValue: draft?.text ?? template.text)
         _emoji = State(initialValue: draft?.emoji ?? template.resolvedEmoji)
-        _mediaItems = State(initialValue: draft?.mediaItems ?? [])
+        _mediaItems = State(initialValue: draft?.mediaItems ?? initialMediaItems)
         _weatherCode = State(initialValue: draft?.weatherCode ?? lastWeather.code)
         _weatherEmoji = State(initialValue: draft?.weatherEmoji ?? lastWeather.emoji)
         _temperatureC = State(initialValue: draft?.temperatureC ?? lastWeather.temperatureC)
@@ -575,6 +588,8 @@ struct JournalEntryCaptureView: View {
         self.recordStartedAt = entry.createdAt
         self.existingDraft = nil
         self.editingEntry = entry
+        self.initialLatitude = entry.latitude
+        self.initialLongitude = entry.longitude
         _eventDate = State(initialValue: entry.eventDate)
         _eventEndDate = State(initialValue: entry.effectiveEndDate)
         _noteText = State(initialValue: entry.text ?? "")
@@ -856,6 +871,8 @@ struct JournalEntryCaptureView: View {
                 harmonicDepth: JournalSettings.canonicalHarmonicDepth
             )
             let coordinate = locationProvider.coordinate
+            let fallbackLatitude = coordinate?.latitude ?? initialLatitude
+            let fallbackLongitude = coordinate?.longitude ?? initialLongitude
             let device = JournalDevice.current()
             if let editingEntry {
                 editingEntry.createdAt = recordStartedAt
@@ -869,8 +886,8 @@ struct JournalEntryCaptureView: View {
                 editingEntry.mediaItems = savedMedia
                 editingEntry.context = resolvedContext
                 editingEntry.tagIDs = sortedSelectedTagIDs
-                editingEntry.latitude = coordinate?.latitude ?? editingEntry.latitude
-                editingEntry.longitude = coordinate?.longitude ?? editingEntry.longitude
+                editingEntry.latitude = fallbackLatitude ?? editingEntry.latitude
+                editingEntry.longitude = fallbackLongitude ?? editingEntry.longitude
                 editingEntry.sourceDeviceID = device.id
                 editingEntry.sourceDeviceEmoji = device.emoji
                 editingEntry.sourceDeviceName = device.name
@@ -903,8 +920,8 @@ struct JournalEntryCaptureView: View {
                 mediaItems: savedMedia,
                 context: resolvedContext,
                 tagIDs: sortedSelectedTagIDs,
-                latitude: coordinate?.latitude,
-                longitude: coordinate?.longitude,
+                latitude: fallbackLatitude,
+                longitude: fallbackLongitude,
                 sourceDeviceID: device.id,
                 sourceDeviceEmoji: device.emoji,
                 sourceDeviceName: device.name,
@@ -976,6 +993,8 @@ struct JournalEntryCaptureView: View {
         guard editingEntry == nil else { return }
         guard !didSaveEntry else { return }
         let coordinate = locationProvider.coordinate
+        let fallbackLatitude = coordinate?.latitude ?? initialLatitude
+        let fallbackLongitude = coordinate?.longitude ?? initialLongitude
         if let existingDraft {
             existingDraft.update(
                 recordStartedAt: recordStartedAt,
@@ -985,8 +1004,8 @@ struct JournalEntryCaptureView: View {
                 emoji: emoji.nilIfBlank,
                 mediaItems: mediaItems,
                 tagIDs: sortedSelectedTagIDs,
-                latitude: coordinate?.latitude ?? existingDraft.latitude,
-                longitude: coordinate?.longitude ?? existingDraft.longitude,
+                latitude: fallbackLatitude ?? existingDraft.latitude,
+                longitude: fallbackLongitude ?? existingDraft.longitude,
                 weatherCode: weatherCode,
                 weatherEmoji: weatherEmoji,
                 temperatureC: temperatureC
@@ -1000,8 +1019,8 @@ struct JournalEntryCaptureView: View {
                 emoji: emoji.nilIfBlank,
                 mediaItems: mediaItems,
                 tagIDs: sortedSelectedTagIDs,
-                latitude: coordinate?.latitude,
-                longitude: coordinate?.longitude,
+                latitude: fallbackLatitude,
+                longitude: fallbackLongitude,
                 weatherCode: weatherCode,
                 weatherEmoji: weatherEmoji,
                 temperatureC: temperatureC
@@ -1371,12 +1390,100 @@ private struct JournalEntryEditView: View {
     }
 }
 
+private struct JournalTemplateCaptureRequest: Identifiable, Hashable {
+    let id = UUID()
+    let startDate: Date
+    let endDate: Date
+    let template: JournalTemplateSeed
+    var mediaItems: [JournalMediaItem] = []
+    var latitude: Double?
+    var longitude: Double?
+}
+
+private struct ContinuousActivityLoggingPanel: View {
+    let session: ContinuousActivitySession?
+    let onBegin: () -> Void
+    let onStop: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            HStack(spacing: 14) {
+                if let session {
+                    let glyph = ActivityLoggingGlyph.glyph(startDate: session.startDate, at: timeline.date)
+                    let color = Color(hex: ActivityLoggingGlyph.colorHex(for: glyph), fallback: .white)
+                    OctalGlyph(
+                        value: glyph,
+                        depth: ActivityLoggingGlyph.depth,
+                        color: color
+                    )
+                    .frame(width: 54, height: 54)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.isCountdown ? "Countdown" : ActivityLoggingGlyph.title(for: glyph))
+                            .font(.headline)
+                            .foregroundStyle(color)
+                        if let endDate = session.displayEndDate {
+                            if endDate > timeline.date {
+                                Text(timerInterval: timeline.date...endDate, countsDown: true)
+                                    .font(.title3.monospacedDigit().weight(.semibold))
+                                    .foregroundStyle(.primary)
+                            } else {
+                                Text("Done")
+                                    .font(.title3.monospacedDigit().weight(.semibold))
+                                    .foregroundStyle(.primary)
+                            }
+                        } else {
+                            Text(session.startDate, style: .timer)
+                                .font(.title3.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                } else {
+                    Image(systemName: "record.circle")
+                        .font(.system(size: 36, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Continuous log")
+                            .font(.headline)
+                        Text("Capture an activity as a time window.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Button(action: session == nil ? onBegin : onStop) {
+                    Label(
+                        session == nil ? "Begin" : "Stop",
+                        systemImage: session == nil ? "play.circle.fill" : "stop.circle.fill"
+                    )
+                    .font(.callout.weight(.semibold))
+                    .labelStyle(.titleAndIcon)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(session == nil ? Color.accentColor : Color.red, in: Capsule())
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .padding(.vertical, 4)
+        }
+    }
+}
+
 struct JournalTemplatesView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTemplate.createdAt, order: .forward) private var templates: [JournalTemplate]
     @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
 
-    @State private var selectedTemplate: JournalTemplateSeed?
+    @AppStorage(ContinuousActivityLogger.sessionKey) private var activitySessionData = Data()
+
+    @State private var selectedTemplateAction: JournalTemplateSeed?
+    @State private var captureRequest: JournalTemplateCaptureRequest?
     @State private var selectedEntryDraft: JournalEntryDraft?
     @State private var pendingTemplate: JournalTemplateSeed?
     @State private var isReplacingDraft = false
@@ -1386,8 +1493,20 @@ struct JournalTemplatesView: View {
         entryDrafts.first
     }
 
+    private var activitySession: ContinuousActivitySession? {
+        ContinuousActivityLogger.session(from: activitySessionData)
+    }
+
     var body: some View {
         List {
+            Section {
+                ContinuousActivityLoggingPanel(
+                    session: activitySession,
+                    onBegin: { beginActivityLogging(template: .random) },
+                    onStop: stopActivityLogging
+                )
+            }
+
             if let activeDraft {
                 Section {
                     Button {
@@ -1453,9 +1572,39 @@ struct JournalTemplatesView: View {
                 .accessibilityLabel("Add template")
             }
         }
-        .sheet(item: $selectedTemplate) { template in
+        .sheet(item: $selectedTemplateAction) { template in
             NavigationStack {
-                JournalEntryCaptureView(recordStartedAt: Date(), template: template)
+                JournalTemplateActionView(
+                    template: template,
+                    onNow: { request in
+                        captureRequest = request
+                        selectedTemplateAction = nil
+                    },
+                    onCountdown: { template, duration in
+                        beginCountdown(template: template, duration: duration)
+                        selectedTemplateAction = nil
+                    },
+                    onTimer: { template in
+                        beginActivityLogging(template: template)
+                        selectedTemplateAction = nil
+                    },
+                    onRetroactive: { request in
+                        captureRequest = request
+                        selectedTemplateAction = nil
+                    }
+                )
+            }
+        }
+        .sheet(item: $captureRequest) { request in
+            NavigationStack {
+                JournalEntryCaptureView(
+                    recordStartedAt: request.startDate,
+                    eventEndDate: request.endDate,
+                    template: request.template,
+                    initialMediaItems: request.mediaItems,
+                    initialLatitude: request.latitude,
+                    initialLongitude: request.longitude
+                )
             }
         }
         .sheet(item: $selectedEntryDraft) { draft in
@@ -1475,7 +1624,7 @@ struct JournalTemplatesView: View {
                 if let activeDraft {
                     discardDraft(activeDraft)
                 }
-                selectedTemplate = pendingTemplate
+                selectedTemplateAction = pendingTemplate
                 pendingTemplate = nil
             }
             Button("Cancel", role: .cancel) {
@@ -1491,7 +1640,50 @@ struct JournalTemplatesView: View {
             pendingTemplate = template
             isReplacingDraft = true
         } else {
-            selectedTemplate = template
+            selectedTemplateAction = template
+        }
+    }
+
+    @MainActor
+    private func beginActivityLogging(template: JournalTemplateSeed) {
+        let session = ContinuousActivityLogger.beginTimer(template: template)
+        Task {
+            try? await ThreadLiveActivityService.start(
+                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(
+                    startDate: session.startDate,
+                    endDate: session.endDate
+                )
+            )
+        }
+    }
+
+    @MainActor
+    private func stopActivityLogging() {
+        guard let window = ContinuousActivityLogger.finish() else {
+            return
+        }
+        captureRequest = JournalTemplateCaptureRequest(
+            startDate: window.startDate,
+            endDate: window.endDate,
+            template: window.template
+        )
+        Task {
+            await ThreadLiveActivityService.stopActivityLogging()
+            await NotificationScheduler.shared.cancelActivityCountdown()
+        }
+    }
+
+    @MainActor
+    private func beginCountdown(template: JournalTemplateSeed, duration: TimeInterval) {
+        let session = ContinuousActivityLogger.beginCountdown(template: template, duration: duration)
+        Task {
+            await NotificationScheduler.shared.scheduleActivityCountdownCompletion(for: session)
+            try? await ThreadLiveActivityService.start(
+                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(
+                    startDate: session.startDate,
+                    endDate: session.endDate
+                )
+            )
         }
     }
 
@@ -1524,7 +1716,304 @@ struct JournalTemplatesView: View {
     }
 }
 
-struct JournalTemplateSeed: Identifiable, Hashable {
+private struct JournalTemplateActionView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let template: JournalTemplateSeed
+    let onNow: (JournalTemplateCaptureRequest) -> Void
+    let onCountdown: (JournalTemplateSeed, TimeInterval) -> Void
+    let onTimer: (JournalTemplateSeed) -> Void
+    let onRetroactive: (JournalTemplateCaptureRequest) -> Void
+
+    @State private var megaCount = 0
+    @State private var kiloCount = 0
+    @State private var sarosCount = 1
+    @State private var miliCount = 0
+    @State private var isCountdownExpanded = false
+    @State private var retroactivePhotoItem: PhotosPickerItem?
+    @State private var isLoadingRetroactivePhoto = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Text(template.resolvedStaticEmoji)
+                            .font(.system(size: 44))
+                            .frame(width: 54, height: 54)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(template.name)
+                                .font(.headline)
+                            Text(template.text.nilIfBlank ?? "Empty text")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                        JournalTemplateActionButton(title: "Now", systemName: "record.circle") {
+                            let now = Date()
+                            onNow(JournalTemplateCaptureRequest(
+                                startDate: now,
+                                endDate: now,
+                                template: template
+                            ))
+                            dismiss()
+                        }
+
+                        JournalTemplateActionButton(title: "Countdown", systemName: "timer") {
+                            withAnimation(.snappy) {
+                                isCountdownExpanded.toggle()
+                            }
+                        }
+
+                        JournalTemplateActionButton(title: "Timer", systemName: "stopwatch") {
+                            onTimer(template)
+                            dismiss()
+                        }
+
+                        PhotosPicker(selection: $retroactivePhotoItem, matching: .images) {
+                            JournalTemplateActionButtonLabel(title: "Retroactive", systemName: "photo.badge.clock")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLoadingRetroactivePhoto)
+                    }
+                }
+                .padding(.vertical, 4)
+
+                if isCountdownExpanded {
+                    JournalCountdownConfigurationView(
+                        megaCount: $megaCount,
+                        kiloCount: $kiloCount,
+                        sarosCount: $sarosCount,
+                        miliCount: $miliCount,
+                        duration: countdownDuration
+                    ) {
+                        onCountdown(template, countdownDuration)
+                        dismiss()
+                    }
+                }
+
+                if isLoadingRetroactivePhoto {
+                    HStack {
+                        ProgressView()
+                        Text("Loading photo")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Record")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+        }
+        .onChange(of: retroactivePhotoItem) { _, item in
+            guard let item else { return }
+            Task {
+                await importRetroactivePhoto(item)
+            }
+        }
+    }
+
+    private var countdownDuration: TimeInterval {
+        Double(megaCount) * SarosPulseCalculator.averageDuration(for: .mega)
+            + Double(kiloCount) * SarosPulseCalculator.averageDuration(for: .kilo)
+            + Double(sarosCount) * SarosPulseCalculator.averageDuration(for: .saros)
+            + Double(miliCount) * SarosPulseCalculator.averageDuration(for: .mili)
+    }
+
+    @MainActor
+    private func importRetroactivePhoto(_ item: PhotosPickerItem) async {
+        isLoadingRetroactivePhoto = true
+        errorMessage = nil
+        defer {
+            isLoadingRetroactivePhoto = false
+            retroactivePhotoItem = nil
+        }
+
+        do {
+            guard let pickedPhoto = try await item.loadTransferable(type: JournalPickedPhotoTransfer.self) else {
+                errorMessage = "Photo unavailable."
+                return
+            }
+            let metadata = JournalImportedPhotoMetadataReader.read(from: pickedPhoto.data)
+            let mediaItem = try MediaStorage.saveData(
+                pickedPhoto.data,
+                fileExtension: item.supportedContentTypes.first(where: { $0.conforms(to: .image) })?.preferredFilenameExtension ?? "jpg",
+                type: .photo
+            )
+            let date = metadata.date ?? Date()
+            onRetroactive(JournalTemplateCaptureRequest(
+                startDate: date,
+                endDate: date,
+                template: template,
+                mediaItems: [mediaItem],
+                latitude: metadata.latitude,
+                longitude: metadata.longitude
+            ))
+            dismiss()
+        } catch {
+            errorMessage = "Photo import failed."
+        }
+    }
+}
+
+private struct JournalTemplateActionButton: View {
+    let title: String
+    let systemName: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            JournalTemplateActionButtonLabel(title: title, systemName: systemName)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct JournalTemplateActionButtonLabel: View {
+    let title: String
+    let systemName: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.title2.weight(.semibold))
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 86)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+    }
+}
+
+private struct JournalCountdownConfigurationView: View {
+    @Binding var megaCount: Int
+    @Binding var kiloCount: Int
+    @Binding var sarosCount: Int
+    @Binding var miliCount: Int
+
+    let duration: TimeInterval
+    let onStart: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            JournalCountdownStepper(label: "Mega", value: $megaCount)
+            JournalCountdownStepper(label: "Kilo", value: $kiloCount)
+            JournalCountdownStepper(label: "Saros", value: $sarosCount)
+            JournalCountdownStepper(label: "Mili", value: $miliCount)
+
+            HStack {
+                Text(SarosDurationUnitFormatter.verboseDuration(duration, maxUnits: 3))
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    onStart()
+                } label: {
+                    Label("Start", systemImage: "play.fill")
+                        .font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(duration <= 0)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+private struct JournalCountdownStepper: View {
+    let label: String
+    @Binding var value: Int
+
+    var body: some View {
+        Stepper(value: $value, in: 0...7) {
+            HStack {
+                Text(label)
+                Spacer()
+                Text("\(value)")
+                    .font(.body.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct JournalImportedPhotoMetadata {
+    var date: Date?
+    var latitude: Double?
+    var longitude: Double?
+}
+
+private enum JournalImportedPhotoMetadataReader {
+    static func read(from data: Data) -> JournalImportedPhotoMetadata {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else {
+            return JournalImportedPhotoMetadata()
+        }
+
+        var metadata = JournalImportedPhotoMetadata()
+        let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any]
+        let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any]
+        let dateString = exif?[kCGImagePropertyExifDateTimeOriginal as String] as? String
+            ?? exif?[kCGImagePropertyExifDateTimeDigitized as String] as? String
+            ?? tiff?[kCGImagePropertyTIFFDateTime as String] as? String
+        metadata.date = dateString.flatMap(parseExifDate)
+
+        if let gps = properties[kCGImagePropertyGPSDictionary as String] as? [String: Any] {
+            metadata.latitude = coordinateValue(
+                gps[kCGImagePropertyGPSLatitude as String],
+                ref: gps[kCGImagePropertyGPSLatitudeRef as String] as? String,
+                negativeRef: "S"
+            )
+            metadata.longitude = coordinateValue(
+                gps[kCGImagePropertyGPSLongitude as String],
+                ref: gps[kCGImagePropertyGPSLongitudeRef as String] as? String,
+                negativeRef: "W"
+            )
+        }
+
+        return metadata
+    }
+
+    private static func parseExifDate(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter.date(from: value)
+    }
+
+    private static func coordinateValue(_ rawValue: Any?, ref: String?, negativeRef: String) -> Double? {
+        let value: Double?
+        if let double = rawValue as? Double {
+            value = double
+        } else if let number = rawValue as? NSNumber {
+            value = number.doubleValue
+        } else {
+            value = nil
+        }
+        guard let value else { return nil }
+        return ref?.uppercased() == negativeRef ? -abs(value) : abs(value)
+    }
+}
+
+struct JournalTemplateSeed: Identifiable, Hashable, Codable {
     let id: String
     let name: String
     let emoji: String?
@@ -1559,6 +2048,16 @@ struct JournalTemplateSeed: Identifiable, Hashable {
 
     var resolvedEmoji: String {
         usesRandomEmoji ? JournalRecordMarkers.random() : (emoji?.nilIfBlank ?? JournalRecordMarkers.random())
+    }
+
+    var resolvedStaticEmoji: String {
+        usesRandomEmoji ? JournalRecordMarkers.fallback : (emoji?.nilIfBlank ?? JournalRecordMarkers.fallback)
+    }
+
+    var previewTitle: String {
+        text.nilIfBlank?.components(separatedBy: .newlines).first?.nilIfBlank
+            ?? name.nilIfBlank
+            ?? "Activity"
     }
 }
 

@@ -89,7 +89,64 @@ enum ThreadLiveActivityService {
             moonAnomalisticStartDate: nil,
             moonAnomalisticEndDate: nil,
             moonDraconicStartDate: nil,
-            moonDraconicEndDate: nil
+            moonDraconicEndDate: nil,
+            isActivityLogging: false,
+            activityStartDate: nil,
+            activityEndDate: nil
+        )
+    }
+
+    static func activityLoggingSnapshot(
+        startDate: Date,
+        endDate: Date? = nil,
+        date: Date = Date()
+    ) -> ThreadTrackingSnapshot {
+        let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: date)
+        let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
+        return ThreadTrackingSnapshot(
+            threadID: ThreadTrackingSharedStore.activityLoggingID,
+            threadTitle: "Activity",
+            saros: 0,
+            harmonicDepth: ActivityLoggingGlyph.depth,
+            eventName: ActivityLoggingGlyph.title(for: glyph),
+            energyPercent: nil,
+            momentum: nil,
+            waveDirectionRawValue: nil,
+            waveformSamples: nil,
+            waveformSamplePositions: nil,
+            waveformSpikeMarkers: nil,
+            waveformStartDate: nil,
+            waveformEndDate: nil,
+            widgetRangeKilosaros: nil,
+            glyph: glyph,
+            rarityRawValue: "common",
+            rarityTitle: ActivityLoggingGlyph.title(for: glyph),
+            rarityOrderLabel: glyph,
+            raritySymbolName: "record.circle",
+            rarityColorHex: colorHex,
+            raritySecondaryColorHex: colorHex,
+            flipDate: startDate.addingTimeInterval(1_000_000_000),
+            createdAt: date,
+            nextGlyph: nil,
+            nextRarityRawValue: nil,
+            nextRarityTitle: nil,
+            nextRarityOrderLabel: nil,
+            nextRaritySymbolName: nil,
+            nextRarityColorHex: nil,
+            nextRaritySecondaryColorHex: nil,
+            nextFlipDate: nil,
+            pulseSaros: nil,
+            pulseCycleStartDate: nil,
+            pulseCycleEndDate: nil,
+            moonSynodicStartDate: nil,
+            moonSynodicEndDate: nil,
+            moonAnomalisticStartDate: nil,
+            moonAnomalisticEndDate: nil,
+            moonDraconicStartDate: nil,
+            moonDraconicEndDate: nil,
+            isActivityLogging: true,
+            activityStartDate: startDate,
+            activityEndDate: endDate
         )
     }
 
@@ -171,7 +228,10 @@ enum ThreadLiveActivityService {
             moonAnomalisticStartDate: moonBounds?.anomalistic.startDate,
             moonAnomalisticEndDate: moonBounds?.anomalistic.endDate,
             moonDraconicStartDate: moonBounds?.draconic.startDate,
-            moonDraconicEndDate: moonBounds?.draconic.endDate
+            moonDraconicEndDate: moonBounds?.draconic.endDate,
+            isActivityLogging: false,
+            activityStartDate: nil,
+            activityEndDate: nil
         )
     }
 
@@ -229,7 +289,10 @@ enum ThreadLiveActivityService {
             moonAnomalisticStartDate: snapshot.moonAnomalisticStartDate,
             moonAnomalisticEndDate: snapshot.moonAnomalisticEndDate,
             moonDraconicStartDate: snapshot.moonDraconicStartDate,
-            moonDraconicEndDate: snapshot.moonDraconicEndDate
+            moonDraconicEndDate: snapshot.moonDraconicEndDate,
+            isActivityLogging: snapshot.isActivityLogging,
+            activityStartDate: snapshot.activityStartDate,
+            activityEndDate: snapshot.activityEndDate
         )
         let content = ActivityContent(
             state: state,
@@ -254,7 +317,28 @@ enum ThreadLiveActivityService {
         #endif
     }
 
+    @MainActor
+    static func stopActivityLogging() async {
+        if ThreadTrackingSharedStore.load()?.threadID == ThreadTrackingSharedStore.activityLoggingID {
+            ThreadTrackingSharedStore.clear()
+            WidgetCenter.shared.reloadTimelines(ofKind: ThreadTrackingSharedStore.widgetKind)
+        }
+
+        #if canImport(ActivityKit)
+        for activity in Activity<ThreadTrackingAttributes>.activities where activity.attributes.threadID == ThreadTrackingSharedStore.activityLoggingID {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        #endif
+    }
+
     private static func liveActivityStaleDate(for snapshot: ThreadTrackingSnapshot, after date: Date) -> Date {
+        if snapshot.isActivityLogging == true {
+            if let activityEndDate = snapshot.activityEndDate, activityEndDate > date {
+                return min(activityEndDate, date.addingTimeInterval(33))
+            }
+            return date.addingTimeInterval(33)
+        }
+
         if let pulseCycleStartDate = snapshot.pulseCycleStartDate,
            let pulseCycleEndDate = snapshot.pulseCycleEndDate,
            pulseCycleEndDate > pulseCycleStartDate {

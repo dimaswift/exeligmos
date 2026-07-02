@@ -34,6 +34,9 @@ struct TrackingDisplayPayload {
     let moonAnomalisticEndDate: Date?
     let moonDraconicStartDate: Date?
     let moonDraconicEndDate: Date?
+    let isActivityLogging: Bool
+    let activityStartDate: Date?
+    let activityEndDate: Date?
 }
 
 struct TrackingCountdownText: View {
@@ -43,7 +46,10 @@ struct TrackingCountdownText: View {
     var recordURL: URL?
 
     var body: some View {
-        if payload.isFlipWindow {
+        if payload.isActivityLogging,
+           let startDate = payload.activityStartDate {
+            activityLoggingLabel(startDate: startDate, endDate: payload.activityEndDate)
+        } else if payload.isFlipWindow {
             if let recordURL {
                 Link(destination: recordURL) {
                     recLabel
@@ -64,6 +70,22 @@ struct TrackingCountdownText: View {
         }
     }
 
+    @ViewBuilder
+    private func activityLoggingLabel(startDate: Date, endDate: Date?) -> some View {
+        HStack(spacing: compact ? 5 : 8) {
+            if let endDate {
+                if endDate > now {
+                    Text(timerInterval: now...endDate, countsDown: true)
+                } else {
+                    Text("Done")
+                }
+            } else {
+                Text(startDate, style: .timer)
+            }
+        }
+        .font(compact ? .caption2.weight(.semibold).monospacedDigit() : .callout.weight(.semibold).monospacedDigit())
+    }
+
     private var recLabel: some View {
         HStack(spacing: compact ? 3 : 5) {
             Image(systemName: "record.circle.fill")
@@ -78,6 +100,11 @@ struct TrackingCountdownText: View {
 
 extension ThreadTrackingSnapshot {
     func displayPayload(at now: Date) -> TrackingDisplayPayload {
+        if isActivityLogging == true,
+           let activityStartDate {
+            return activityLoggingPayload(startDate: activityStartDate, at: now)
+        }
+
         let shouldShowNext = now >= flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay)
 
         if shouldShowNext,
@@ -116,7 +143,10 @@ extension ThreadTrackingSnapshot {
                 moonAnomalisticStartDate: moonAnomalisticStartDate,
                 moonAnomalisticEndDate: moonAnomalisticEndDate,
                 moonDraconicStartDate: moonDraconicStartDate,
-                moonDraconicEndDate: moonDraconicEndDate
+                moonDraconicEndDate: moonDraconicEndDate,
+                isActivityLogging: false,
+                activityStartDate: nil,
+                activityEndDate: nil
             )
         }
 
@@ -149,15 +179,61 @@ extension ThreadTrackingSnapshot {
             moonAnomalisticStartDate: moonAnomalisticStartDate,
             moonAnomalisticEndDate: moonAnomalisticEndDate,
             moonDraconicStartDate: moonDraconicStartDate,
-            moonDraconicEndDate: moonDraconicEndDate
+            moonDraconicEndDate: moonDraconicEndDate,
+            isActivityLogging: false,
+            activityStartDate: nil,
+            activityEndDate: nil
         )
     }
 
+    private func activityLoggingPayload(startDate: Date, at now: Date) -> TrackingDisplayPayload {
+        let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: now)
+        let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
+        return TrackingDisplayPayload(
+            saros: nil,
+            eventName: ActivityLoggingGlyph.title(for: glyph),
+            energyPercent: nil,
+            momentum: nil,
+            waveDirectionRawValue: nil,
+            waveformSamples: nil,
+            waveformSamplePositions: nil,
+            waveformSpikeMarkers: nil,
+            waveformStartDate: nil,
+            waveformEndDate: nil,
+            widgetRangeKilosaros: nil,
+            glyph: glyph,
+            rarityRawValue: "common",
+            rarityTitle: ActivityLoggingGlyph.title(for: glyph),
+            rarityOrderLabel: glyph,
+            raritySymbolName: "record.circle",
+            rarityColorHex: colorHex,
+            raritySecondaryColorHex: colorHex,
+            flipDate: now.addingTimeInterval(1_000_000_000),
+            isFlipWindow: false,
+            pulseSaros: nil,
+            pulseCycleStartDate: nil,
+            pulseCycleEndDate: nil,
+            moonSynodicStartDate: nil,
+            moonSynodicEndDate: nil,
+            moonAnomalisticStartDate: nil,
+            moonAnomalisticEndDate: nil,
+            moonDraconicStartDate: nil,
+            moonDraconicEndDate: nil,
+            isActivityLogging: true,
+            activityStartDate: startDate,
+            activityEndDate: activityEndDate
+        )
+    }
 }
 
 #if canImport(ActivityKit)
 extension ThreadTrackingAttributes.ContentState {
     func displayPayload(at now: Date) -> TrackingDisplayPayload {
+        if isActivityLogging == true,
+           let activityStartDate {
+            return activityLoggingPayload(startDate: activityStartDate, at: now)
+        }
+
         let shouldShowNext = now >= flipDate.addingTimeInterval(ThreadTrackingSharedStore.flipRolloverDelay)
 
         if shouldShowNext,
@@ -196,7 +272,10 @@ extension ThreadTrackingAttributes.ContentState {
                 moonAnomalisticStartDate: moonAnomalisticStartDate,
                 moonAnomalisticEndDate: moonAnomalisticEndDate,
                 moonDraconicStartDate: moonDraconicStartDate,
-                moonDraconicEndDate: moonDraconicEndDate
+                moonDraconicEndDate: moonDraconicEndDate,
+                isActivityLogging: false,
+                activityStartDate: nil,
+                activityEndDate: nil
             )
         }
 
@@ -229,10 +308,51 @@ extension ThreadTrackingAttributes.ContentState {
             moonAnomalisticStartDate: moonAnomalisticStartDate,
             moonAnomalisticEndDate: moonAnomalisticEndDate,
             moonDraconicStartDate: moonDraconicStartDate,
-            moonDraconicEndDate: moonDraconicEndDate
+            moonDraconicEndDate: moonDraconicEndDate,
+            isActivityLogging: false,
+            activityStartDate: nil,
+            activityEndDate: nil
         )
     }
 
+    private func activityLoggingPayload(startDate: Date, at now: Date) -> TrackingDisplayPayload {
+        let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: now)
+        let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
+        return TrackingDisplayPayload(
+            saros: nil,
+            eventName: ActivityLoggingGlyph.title(for: glyph),
+            energyPercent: nil,
+            momentum: nil,
+            waveDirectionRawValue: nil,
+            waveformSamples: nil,
+            waveformSamplePositions: nil,
+            waveformSpikeMarkers: nil,
+            waveformStartDate: nil,
+            waveformEndDate: nil,
+            widgetRangeKilosaros: nil,
+            glyph: glyph,
+            rarityRawValue: "common",
+            rarityTitle: ActivityLoggingGlyph.title(for: glyph),
+            rarityOrderLabel: glyph,
+            raritySymbolName: "record.circle",
+            rarityColorHex: colorHex,
+            raritySecondaryColorHex: colorHex,
+            flipDate: now.addingTimeInterval(1_000_000_000),
+            isFlipWindow: false,
+            pulseSaros: nil,
+            pulseCycleStartDate: nil,
+            pulseCycleEndDate: nil,
+            moonSynodicStartDate: nil,
+            moonSynodicEndDate: nil,
+            moonAnomalisticStartDate: nil,
+            moonAnomalisticEndDate: nil,
+            moonDraconicStartDate: nil,
+            moonDraconicEndDate: nil,
+            isActivityLogging: true,
+            activityStartDate: startDate,
+            activityEndDate: activityEndDate
+        )
+    }
 }
 #endif
 

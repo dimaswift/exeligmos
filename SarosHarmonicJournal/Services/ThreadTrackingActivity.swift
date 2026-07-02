@@ -45,8 +45,14 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let moonAnomalisticEndDate: Date?
     let moonDraconicStartDate: Date?
     let moonDraconicEndDate: Date?
+    let isActivityLogging: Bool?
+    let activityStartDate: Date?
+    let activityEndDate: Date?
 
     var deepLinkURL: URL? {
+        if isActivityLogging == true {
+            return URL(string: "exeligmos://activity/stop")
+        }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://saros")
         }
@@ -54,6 +60,9 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     }
 
     var recordURL: URL? {
+        if isActivityLogging == true {
+            return URL(string: "exeligmos://activity/stop")
+        }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://record")
         }
@@ -70,6 +79,7 @@ struct TrackingWaveformSpikeMarker: Codable, Hashable {
 enum ThreadTrackingSharedStore {
     static let appGroupIdentifier = "group.com.exeligmos.sarosjournal"
     static let journalTrackingID = "journal-live"
+    static let activityLoggingID = "journal-activity-logging"
     static let snapshotKey = "trackedThread.snapshot"
     static let widgetKind = "TrackedThreadWidget"
     static let flipRolloverDelay: TimeInterval = 8
@@ -135,6 +145,9 @@ struct ThreadTrackingAttributes: ActivityAttributes {
         let moonAnomalisticEndDate: Date?
         let moonDraconicStartDate: Date?
         let moonDraconicEndDate: Date?
+        let isActivityLogging: Bool?
+        let activityStartDate: Date?
+        let activityEndDate: Date?
     }
 
     let threadID: String
@@ -143,3 +156,76 @@ struct ThreadTrackingAttributes: ActivityAttributes {
     let harmonicDepth: Int
 }
 #endif
+
+enum ActivityLoggingGlyph {
+    static let depth = 6
+    static let defaultColorHex = "#FFFFFF"
+    static let blueColorHex = "#0A84FF"
+    static let purpleColorHex = "#BF5AF2"
+    static let yellowColorHex = "#FFD60A"
+    static let redColorHex = "#FF3B30"
+
+    static func glyph(startDate: Date, at date: Date) -> String {
+        let elapsed = max(date.timeIntervalSince(startDate), 0)
+        let nanosarosDuration = averageSarosPeriod / pow(8, 9)
+        let binCount = Int(pow(8, Double(depth)))
+        let rawIndex = Int(floor(elapsed / max(nanosarosDuration, 0.000_001)))
+        let index = ((rawIndex % binCount) + binCount) % binCount
+        return leftPadded(String(index, radix: 8), toLength: depth, withPad: "0")
+    }
+
+    static func colorHex(for glyph: String) -> String {
+        switch intensity(for: glyph) {
+        case 4...:
+            return redColorHex
+        case 3:
+            return yellowColorHex
+        case 2:
+            return purpleColorHex
+        case 1:
+            return blueColorHex
+        default:
+            return defaultColorHex
+        }
+    }
+
+    static func title(for glyph: String) -> String {
+        switch intensity(for: glyph) {
+        case 4...:
+            return "Red activity"
+        case 3:
+            return "Yellow activity"
+        case 2:
+            return "Purple activity"
+        case 1:
+            return "Blue activity"
+        default:
+            return "Activity"
+        }
+    }
+
+    private static func intensity(for glyph: String) -> Int {
+        let digits = glyph.filter { "01234567".contains($0) }
+        guard !digits.isEmpty else { return 0 }
+        let trailingZeroes = digits.reversed().prefix { $0 == "0" }.count
+        let repeatingSuffix = repeatingSuffixLength(in: digits)
+
+        if trailingZeroes >= 5 || repeatingSuffix >= 6 { return 4 }
+        if trailingZeroes >= 4 || repeatingSuffix >= 5 { return 3 }
+        if trailingZeroes >= 3 || repeatingSuffix >= 4 { return 2 }
+        if trailingZeroes >= 2 || repeatingSuffix >= 3 { return 1 }
+        return 0
+    }
+
+    private static func repeatingSuffixLength(in digits: String) -> Int {
+        guard let last = digits.last else { return 0 }
+        return digits.reversed().prefix { $0 == last }.count
+    }
+
+    private static func leftPadded(_ value: String, toLength length: Int, withPad pad: Character) -> String {
+        guard value.count < length else { return String(value.suffix(length)) }
+        return String(repeating: String(pad), count: length - value.count) + value
+    }
+
+    private static let averageSarosPeriod: TimeInterval = 6_585.3211 * 24 * 60 * 60
+}

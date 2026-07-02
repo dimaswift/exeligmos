@@ -23,6 +23,44 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func scheduleActivityCountdownCompletion(for session: ContinuousActivitySession) async {
+        guard session.kind == .countdown,
+              let endDate = session.endDate,
+              endDate > Date(),
+              await requestAuthorization() else { return }
+
+        await cancelActivityCountdown()
+
+        let content = UNMutableNotificationContent()
+        content.title = "Countdown complete"
+        content.body = "\(session.template.resolvedStaticEmoji) \(session.template.previewTitle) is ready to record."
+        content.sound = .default
+        content.interruptionLevel = .active
+        content.threadIdentifier = "journal-activity-countdown"
+        content.userInfo = [
+            "trigger": "activityCountdownComplete",
+            "sessionID": session.id.uuidString,
+            "startDate": session.startDate.timeIntervalSince1970,
+            "endDate": endDate.timeIntervalSince1970
+        ]
+
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: endDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "\(identifierPrefix)activity.countdown.\(session.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    func cancelActivityCountdown() async {
+        let pending = await pendingRequests()
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix("\(identifierPrefix)activity.countdown.") }
+        )
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,

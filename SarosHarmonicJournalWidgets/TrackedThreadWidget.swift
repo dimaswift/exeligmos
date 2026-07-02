@@ -20,6 +20,12 @@ struct TrackedThreadProvider: TimelineProvider {
         let now = Date.now
 
         if let snapshot,
+           snapshot.isActivityLogging == true {
+            completion(activityTimeline(snapshot: snapshot, now: now))
+            return
+        }
+
+        if let snapshot,
            let pulseWindow = WidgetPulseWindow(payload: snapshot.displayPayload(at: now), at: now) {
             completion(pulseTimeline(snapshot: snapshot, now: now, pulseWindow: pulseWindow))
             return
@@ -64,7 +70,33 @@ struct TrackedThreadProvider: TimelineProvider {
         )
     }
 
+    private func activityTimeline(
+        snapshot: ThreadTrackingSnapshot,
+        now: Date
+    ) -> Timeline<TrackedThreadEntry> {
+        let requestedEndDate = snapshot.activityEndDate ?? now.addingTimeInterval(Self.fallbackTimelineHorizon)
+        let horizonEnd = min(
+            max(requestedEndDate, now.addingTimeInterval(Self.fallbackTimelineHorizon)),
+            now.addingTimeInterval(60 * 60)
+        )
+        var entries: [TrackedThreadEntry] = []
+        var cursor = now
+
+        while cursor <= horizonEnd, entries.count < Self.maxActivityTimelineEntries {
+            entries.append(TrackedThreadEntry(date: cursor, snapshot: snapshot))
+            cursor = cursor.addingTimeInterval(Self.activityTimelineStep)
+        }
+
+        if entries.isEmpty {
+            entries = [TrackedThreadEntry(date: now, snapshot: snapshot)]
+        }
+
+        return Timeline(entries: entries, policy: .after(cursor))
+    }
+
     private static let maxPulseTimelineEntries = 24
+    private static let maxActivityTimelineEntries = 48
+    private static let activityTimelineStep: TimeInterval = 5
     private static let fallbackTimelineStep: TimeInterval = 30
     private static let fallbackTimelineHorizon: TimeInterval = 15 * 60
 }
@@ -153,30 +185,34 @@ private struct TrackedThreadWidgetView: View {
                                 color: color,
                                 secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
                             )
-                            .frame(width: 48, height: 48)
+                            .frame(width: payload.isActivityLogging ? 82 : 48, height: payload.isActivityLogging ? 82 : 48)
                             .offset(x: 3, y: 3)
-                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
+                            if !payload.isActivityLogging {
+                                WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
+                            }
                         }
                     }
                     .padding(.horizontal, 10)
                     .padding(.top, 10)
 
-                    WidgetWaveformSegmentView(
-                        samples: payload.waveformSamples ?? [],
-                        samplePositions: payload.waveformSamplePositions ?? [],
-                        spikeMarkers: payload.waveformSpikeMarkers ?? [],
-                        color: color,
-                        currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
-                        currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
-                        waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
-                        waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
-                        pulseCycleStartDate: payload.pulseCycleStartDate,
-                        pulseCycleEndDate: payload.pulseCycleEndDate,
-                        pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
-                        pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
-                    )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 62)
+                    if !payload.isActivityLogging {
+                        WidgetWaveformSegmentView(
+                            samples: payload.waveformSamples ?? [],
+                            samplePositions: payload.waveformSamplePositions ?? [],
+                            spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                            color: color,
+                            currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                            currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                            waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                            waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
+                            pulseCycleStartDate: payload.pulseCycleStartDate,
+                            pulseCycleEndDate: payload.pulseCycleEndDate,
+                            pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                            pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 62)
+                    }
                 }
             default:
                 VStack(alignment: .leading, spacing: 6) {
@@ -201,9 +237,11 @@ private struct TrackedThreadWidgetView: View {
                                 color: color,
                                 secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
                             )
-                            .frame(width: 36, height: 36)
+                            .frame(width: payload.isActivityLogging ? 56 : 36, height: payload.isActivityLogging ? 56 : 36)
                             .offset(x: 2, y: 2)
-                            WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 22)
+                            if !payload.isActivityLogging {
+                                WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 22)
+                            }
                         }
                     }
                     .padding(.horizontal, 8)
@@ -218,21 +256,23 @@ private struct TrackedThreadWidgetView: View {
                     .foregroundStyle(color)
                     .padding(.horizontal, 8)
 
-                    WidgetWaveformSegmentView(
-                        samples: payload.waveformSamples ?? [],
-                        samplePositions: payload.waveformSamplePositions ?? [],
-                        spikeMarkers: payload.waveformSpikeMarkers ?? [],
-                        color: color,
-                        currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
-                        currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
-                        waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
-                        waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
-                        pulseCycleStartDate: payload.pulseCycleStartDate,
-                        pulseCycleEndDate: payload.pulseCycleEndDate,
-                        pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
-                        pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
-                    )
-                    .frame(height: 50)
+                    if !payload.isActivityLogging {
+                        WidgetWaveformSegmentView(
+                            samples: payload.waveformSamples ?? [],
+                            samplePositions: payload.waveformSamplePositions ?? [],
+                            spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                            color: color,
+                            currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                            currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                            waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                            waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
+                            pulseCycleStartDate: payload.pulseCycleStartDate,
+                            pulseCycleEndDate: payload.pulseCycleEndDate,
+                            pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                            pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
+                        )
+                        .frame(height: 50)
+                    }
                 }
             }
         }
@@ -298,6 +338,9 @@ extension ThreadTrackingSnapshot {
         moonAnomalisticStartDate: Date.now.addingTimeInterval(-12 * 86_400),
         moonAnomalisticEndDate: Date.now.addingTimeInterval(15 * 86_400),
         moonDraconicStartDate: Date.now.addingTimeInterval(-13 * 86_400),
-        moonDraconicEndDate: Date.now.addingTimeInterval(14 * 86_400)
+        moonDraconicEndDate: Date.now.addingTimeInterval(14 * 86_400),
+        isActivityLogging: false,
+        activityStartDate: nil,
+        activityEndDate: nil
     )
 }

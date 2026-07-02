@@ -39,6 +39,9 @@ struct ThreadTrackingLiveActivityWidget: Widget {
     }
 
     private func deepLinkURL(for threadID: String) -> URL? {
+        if threadID == ThreadTrackingSharedStore.activityLoggingID {
+            return URL(string: "exeligmos://activity/stop")
+        }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://saros")
         }
@@ -84,7 +87,7 @@ private struct ThreadTrackingLockScreenView: View {
                         payload: payload,
                         now: now,
                         compact: false,
-                        recordURL: URL(string: "exeligmos://record/\(context.attributes.threadID)")
+                        recordURL: actionURL(for: context.attributes.threadID)
                     )
                     .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color)
@@ -98,32 +101,43 @@ private struct ThreadTrackingLockScreenView: View {
                         color: color,
                         secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
                     )
-                    .frame(width: 48, height: 48)
+                    .frame(width: payload.isActivityLogging ? 72 : 48, height: payload.isActivityLogging ? 72 : 48)
                     .offset(x: 3, y: 3)
-                    WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
+                    if !payload.isActivityLogging {
+                        WidgetAuxiliaryGlyphsView(payload: payload, date: now, size: 30)
+                    }
                 }
             }
-            WidgetWaveformSegmentView(
-                samples: payload.waveformSamples ?? [],
-                samplePositions: payload.waveformSamplePositions ?? [],
-                spikeMarkers: payload.waveformSpikeMarkers ?? [],
-                color: color,
-                currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
-                currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
-                waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
-                waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
-                pulseCycleStartDate: payload.pulseCycleStartDate,
-                pulseCycleEndDate: payload.pulseCycleEndDate,
-                pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
-                pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: 68)
+            if !payload.isActivityLogging {
+                WidgetWaveformSegmentView(
+                    samples: payload.waveformSamples ?? [],
+                    samplePositions: payload.waveformSamplePositions ?? [],
+                    spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                    color: color,
+                    currentPosition: pulseWindow?.discretePosition(at: now) ?? payload.waveformPosition(at: now),
+                    currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                    waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                    waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
+                    pulseCycleStartDate: payload.pulseCycleStartDate,
+                    pulseCycleEndDate: payload.pulseCycleEndDate,
+                    pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                    pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: 68)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 4)
         .foregroundStyle(.white)
+    }
+
+    private func actionURL(for threadID: String) -> URL? {
+        if threadID == ThreadTrackingSharedStore.activityLoggingID {
+            return URL(string: "exeligmos://activity/stop")
+        }
+        return URL(string: "exeligmos://record/\(threadID)")
     }
 }
 
@@ -140,7 +154,7 @@ private struct LiveTrackingGlyphView: View {
                 color: Color(hexString: payload.rarityColorHex),
                 secondaryColor: payload.raritySecondaryColorHex.map(Color.init(hexString:))
             )
-            .frame(width: size, height: size)
+            .frame(width: payload.isActivityLogging ? max(size, 68) : size, height: payload.isActivityLogging ? max(size, 68) : size)
             .offset(x: 4, y: 4)
         }
     }
@@ -169,7 +183,9 @@ private struct LiveTrackingCenterView: View {
                 HStack(spacing: 5) {
                     Text(payload.energyText(at: timeline.date))
                     Text(payload.momentumText(at: timeline.date))
-                    WidgetAuxiliaryGlyphsView(payload: payload, date: timeline.date, size: 24)
+                    if !payload.isActivityLogging {
+                        WidgetAuxiliaryGlyphsView(payload: payload, date: timeline.date, size: 24)
+                    }
                 }
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
@@ -207,21 +223,23 @@ private struct LiveTrackingWaveTimerView: View {
             let pulseWindow = WidgetPulseWindow(payload: payload, at: timeline.date)
 
             VStack(alignment: .leading, spacing: 5) {
-                WidgetWaveformSegmentView(
-                    samples: payload.waveformSamples ?? [],
-                    samplePositions: payload.waveformSamplePositions ?? [],
-                    spikeMarkers: payload.waveformSpikeMarkers ?? [],
-                    color: color,
-                    currentPosition: pulseWindow?.discretePosition(at: timeline.date) ?? payload.waveformPosition(at: timeline.date),
-                    currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
-                    waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
-                    waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
-                    pulseCycleStartDate: payload.pulseCycleStartDate,
-                    pulseCycleEndDate: payload.pulseCycleEndDate,
-                    pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
-                    pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
-                )
-                .frame(height: 52)
+                if !payload.isActivityLogging {
+                    WidgetWaveformSegmentView(
+                        samples: payload.waveformSamples ?? [],
+                        samplePositions: payload.waveformSamplePositions ?? [],
+                        spikeMarkers: payload.waveformSpikeMarkers ?? [],
+                        color: color,
+                        currentPosition: pulseWindow?.discretePosition(at: timeline.date) ?? payload.waveformPosition(at: timeline.date),
+                        currentMarkerWidth: pulseWindow?.markerWidthFraction ?? 0,
+                        waveformStartDate: pulseWindow?.startDate ?? payload.waveformStartDate,
+                        waveformEndDate: pulseWindow?.endDate ?? payload.waveformEndDate,
+                        pulseCycleStartDate: payload.pulseCycleStartDate,
+                        pulseCycleEndDate: payload.pulseCycleEndDate,
+                        pulseRulerMode: pulseWindow == nil ? .cycle : .megaWindow,
+                        pulseWindowKilosarosRange: pulseWindow?.rangeKilosaros ?? 8
+                    )
+                    .frame(height: 52)
+                }
                 HStack {
                     LiveTrackingTimerView(context: context, compact: false)
                     Spacer(minLength: 4)
@@ -245,7 +263,7 @@ private struct LiveTrackingTimerView: View {
                         payload: payload,
                         now: timeline.date,
                         compact: compact,
-                        recordURL: URL(string: "exeligmos://record/\(context.attributes.threadID)")
+                        recordURL: actionURL(for: context.attributes.threadID)
                     )
                 }
                 .font(compact ? .caption2.weight(.semibold).monospacedDigit() : .title2.weight(.semibold).monospacedDigit())
@@ -253,5 +271,12 @@ private struct LiveTrackingTimerView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func actionURL(for threadID: String) -> URL? {
+        if threadID == ThreadTrackingSharedStore.activityLoggingID {
+            return URL(string: "exeligmos://activity/stop")
+        }
+        return URL(string: "exeligmos://record/\(threadID)")
     }
 }

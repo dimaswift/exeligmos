@@ -33,6 +33,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject private var services: AppServices
+    @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
@@ -40,6 +41,8 @@ struct RootView: View {
 
     @State private var selectedTab: AppTab = .feed
     @State private var captureRequest: RecordCaptureRequest?
+    @State private var activityCaptureRequest: ActivityEntryCaptureRequest?
+    private let activityCompletionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -64,6 +67,15 @@ struct RootView: View {
                 ) {}
             }
         }
+        .sheet(item: $activityCaptureRequest) { request in
+            NavigationStack {
+                JournalEntryCaptureView(
+                    recordStartedAt: request.startDate,
+                    eventEndDate: request.endDate,
+                    template: request.template
+                )
+            }
+        }
         .onOpenURL(perform: handleDeepLink)
         .onReceive(NotificationCenter.default.publisher(for: .recordCaptureRequested)) { notification in
             if let entityID = notification.object as? UUID {
@@ -75,8 +87,12 @@ struct RootView: View {
         }
         .task {
             consumePendingRecordCapture()
+            consumeCompletedCountdownIfNeeded()
             prewarmSarosFlipDistribution()
             refreshSarosEventNotifications()
+        }
+        .onReceive(activityCompletionTimer) { _ in
+            consumeCompletedCountdownIfNeeded()
         }
         .onChange(of: harmonicDepth) { _, _ in
             prewarmSarosFlipDistribution()
@@ -87,6 +103,10 @@ struct RootView: View {
         }
         .onChange(of: entities.map(\.id)) { _, _ in
             consumePendingRecordCapture()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            consumeCompletedCountdownIfNeeded()
         }
     }
 
@@ -110,6 +130,10 @@ struct RootView: View {
         guard url.scheme == "exeligmos" else { return }
 
         switch url.host {
+        case "activity":
+            if url.pathComponents.dropFirst().first == "stop" {
+                stopContinuousActivityLogging()
+            }
         case "record":
             if let entityID = entityID(from: url) {
                 openRecordCapture(for: entityID)
@@ -145,6 +169,38 @@ struct RootView: View {
         openRecordCapture(for: entityID)
     }
 
+    private func stopContinuousActivityLogging() {
+        guard let window = ContinuousActivityLogger.finish() else {
+            selectedTab = .record
+            return
+        }
+
+        selectedTab = .record
+        activityCaptureRequest = ActivityEntryCaptureRequest(
+            startDate: window.startDate,
+            endDate: window.endDate,
+            template: window.template
+        )
+        Task {
+            await ThreadLiveActivityService.stopActivityLogging()
+            await NotificationScheduler.shared.cancelActivityCountdown()
+        }
+    }
+
+    private func consumeCompletedCountdownIfNeeded() {
+        guard let window = ContinuousActivityLogger.finishCompletedCountdownIfNeeded() else { return }
+        selectedTab = .record
+        activityCaptureRequest = ActivityEntryCaptureRequest(
+            startDate: window.startDate,
+            endDate: window.endDate,
+            template: window.template
+        )
+        Task {
+            await ThreadLiveActivityService.stopActivityLogging()
+            await NotificationScheduler.shared.cancelActivityCountdown()
+        }
+    }
+
     private func prewarmSarosFlipDistribution() {
         Task {
             await services.sarosFlipDistributionStore.prewarm(
@@ -171,6 +227,139 @@ private struct RecordCaptureRequest: Identifiable {
     let id = UUID()
     let entity: TrackedEntity
     let startedAt: Date
+}
+
+private struct ActivityEntryCaptureRequest: Identifiable {
+    let id = UUID()
+    let startDate: Date
+    let endDate: Date
+    let template: JournalTemplateSeed
+}
+
+struct ContinuousActivityWindow: Identifiable, Hashable {
+    let id = UUID()
+    let startDate: Date
+    let endDate: Date
+    let template: JournalTemplateSeed
+}
+
+enum ContinuousActivityKind: String, Codable, Hashable {
+    case timer
+    case countdown
+}
+
+struct ContinuousActivitySession: Codable, Hashable {
+    let id: UUID
+    let kind: ContinuousActivityKind
+    let startDate: Date
+    let endDate: Date?
+    let template: JournalTemplateSeed
+
+    var isCountdown: Bool { kind == .countdown }
+
+    var displayEndDate: Date? {
+        switch kind {
+        case .timer:
+            return nil
+        case .countdown:
+            return endDate
+        }
+    }
+}
+
+enum ContinuousActivityLogger {
+    static let sessionKey = "continuousActivityLogger.session"
+    private static let startDateKey = "continuousActivityLogger.startDate"
+
+    static var startDate: Date? {
+        if let session {
+            return session.startDate
+        }
+        let timestamp = UserDefaults.standard.double(forKey: startDateKey)
+        guard timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    static var session: ContinuousActivitySession? {
+        session(from: UserDefaults.standard.data(forKey: sessionKey) ?? Data())
+    }
+
+    static func session(from data: Data) -> ContinuousActivitySession? {
+        guard !data.isEmpty else { return nil }
+        return try? JSONDecoder().decode(ContinuousActivitySession.self, from: data)
+    }
+
+    @discardableResult
+    static func beginTimer(template: JournalTemplateSeed = .random, at date: Date = Date()) -> ContinuousActivitySession {
+        let session = ContinuousActivitySession(
+            id: UUID(),
+            kind: .timer,
+            startDate: date,
+            endDate: nil,
+            template: template
+        )
+        save(session)
+        return session
+    }
+
+    @discardableResult
+    static func beginCountdown(template: JournalTemplateSeed, duration: TimeInterval, at date: Date = Date()) -> ContinuousActivitySession {
+        let safeDuration = max(duration, 1)
+        let session = ContinuousActivitySession(
+            id: UUID(),
+            kind: .countdown,
+            startDate: date,
+            endDate: date.addingTimeInterval(safeDuration),
+            template: template
+        )
+        save(session)
+        return session
+    }
+
+    static func finish(at date: Date = Date()) -> ContinuousActivityWindow? {
+        guard let session = session ?? legacySession() else { return nil }
+        clear()
+        return ContinuousActivityWindow(
+            startDate: session.startDate,
+            endDate: max(date, session.startDate),
+            template: session.template
+        )
+    }
+
+    static func finishCompletedCountdownIfNeeded(at date: Date = Date()) -> ContinuousActivityWindow? {
+        guard let session, session.kind == .countdown, let endDate = session.endDate, date >= endDate else {
+            return nil
+        }
+        clear()
+        return ContinuousActivityWindow(
+            startDate: session.startDate,
+            endDate: max(endDate, session.startDate),
+            template: session.template
+        )
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: sessionKey)
+        UserDefaults.standard.removeObject(forKey: startDateKey)
+    }
+
+    private static func save(_ session: ContinuousActivitySession) {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        UserDefaults.standard.set(data, forKey: sessionKey)
+        UserDefaults.standard.removeObject(forKey: startDateKey)
+    }
+
+    private static func legacySession() -> ContinuousActivitySession? {
+        let timestamp = UserDefaults.standard.double(forKey: startDateKey)
+        guard timestamp > 0 else { return nil }
+        return ContinuousActivitySession(
+            id: UUID(),
+            kind: .timer,
+            startDate: Date(timeIntervalSince1970: timestamp),
+            endDate: nil,
+            template: .random
+        )
+    }
 }
 
 private struct FeedView: View {
