@@ -2966,6 +2966,7 @@ private struct JournalEntryWaveformView: View {
     @AppStorage("timelineUseSineWaveforms") private var timelineUseSineWaveforms = false
     @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
     @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
+    @AppStorage(JournalSettings.timelineWaveColorModeKey) private var timelineWaveColorModeRaw = TimelineWaveColorMode.current.rawValue
 
     let context: JournalEventContext
     var endDate: Date? = nil
@@ -3125,7 +3126,8 @@ private struct JournalEntryWaveformView: View {
                 labelOffset: 15,
                 showSineWave: timelineUseSineWaveforms,
                 waveSumMode: timelineSineWaveSumMode,
-                wavelengthOption: timelineWavelengthOption
+                wavelengthOption: timelineWavelengthOption,
+                waveColorMode: timelineWaveColorMode
             )
             SolarYearRulerCanvas(
                 ticks: solarTicks,
@@ -3134,7 +3136,8 @@ private struct JournalEntryWaveformView: View {
                 rowSpacing: JournalEntryWaveform.solarRulerRowSpacing,
                 showSineWave: timelineUseSineWaveforms,
                 waveSumMode: timelineSineWaveSumMode,
-                wavelengthOption: timelineWavelengthOption
+                wavelengthOption: timelineWavelengthOption,
+                waveColorMode: timelineWaveColorMode
             )
             HStack(spacing: 0) {
                 Color.clear
@@ -3232,6 +3235,10 @@ private struct JournalEntryWaveformView: View {
     private var resolvedEndDate: Date {
         guard let endDate, endDate > context.eventDate else { return context.eventDate }
         return endDate
+    }
+
+    private var timelineWaveColorMode: TimelineWaveColorMode {
+        TimelineWaveColorMode(rawValue: timelineWaveColorModeRaw) ?? .current
     }
 }
 
@@ -3375,7 +3382,7 @@ private struct JournalWaveEventMetadataRow: View {
 
 private enum JournalEntryWaveform {
     static let minimumMegaUnits = 1
-    static let defaultMegaUnits = 4
+    static let defaultMegaUnits = 2
     static let maximumMegaUnits = 12
     static let lunarRulerTopInset: CGFloat = 10
     static let lunarRulerRowSpacing: CGFloat = 15

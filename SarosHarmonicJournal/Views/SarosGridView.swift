@@ -1226,7 +1226,6 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var events: [SarosGlobalFlipEvent] = []
     @State private var waveField = SarosSpikeWaveField.empty
     @State private var waveSamples = SarosSpikeWaveSamples.empty
-    @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var zoom: CGFloat = Self.initialZoom
@@ -1239,6 +1238,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var probeDate: Date?
     @State private var solarTicks: [SolarYearRulerTick] = []
     @State private var lunarTicks: [LunarRulerTick] = []
+    @State private var pulseTicks: [SarosPulseTick] = []
     @State private var selectedSegmentID: String?
     @State private var didApplyInitialZoom = false
     @State private var didApplyInitialScroll = false
@@ -1254,6 +1254,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @AppStorage("timelineUseSineWaveforms") private var timelineUseSineWaveforms = false
     @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
     @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
+    @AppStorage(JournalSettings.timelineWaveColorModeKey) private var timelineWaveColorModeRaw = TimelineWaveColorMode.current.rawValue
 
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
@@ -1261,6 +1262,10 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var timelineMinimumWaveRarity: FlipRarity {
         FlipRarity(rawValue: timelineMinimumWaveRarityRaw) ?? .epic
+    }
+
+    private var timelineWaveColorMode: TimelineWaveColorMode {
+        TimelineWaveColorMode(rawValue: timelineWaveColorModeRaw) ?? .current
     }
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
@@ -1422,7 +1427,6 @@ private struct SarosSpikeWaveTimelineView: View {
         ScrollViewReader { scrollProxy in
             VStack(spacing: 14) {
                 TickingStatePanel(
-                    timeTicker: timeTicker,
                     waveField: waveField,
                     pulseReadingAt: { date in pulseReading(at: date) },
                     sarosReadingFor: { state in sarosReading(for: state) },
@@ -1550,6 +1554,14 @@ private struct SarosSpikeWaveTimelineView: View {
                             )
                             .frame(width: contentWidth, height: height)
 
+                            SarosPulseRulerCanvas(
+                                ticks: pulseTicks,
+                                displayInterval: displayInterval,
+                                tickStartY: Self.lunarRulerBottomY,
+                                tickEndY: Self.solarRulerTopY(in: height)
+                            )
+                            .frame(width: contentWidth, height: height)
+
                             LunarRulerCanvas(
                                 ticks: lunarTicks,
                                 displayInterval: displayInterval,
@@ -1558,7 +1570,8 @@ private struct SarosSpikeWaveTimelineView: View {
                                 labelOffset: 15,
                                 showSineWave: timelineUseSineWaveforms,
                                 waveSumMode: timelineSineWaveSumMode,
-                                wavelengthOption: timelineWavelengthOption
+                                wavelengthOption: timelineWavelengthOption,
+                                waveColorMode: timelineWaveColorMode
                             )
                             .frame(width: contentWidth, height: height)
 
@@ -1569,7 +1582,8 @@ private struct SarosSpikeWaveTimelineView: View {
                                 rowSpacing: Self.solarRulerRowSpacing,
                                 showSineWave: timelineUseSineWaveforms,
                                 waveSumMode: timelineSineWaveSumMode,
-                                wavelengthOption: timelineWavelengthOption
+                                wavelengthOption: timelineWavelengthOption,
+                                waveColorMode: timelineWaveColorMode
                             )
                             .frame(width: contentWidth, height: height)
 
@@ -1669,7 +1683,6 @@ private struct SarosSpikeWaveTimelineView: View {
                             }
 
                             TickingReferenceScrollAnchor(
-                                timeTicker: timeTicker,
                                 probeDate: probeDate,
                                 displayInterval: displayInterval,
                                 contentWidth: contentWidth,
@@ -1678,7 +1691,6 @@ private struct SarosSpikeWaveTimelineView: View {
                             )
 
                             TickingProbeHandle(
-                                timeTicker: timeTicker,
                                 probeDate: probeDate,
                                 displayInterval: displayInterval,
                                 contentWidth: contentWidth,
@@ -1809,6 +1821,15 @@ private struct SarosSpikeWaveTimelineView: View {
                             }
 
                             Section("Ruler Style") {
+                                Picker("Wave Color", selection: $timelineWaveColorModeRaw) {
+                                    ForEach(TimelineWaveColorMode.allCases) { mode in
+                                        Text(mode.title).tag(mode.rawValue)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+
+                                timelineWaveColorLegend
+
                                 Toggle(isOn: $timelineUseSineWaveforms) {
                                     Label("Sine Waveforms", systemImage: "waveform.path")
                                 }
@@ -1858,6 +1879,9 @@ private struct SarosSpikeWaveTimelineView: View {
             }
             .task(id: lunarTaskID) {
                 await loadLunarTicks()
+            }
+            .task(id: pulseTaskID) {
+                await loadPulseTicks()
             }
         }
         .navigationDestination(item: $selectedCalendarReference) { reference in
@@ -1912,6 +1936,15 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var lunarTaskID: String {
         "\(Int(displayInterval.start.timeIntervalSince1970))-\(Int(displayInterval.end.timeIntervalSince1970))"
+    }
+
+    private var pulseTaskID: String {
+        [
+            "\(Int(displayInterval.start.timeIntervalSince1970))",
+            "\(Int(displayInterval.end.timeIntervalSince1970))",
+            "\(pulseSaros > 0 ? pulseSaros : flip.saros)",
+            "\(flip.harmonicDepth)"
+        ].joined(separator: "-")
     }
 
     private var waveformTaskID: String {
@@ -2140,7 +2173,6 @@ private struct SarosSpikeWaveTimelineView: View {
         let displayInterval = displayInterval
         let waveSampleCount = Self.waveSampleCount
         let minimumRarity = timelineMinimumWaveRarity
-        let presentDate = Date()
         let cacheKey = Self.cacheKey(
             harmonicDepth: harmonicDepth,
             displayInterval: displayInterval,
@@ -2580,7 +2612,7 @@ private struct SarosSpikeWaveTimelineView: View {
         let eventEnergy = samples.energy(for: event)
         let peakY = baseline - CGFloat(eventEnergy / maxEnergy) * waveHeight
 
-        return max(14, peakY - 10)
+        return max(18, peakY - 48)
     }
 
     private func dotSize(for rarity: FlipRarity) -> CGFloat {
@@ -2610,6 +2642,39 @@ private struct SarosSpikeWaveTimelineView: View {
             LunarRulerTickBuilder.ticks(in: displayInterval, moonService: moonService)
         }.value
         lunarTicks = loaded
+    }
+
+    @MainActor
+    private func loadPulseTicks() async {
+        let displayInterval = displayInterval
+        let resolvedSaros = pulseSaros > 0 ? pulseSaros : flip.saros
+        let harmonicDepth = flip.harmonicDepth
+        let eclipseService = services.eclipseService
+        let loaded = await Task.detached(priority: .utility) {
+            (try? SarosPulseCalculator.ticks(
+                in: displayInterval,
+                saros: resolvedSaros,
+                harmonicDepth: harmonicDepth,
+                eclipseService: eclipseService,
+                units: [.rollover, .giga, .mega, .kilo]
+            )) ?? []
+        }.value
+        pulseTicks = loaded
+    }
+
+    private var timelineWaveColorLegend: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(.blue)
+                .frame(width: 8, height: 8)
+            Circle()
+                .fill(.yellow)
+                .frame(width: 8, height: 8)
+            Circle()
+                .fill(.red)
+                .frame(width: 8, height: 8)
+        }
+        .accessibilityHidden(true)
     }
 }
 private struct LabelBoundingBox {
@@ -2819,7 +2884,7 @@ private struct SegmentEventsSheet: View {
 }
 
 private struct TickingStatePanel: View {
-    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     let waveField: SarosSpikeWaveField
     let pulseReadingAt: (Date) -> SarosPulseReading?
     let sarosReadingFor: (SarosSpikeWaveState) -> SarosClockReading?
@@ -2844,7 +2909,7 @@ private struct TickingStatePanel: View {
 }
 
 private struct TickingProbeHandle: View {
-    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     let probeDate: Date?
     let displayInterval: DateInterval
     let contentWidth: CGFloat
@@ -2872,7 +2937,7 @@ private struct TickingProbeHandle: View {
 }
 
 private struct TickingReferenceScrollAnchor: View {
-    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     let probeDate: Date?
     let displayInterval: DateInterval
     let contentWidth: CGFloat
@@ -2968,8 +3033,8 @@ private struct SarosSpikeWaveStatePanel: View {
             .background(.black.opacity(0.28), in: Circle())
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(state.period.spike.rarity.title)
-                    .font(.headline)
+                Text("\(state.period.spike.saros) Saros \(state.period.spike.rarity.title)")
+                    .font(.headline.monospacedDigit())
                     .foregroundStyle(state.period.spike.rarity.color)
                 Text(eventDescription)
                     .font(.caption.weight(.medium))
@@ -3192,31 +3257,36 @@ private struct SarosSpikeMarkersCanvas: View {
 private struct SarosPulseRulerCanvas: View {
     let ticks: [SarosPulseTick]
     let displayInterval: DateInterval
+    var tickStartY: CGFloat? = nil
+    var tickEndY: CGFloat? = nil
 
     var body: some View {
         Canvas { context, size in
             guard !ticks.isEmpty else { return }
 
             let baseline = size.height * 0.94
+            let resolvedTickStartY = min(max(tickStartY ?? baseline - SarosPulseUnit.rollover.tickHeight, 0), size.height)
+            let resolvedTickEndY = min(max(tickEndY ?? baseline, resolvedTickStartY), size.height)
             var lastXByUnit: [SarosPulseUnit: CGFloat] = [:]
 
             for tick in ticks {
-                guard tick.unit.isRulerTick else { continue }
+                guard tick.unit.isTimelineOverlayTick else { continue }
 
                 let x = xPosition(for: tick.date, width: size.width)
                 if tick.unit != .rollover,
                    let lastX = lastXByUnit[tick.unit],
-                   abs(lastX - x) < 1.6 {
+                   abs(lastX - x) < 1.6
+                {
                     continue
                 }
                 lastXByUnit[tick.unit] = x
 
                 var line = Path()
-                line.move(to: CGPoint(x: x, y: baseline))
-                line.addLine(to: CGPoint(x: x, y: baseline - tick.unit.tickHeight))
+                line.move(to: CGPoint(x: x, y: resolvedTickStartY))
+                line.addLine(to: CGPoint(x: x, y: resolvedTickEndY))
                 context.stroke(
                     line,
-                    with: .color(tick.unit.color.opacity(opacity(for: tick.unit))),
+                    with: .color(color(for: tick.unit).opacity(opacity(for: tick.unit) * 0.46)),
                     lineWidth: lineWidth(for: tick.unit)
                 )
 
@@ -3224,8 +3294,8 @@ private struct SarosPulseRulerCanvas: View {
                     context.draw(
                         Text("\(tick.digit)")
                             .font(.caption2.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(tick.unit.color.opacity(0.95)),
-                        at: CGPoint(x: x, y: max(8, baseline - tick.unit.tickHeight - 10))
+                            .foregroundStyle(color(for: tick.unit).opacity(0.56)),
+                        at: CGPoint(x: x, y: max(8, resolvedTickStartY - 10))
                     )
                 }
             }
@@ -3233,12 +3303,16 @@ private struct SarosPulseRulerCanvas: View {
         .allowsHitTesting(false)
     }
 
+    private func color(for unit: SarosPulseUnit) -> Color {
+        unit.color
+    }
+
     private func opacity(for unit: SarosPulseUnit) -> Double {
         switch unit {
         case .rollover: 0.95
         case .giga: 0.9
         case .mega: 0.72
-        case .kilo: 0.54
+        case .kilo: 0.42
         case .saros, .mili, .nano: 0
         }
     }
@@ -3248,7 +3322,7 @@ private struct SarosPulseRulerCanvas: View {
         case .rollover: 1.6
         case .giga: 1.3
         case .mega: 1.0
-        case .kilo: 0.75
+        case .kilo: 0.55
         case .saros, .mili, .nano: 0
         }
     }

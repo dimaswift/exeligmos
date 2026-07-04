@@ -66,6 +66,31 @@ extension Color {
             Int(blue * 255)
         )
     }
+
+    static func interpolate(from start: Color, to end: Color, fraction: Double) -> Color {
+        let clampedFraction = min(max(fraction, 0), 1)
+        let startComponents = rgbaComponents(for: start)
+        let endComponents = rgbaComponents(for: end)
+
+        return Color(
+            red: startComponents.red + (endComponents.red - startComponents.red) * clampedFraction,
+            green: startComponents.green + (endComponents.green - startComponents.green) * clampedFraction,
+            blue: startComponents.blue + (endComponents.blue - startComponents.blue) * clampedFraction,
+            opacity: startComponents.alpha + (endComponents.alpha - startComponents.alpha) * clampedFraction
+        )
+    }
+
+    private static func rgbaComponents(for color: Color) -> (red: Double, green: Double, blue: Double, alpha: Double) {
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return (1, 1, 1, 1)
+        }
+        return (Double(red), Double(green), Double(blue), Double(alpha))
+    }
 }
 
 enum JournalRecordMarkers {
@@ -97,6 +122,7 @@ enum JournalSettings {
     static let waveformSubdivisionDepthKey = "waveformSubdivisionDepth"
     static let waveformAmplitudeMultiplierKey = "waveformAmplitudeMultiplier"
     static let widgetWaveformKilosarosRangeKey = "widgetWaveformKilosarosRange"
+    static let timelineWaveColorModeKey = "timelineWaveColorMode"
     static let notificationRarityPreferencesKey = "notificationRarityPreferences"
     static let catalogStartCenturyKey = "catalogStartCentury"
     static let catalogEndCenturyKey = "catalogEndCentury"
@@ -249,6 +275,20 @@ enum JournalWaveformSettings {
     }
 }
 
+enum TimelineWaveColorMode: String, CaseIterable, Identifiable, Sendable {
+    case current
+    case tickRarity
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .current: "Current"
+        case .tickRarity: "Tick rarity"
+        }
+    }
+}
+
 struct JournalWaveformOptions: Hashable, Sendable {
     var ignorePartialEclipses: Bool
     var mergeCloseSpikes: Bool
@@ -373,6 +413,15 @@ enum SarosPulseUnit: String, CaseIterable, Identifiable, Hashable {
 
     var isRulerTick: Bool {
         Self.rulerUnits.contains(self)
+    }
+
+    var isTimelineOverlayTick: Bool {
+        switch self {
+        case .rollover, .giga, .mega, .kilo:
+            true
+        case .saros, .mili, .nano:
+            false
+        }
     }
 
     var showsTickLabel: Bool {
@@ -502,6 +551,77 @@ struct LunarRulerTick: Identifiable, Hashable {
 
     var id: String {
         "\(cycle.rawValue)-\(level.rawValue)-\(Int(date.timeIntervalSince1970))-\(label ?? "")"
+    }
+}
+
+fileprivate struct RulerWavePoint {
+    let date: Date
+    let point: CGPoint
+}
+
+fileprivate struct RulerWaveColorInfluence {
+    let date: Date
+    let color: Color
+    let halfPeriod: TimeInterval
+    let isHardColor: Bool
+    let priority: Int
+}
+
+fileprivate enum RulerWaveColorSampler {
+    static func color(at date: Date, influences: [RulerWaveColorInfluence]) -> Color {
+        let base = Color.gray
+        guard let nearest = influences.min(by: { lhs, rhs in
+            let lhsDistance = abs(lhs.date.timeIntervalSince(date))
+            let rhsDistance = abs(rhs.date.timeIntervalSince(date))
+            if lhsDistance != rhsDistance {
+                return lhsDistance < rhsDistance
+            }
+            return lhs.priority > rhs.priority
+        }) else {
+            return base
+        }
+
+        let distance = abs(nearest.date.timeIntervalSince(date))
+        guard distance < nearest.halfPeriod else { return base }
+
+        if nearest.isHardColor {
+            return nearest.color
+        }
+
+        let fraction = min(max(1 - distance / nearest.halfPeriod, 0), 1)
+        return Color.interpolate(from: base, to: nearest.color, fraction: fraction)
+    }
+
+    static func halfPeriod(around date: Date, blueDates: [Date]) -> TimeInterval? {
+        guard blueDates.count >= 2 else { return nil }
+        let insertion = insertionIndex(for: date, in: blueDates)
+        var candidates: [TimeInterval] = []
+
+        if insertion > 0, insertion < blueDates.count {
+            candidates.append(blueDates[insertion].timeIntervalSince(blueDates[insertion - 1]) / 2)
+        }
+        if insertion + 1 < blueDates.count {
+            candidates.append(blueDates[insertion + 1].timeIntervalSince(blueDates[insertion]) / 2)
+        }
+        if insertion >= 2 {
+            candidates.append(blueDates[insertion - 1].timeIntervalSince(blueDates[insertion - 2]) / 2)
+        }
+
+        return candidates.filter { $0 > 0 }.min()
+    }
+
+    private static func insertionIndex(for date: Date, in dates: [Date]) -> Int {
+        var low = 0
+        var high = dates.count
+        while low < high {
+            let mid = (low + high) / 2
+            if dates[mid] < date {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
     }
 }
 
@@ -666,6 +786,7 @@ struct LunarRulerCanvas: View {
     var showSineWave: Bool = false
     var waveSumMode: Bool = false
     var wavelengthOption: Double = 2.0
+    var waveColorMode: TimelineWaveColorMode = .current
 
     var body: some View {
         Canvas { context, size in
@@ -707,8 +828,7 @@ struct LunarRulerCanvas: View {
                 })
                 
                 if waveSumMode {
-                    var path = Path()
-                    var first = true
+                    var points: [RulerWavePoint] = []
                     
                     var intervalIndexes = [MoonCycleKind: Int]()
                     for cycle in cycles {
@@ -730,19 +850,16 @@ struct LunarRulerCanvas: View {
                         }
                         let normSum = sum / Double(cycles.count)
                         let y = yCenter - CGFloat(normSum) * amplitude
-                        
-                        if first {
-                            path.move(to: CGPoint(x: x, y: y))
-                            first = false
-                        } else {
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
+                        points.append(RulerWavePoint(date: date, point: CGPoint(x: x, y: y)))
                     }
                     
-                    context.stroke(
-                        path,
-                        with: .color(.purple.opacity(0.85)),
-                        lineWidth: 1.8
+                    strokeWave(
+                        points: points,
+                        in: &context,
+                        color: .purple,
+                        opacity: 0.85,
+                        lineWidth: 1.8,
+                        influences: lunarInfluences(for: ticks)
                     )
                 } else {
                     let colors: [MoonCycleKind: Color] = [
@@ -754,8 +871,7 @@ struct LunarRulerCanvas: View {
                     for cycle in cycles {
                         guard let dates = sortedDatesByCycle[cycle], dates.count >= 2 else { continue }
                         
-                        var path = Path()
-                        var first = true
+                        var points: [RulerWavePoint] = []
                         var idx = 0
                         
                         let step: CGFloat = 2
@@ -765,19 +881,16 @@ struct LunarRulerCanvas: View {
                             
                             let val = fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
                             let y = yCenter - CGFloat(val) * amplitude
-                            
-                            if first {
-                                path.move(to: CGPoint(x: x, y: y))
-                                first = false
-                            } else {
-                                path.addLine(to: CGPoint(x: x, y: y))
-                            }
+                            points.append(RulerWavePoint(date: date, point: CGPoint(x: x, y: y)))
                         }
                         
-                        context.stroke(
-                            path,
-                            with: .color((colors[cycle] ?? .purple).opacity(0.75)),
-                            lineWidth: 1.4
+                        strokeWave(
+                            points: points,
+                            in: &context,
+                            color: colors[cycle] ?? .purple,
+                            opacity: 0.75,
+                            lineWidth: 1.4,
+                            influences: lunarInfluences(for: ticks.filter { $0.cycle == cycle })
                         )
                     }
                 }
@@ -797,6 +910,79 @@ struct LunarRulerCanvas: View {
     private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
         let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
         return CGFloat(ratio) * width
+    }
+
+    private func strokeWave(
+        points: [RulerWavePoint],
+        in context: inout GraphicsContext,
+        color: Color,
+        opacity: Double,
+        lineWidth: CGFloat,
+        influences: [RulerWaveColorInfluence]
+    ) {
+        guard points.count > 1 else { return }
+
+        switch waveColorMode {
+        case .current:
+            var path = Path()
+            for (index, point) in points.enumerated() {
+                if index == 0 {
+                    path.move(to: point.point)
+                } else {
+                    path.addLine(to: point.point)
+                }
+            }
+            context.stroke(path, with: .color(color.opacity(opacity)), lineWidth: lineWidth)
+        case .tickRarity:
+            for index in 1..<points.count {
+                let previous = points[index - 1]
+                let current = points[index]
+                var segment = Path()
+                segment.move(to: previous.point)
+                segment.addLine(to: current.point)
+                let midpoint = previous.date.addingTimeInterval(current.date.timeIntervalSince(previous.date) / 2)
+                context.stroke(
+                    segment,
+                    with: .color(RulerWaveColorSampler.color(at: midpoint, influences: influences).opacity(opacity)),
+                    lineWidth: lineWidth
+                )
+            }
+        }
+    }
+
+    private func lunarInfluences(for ticks: [LunarRulerTick]) -> [RulerWaveColorInfluence] {
+        let blueDates = ticks
+            .filter { $0.level == .sixtyFourth }
+            .map(\.date)
+            .sorted()
+        let fallbackHalfPeriod = RulerWaveColorSampler.halfPeriod(
+            around: displayInterval.start.addingTimeInterval(displayInterval.duration / 2),
+            blueDates: blueDates
+        ) ?? max(displayInterval.duration / 16, 1)
+
+        return ticks.compactMap { tick in
+            guard let style = lunarInfluenceStyle(for: tick.level) else { return nil }
+            return RulerWaveColorInfluence(
+                date: tick.date,
+                color: style.color,
+                halfPeriod: RulerWaveColorSampler.halfPeriod(around: tick.date, blueDates: blueDates) ?? fallbackHalfPeriod,
+                isHardColor: style.isHardColor,
+                priority: style.priority
+            )
+        }
+    }
+
+    private func lunarInfluenceStyle(for level: LunarRulerTickLevel) -> (color: Color, isHardColor: Bool, priority: Int)? {
+        switch level {
+        case .major:
+            (.red, true, 3)
+        case .eighth:
+            (.yellow, true, 2)
+        case .sixtyFourth:
+            (.blue, false, 1)
+        case .fiveHundredTwelfth:
+            nil
+        }
     }
 }
 
@@ -1257,6 +1443,7 @@ struct SolarYearRulerCanvas: View {
     var showSineWave: Bool = false
     var waveSumMode: Bool = false
     var wavelengthOption: Double = 2.0
+    var waveColorMode: TimelineWaveColorMode = .current
 
     var body: some View {
         Canvas { context, size in
@@ -1308,8 +1495,7 @@ struct SolarYearRulerCanvas: View {
                 })
                 
                 if waveSumMode {
-                    var path = Path()
-                    var first = true
+                    var points: [RulerWavePoint] = []
                     
                     var intervalIndexes = [SolarYearCycleKind: Int]()
                     for cycle in cycles {
@@ -1331,19 +1517,16 @@ struct SolarYearRulerCanvas: View {
                         }
                         let normSum = sum / Double(cycles.count)
                         let y = yCenter - CGFloat(normSum) * amplitude
-                        
-                        if first {
-                            path.move(to: CGPoint(x: x, y: y))
-                            first = false
-                        } else {
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
+                        points.append(RulerWavePoint(date: date, point: CGPoint(x: x, y: y)))
                     }
                     
-                    context.stroke(
-                        path,
-                        with: .color(.orange.opacity(0.85)),
-                        lineWidth: 1.8
+                    strokeWave(
+                        points: points,
+                        in: &context,
+                        color: .orange,
+                        opacity: 0.85,
+                        lineWidth: 1.8,
+                        influences: solarInfluences(for: ticks)
                     )
                 } else {
                     let colors: [SolarYearCycleKind: Color] = [
@@ -1355,8 +1538,7 @@ struct SolarYearRulerCanvas: View {
                     for cycle in cycles {
                         guard let dates = sortedDatesByCycle[cycle], dates.count >= 2 else { continue }
                         
-                        var path = Path()
-                        var first = true
+                        var points: [RulerWavePoint] = []
                         var idx = 0
                         
                         let step: CGFloat = 2
@@ -1366,19 +1548,16 @@ struct SolarYearRulerCanvas: View {
                             
                             let val = fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
                             let y = yCenter - CGFloat(val) * amplitude
-                            
-                            if first {
-                                path.move(to: CGPoint(x: x, y: y))
-                                first = false
-                            } else {
-                                path.addLine(to: CGPoint(x: x, y: y))
-                            }
+                            points.append(RulerWavePoint(date: date, point: CGPoint(x: x, y: y)))
                         }
                         
-                        context.stroke(
-                            path,
-                            with: .color((colors[cycle] ?? .orange).opacity(0.75)),
-                            lineWidth: 1.4
+                        strokeWave(
+                            points: points,
+                            in: &context,
+                            color: colors[cycle] ?? .orange,
+                            opacity: 0.75,
+                            lineWidth: 1.4,
+                            influences: solarInfluences(for: ticks.filter { $0.cycle == cycle })
                         )
                     }
                 }
@@ -1390,6 +1569,79 @@ struct SolarYearRulerCanvas: View {
     private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
         let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
         return CGFloat(ratio) * width
+    }
+
+    private func strokeWave(
+        points: [RulerWavePoint],
+        in context: inout GraphicsContext,
+        color: Color,
+        opacity: Double,
+        lineWidth: CGFloat,
+        influences: [RulerWaveColorInfluence]
+    ) {
+        guard points.count > 1 else { return }
+
+        switch waveColorMode {
+        case .current:
+            var path = Path()
+            for (index, point) in points.enumerated() {
+                if index == 0 {
+                    path.move(to: point.point)
+                } else {
+                    path.addLine(to: point.point)
+                }
+            }
+            context.stroke(path, with: .color(color.opacity(opacity)), lineWidth: lineWidth)
+        case .tickRarity:
+            for index in 1..<points.count {
+                let previous = points[index - 1]
+                let current = points[index]
+                var segment = Path()
+                segment.move(to: previous.point)
+                segment.addLine(to: current.point)
+                let midpoint = previous.date.addingTimeInterval(current.date.timeIntervalSince(previous.date) / 2)
+                context.stroke(
+                    segment,
+                    with: .color(RulerWaveColorSampler.color(at: midpoint, influences: influences).opacity(opacity)),
+                    lineWidth: lineWidth
+                )
+            }
+        }
+    }
+
+    private func solarInfluences(for ticks: [SolarYearRulerTick]) -> [RulerWaveColorInfluence] {
+        let blueDates = ticks
+            .filter { $0.level == .yearFiveHundredTwelfth }
+            .map(\.date)
+            .sorted()
+        let fallbackHalfPeriod = RulerWaveColorSampler.halfPeriod(
+            around: displayInterval.start.addingTimeInterval(displayInterval.duration / 2),
+            blueDates: blueDates
+        ) ?? max(displayInterval.duration / 16, 1)
+
+        return ticks.compactMap { tick in
+            guard let style = solarInfluenceStyle(for: tick.level) else { return nil }
+            return RulerWaveColorInfluence(
+                date: tick.date,
+                color: style.color,
+                halfPeriod: RulerWaveColorSampler.halfPeriod(around: tick.date, blueDates: blueDates) ?? fallbackHalfPeriod,
+                isHardColor: style.isHardColor,
+                priority: style.priority
+            )
+        }
+    }
+
+    private func solarInfluenceStyle(for level: EarthAnomalisticRulerTickLevel) -> (color: Color, isHardColor: Bool, priority: Int)? {
+        switch level {
+        case .major:
+            (.red, true, 3)
+        case .yearSixtyFourth:
+            (.yellow, true, 2)
+        case .yearFiveHundredTwelfth:
+            (.blue, false, 1)
+        case .yearFourThousandNinetySix:
+            nil
+        }
     }
 }
 
@@ -1629,7 +1881,8 @@ enum SarosPulseCalculator {
         in displayInterval: DateInterval,
         saros: Int,
         harmonicDepth rawHarmonicDepth: Int,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        units: [SarosPulseUnit] = SarosPulseUnit.rulerUnits
     ) throws -> [SarosPulseTick] {
         guard saros > 0 else { return [] }
 
@@ -1651,6 +1904,7 @@ enum SarosPulseCalculator {
                 in: displayInterval,
                 saros: saros,
                 interval: interval,
+                units: units,
                 into: &ticks
             )
 
@@ -1673,6 +1927,7 @@ enum SarosPulseCalculator {
         in displayInterval: DateInterval,
         saros: Int,
         interval: SarosInterval,
+        units: [SarosPulseUnit],
         into ticks: inout [SarosPulseTick]
     ) {
         let segmentStart = max(displayInterval.start, interval.previous.date)
@@ -1682,7 +1937,7 @@ enum SarosPulseCalculator {
         let intervalDuration = interval.next.date.timeIntervalSince(interval.previous.date)
         guard intervalDuration > 0 else { return }
 
-        for unit in SarosPulseUnit.rulerUnits {
+        for unit in units {
             let divisions = octalPower(unit.exponent)
             let startPhase = segmentStart.timeIntervalSince(interval.previous.date) / intervalDuration
             var bin = max(Int(ceil(startPhase * Double(divisions))), 0)
