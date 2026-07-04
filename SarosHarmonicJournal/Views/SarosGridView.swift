@@ -1191,7 +1191,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var zoomAnchorDate: Date?
     @State private var selectedCalendarReference: SarosSpikeCalendarReference?
     @State private var probeDate: Date?
-    @State private var pulseTicks: [SarosPulseTick] = []
+    @State private var solarTicks: [SolarYearRulerTick] = []
     @State private var lunarTicks: [LunarRulerTick] = []
     @State private var selectedSegmentID: String?
     @State private var didApplyInitialZoom = false
@@ -1204,6 +1204,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
     @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var waveformAmplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
+    @AppStorage(JournalSettings.solarSiderealReferenceDateKey) private var solarSiderealReferenceTimestamp = SolarYearRuler.defaultSiderealReferenceDate.timeIntervalSince1970
 
     private var displayInterval: DateInterval {
         let starts = normalizedLoadedPageStarts
@@ -1350,7 +1351,8 @@ private struct SarosSpikeWaveTimelineView: View {
                                 dots: dotMarkers,
                                 midpoints: midpointDates,
                                 displayInterval: displayInterval,
-                                tickStartY: Self.lunarRulerBottomY
+                                tickStartY: Self.lunarRulerBottomY,
+                                tickEndY: Self.solarRulerTopY(in: height)
                             )
                             .frame(width: contentWidth, height: height)
 
@@ -1363,9 +1365,11 @@ private struct SarosSpikeWaveTimelineView: View {
                             )
                             .frame(width: contentWidth, height: height)
 
-                            SarosPulseRulerCanvas(
-                                ticks: pulseTicks,
-                                displayInterval: displayInterval
+                            SolarYearRulerCanvas(
+                                ticks: solarTicks,
+                                displayInterval: displayInterval,
+                                baselineRatio: Self.solarRulerBaselineRatio,
+                                rowSpacing: Self.solarRulerRowSpacing
                             )
                             .frame(width: contentWidth, height: height)
 
@@ -1426,7 +1430,7 @@ private struct SarosSpikeWaveTimelineView: View {
                                 SarosSpikeWaveAxisTickView(tick: tick)
                                     .position(
                                         x: xPosition(for: tick.date, width: contentWidth),
-                                        y: height - 24
+                                        y: height - 22
                                     )
                             }
 
@@ -1434,7 +1438,7 @@ private struct SarosSpikeWaveTimelineView: View {
                                 SarosSpikeWaveHourTickView(tick: tick)
                                     .position(
                                         x: xPosition(for: tick.date, width: contentWidth),
-                                        y: height - 48
+                                        y: height - 22
                                     )
                             }
 
@@ -1442,7 +1446,7 @@ private struct SarosSpikeWaveTimelineView: View {
                                 SarosSpikeWaveDayLabelView(label: label)
                                     .position(
                                         x: xPosition(for: label.date, width: contentWidth),
-                                        y: height - 66
+                                        y: height - 12
                                     )
                             }
 
@@ -1535,8 +1539,8 @@ private struct SarosSpikeWaveTimelineView: View {
             .task {
                 await runPresentTicker()
             }
-            .task(id: pulseTaskID) {
-                await loadPulseTicks()
+            .task(id: solarRulerTaskID) {
+                await loadSolarTicks()
             }
             .task(id: lunarTaskID) {
                 await loadLunarTicks()
@@ -1565,15 +1569,24 @@ private struct SarosSpikeWaveTimelineView: View {
     private static let lunarRulerTopInset: CGFloat = 28
     private static let lunarRulerRowSpacing: CGFloat = 15
     private static let lunarRulerBottomY = lunarRulerTopInset + lunarRulerRowSpacing * 2 + LunarRulerTickLevel.major.height
+    private static let solarRulerBaselineRatio: CGFloat = 0.84
+    private static let solarRulerRowSpacing: CGFloat = 15
     fileprivate static let baseWaveAmplitudeScale: CGFloat = 0.5
+
+    private static func solarRulerTopY(in height: CGFloat) -> CGFloat {
+        max(
+            lunarRulerBottomY + 8,
+            height * solarRulerBaselineRatio - solarRulerRowSpacing * 2 - LunarRulerTickLevel.major.height
+        )
+    }
 
     private var timelineWaveAmplitudeScale: CGFloat {
         let normalized = CGFloat(clampedAmplitudeMultiplier / JournalWaveformSettings.defaultAmplitudeMultiplier)
         return min(max(Self.baseWaveAmplitudeScale * normalized, 0.16), 0.92)
     }
 
-    private var pulseTaskID: String {
-        "\(pulseSaros)-\(flip.harmonicDepth)-\(Int(displayInterval.start.timeIntervalSince1970))-\(Int(displayInterval.end.timeIntervalSince1970))"
+    private var solarRulerTaskID: String {
+        "\(Int(displayInterval.start.timeIntervalSince1970))-\(Int(displayInterval.end.timeIntervalSince1970))-\(Int(solarSiderealReferenceTimestamp))"
     }
 
     private var lunarTaskID: String {
@@ -2184,8 +2197,8 @@ private struct SarosSpikeWaveTimelineView: View {
         maxEnergy: Double,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.76
-        let top = height * 0.18
+        let baseline = height * 0.62
+        let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
         let ratio = min(max(state.energy / maxEnergy, 0), 1)
         return baseline - CGFloat(ratio) * waveHeight
@@ -2198,8 +2211,8 @@ private struct SarosSpikeWaveTimelineView: View {
         height: CGFloat,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.76
-        let top = height * 0.18
+        let baseline = height * 0.62
+        let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
         let maxEnergy = max(maxEnergy, 0.000_000_001)
         let eventEnergy = samples.energy(for: event)
@@ -2210,49 +2223,21 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private func dotSize(for rarity: FlipRarity) -> CGFloat {
         switch rarity.baseRarity {
-        case .mythic: 10
-        case .legendary: 8
-        case .epic: 6.5
-        default: 6
+        case .mythic: 8
+        case .legendary: 7
+        case .epic: 6
+        default: 5
         }
     }
 
     @MainActor
-    private func loadPulseTicks() async {
-        let configuredSaros = pulseSaros
-        let eclipseService = services.eclipseService
+    private func loadSolarTicks() async {
         let displayInterval = displayInterval
-        let harmonicDepth = flip.harmonicDepth
-
-        let result = await Task.detached(priority: .utility) {
-            Result<(Int?, [SarosPulseTick]), Error> {
-                let resolvedSaros: Int?
-                if configuredSaros > 0 {
-                    resolvedSaros = configuredSaros
-                } else {
-                    resolvedSaros = flip.saros
-                }
-
-                guard let resolvedSaros else {
-                    return (nil, [])
-                }
-
-                let ticks = try SarosPulseCalculator.ticks(
-                    in: displayInterval,
-                    saros: resolvedSaros,
-                    harmonicDepth: harmonicDepth,
-                    eclipseService: eclipseService
-                )
-                return (resolvedSaros, ticks)
-            }
+        let siderealReferenceDate = Date(timeIntervalSince1970: solarSiderealReferenceTimestamp)
+        let loaded = await Task.detached(priority: .utility) {
+            SolarYearRuler.ticks(in: displayInterval, siderealReferenceDate: siderealReferenceDate)
         }.value
-
-        switch result {
-        case .success(let loaded):
-            pulseTicks = loaded.1
-        case .failure:
-            pulseTicks = []
-        }
+        solarTicks = loaded
     }
 
     @MainActor
@@ -2527,8 +2512,8 @@ private struct SarosSpikeWaveCanvas: View {
 
     var body: some View {
         Canvas { context, size in
-            let baseline = size.height * 0.76
-            let top = size.height * 0.18
+            let baseline = size.height * 0.62
+            let top = size.height * 0.12
             let waveHeight = (baseline - top) * amplitudeScale
             let maxEnergy = max(maxEnergy, 0.000_000_001)
 
@@ -2628,15 +2613,17 @@ private struct SarosSpikeMarkersCanvas: View {
     var midpoints: [Date] = []
     let displayInterval: DateInterval
     var tickStartY: CGFloat = 52
+    var tickEndY: CGFloat? = nil
 
     var body: some View {
         Canvas { context, size in
+            let resolvedTickEndY = min(max(tickEndY ?? size.height * 0.9, tickStartY), size.height)
             for midpoint in midpoints {
                 let x = xPosition(for: midpoint, width: size.width)
                 let lineStartY = min(max(tickStartY + 1, 0), size.height)
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: lineStartY))
-                line.addLine(to: CGPoint(x: x, y: size.height * 0.9))
+                line.addLine(to: CGPoint(x: x, y: resolvedTickEndY))
                 context.stroke(
                     line,
                     with: .color(.gray.opacity(0.5)),
@@ -2650,7 +2637,7 @@ private struct SarosSpikeMarkersCanvas: View {
                 let lineStartY = min(max(tickStartY + 1, 0), size.height)
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: lineStartY))
-                line.addLine(to: CGPoint(x: x, y: size.height * 0.9))
+                line.addLine(to: CGPoint(x: x, y: resolvedTickEndY))
                 context.stroke(
                     line,
                     with: .color(event.rarity.color.opacity(0.58)),
@@ -2660,7 +2647,7 @@ private struct SarosSpikeMarkersCanvas: View {
 
             for marker in dots {
                 let contributors = marker.contributors.isEmpty ? [marker.event] : marker.contributors
-                let dotGap = marker.size + 3
+            let dotGap = marker.size + 7
                 let startOffset = -CGFloat(contributors.count - 1) * dotGap / 2
 
                 for (index, contributor) in contributors.enumerated() {

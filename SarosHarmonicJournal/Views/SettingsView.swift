@@ -33,9 +33,27 @@ struct SettingsView: View {
                 }
 
                 NavigationLink {
+                    SarosTimeUnitsSettingsView()
+                } label: {
+                    Label("Time Units", systemImage: "timer")
+                }
+
+                NavigationLink {
+                    SarosSpaceUnitsSettingsView()
+                } label: {
+                    Label("Space Units", systemImage: "ruler")
+                }
+
+                NavigationLink {
                     WaveformSettingsView()
                 } label: {
                     Label("Waveform", systemImage: "waveform.path.ecg")
+                }
+
+                NavigationLink {
+                    EarthAnomalisticIntervalsSettingsView()
+                } label: {
+                    Label("Solar ruler", systemImage: "sun.max")
                 }
 
                 NavigationLink {
@@ -371,6 +389,54 @@ private struct WaveformSettingsView: View {
     }
 }
 
+private struct EarthAnomalisticIntervalsSettingsView: View {
+    var body: some View {
+        List {
+            Section {
+                if let reading = EarthAnomalisticRuler.reading(for: Date()) {
+                    MetadataRow(title: "Anomalistic", value: reading.octalAddress)
+                }
+                if let coverage = EarthAnomalisticRuler.coverage {
+                    MetadataRow(
+                        title: "Coverage",
+                        value: "\(Self.yearFormatter.string(from: coverage.start))-\(Self.yearFormatter.string(from: coverage.end))"
+                    )
+                }
+                Text("The waveform ruler stacks anomalistic, solstice, and equinox half-cycles. Red ticks are exact landmarks, yellow ticks mark 1/8, blue ticks mark 1/64, and gray ticks mark 1/512.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Solstice / equinox half-cycle") {
+                intervalRows(period: SolarYearRuler.averageTropicalYearDuration() / 2)
+            }
+
+            Section("Anomalistic half-cycle") {
+                intervalRows(period: EarthAnomalisticRuler.averageYearPeriod() / 2)
+            }
+        }
+        .navigationTitle("Solar Ruler")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func intervalRows(period: TimeInterval) -> some View {
+        ForEach(0...6, id: \.self) { exponent in
+            MetadataRow(
+                title: exponent == 0 ? "Year" : "Year / 8^\(exponent)",
+                value: SarosFractalUnitModel.formatTemporalPeriod(period / pow(8.0, Double(exponent)))
+            )
+        }
+    }
+
+    private static let yearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy"
+        return formatter
+    }()
+}
+
 private struct PulseSettingsView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
@@ -642,17 +708,22 @@ private struct RarityPeriodRow: View {
     }
 
     private var periodDuration: TimeInterval {
-        let basePeriod = JournalSettings.averageSarosPeriod / Double(divisions)
-        let fraction = basePeriod / 7
-        guard !rarity.isHeaderRarity else { return fraction }
-        return fraction * Double(max(rarity.repeatedDigit, 1))
+        let suffixLength = max(rarity.repeatedSuffixLength(harmonicDepth: harmonicDepth), 1)
+        let carrierDigits = JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        let repunitPeriod = SarosFractalUnitModel.landmarkPeriod(
+            suffixLength: suffixLength,
+            carrierDigits: carrierDigits
+        )
+        guard !rarity.isHeaderRarity else { return repunitPeriod }
+        return repunitPeriod * Double(max(rarity.repeatedDigit, 1))
     }
 
     private var detailText: String {
+        let suffixLength = max(rarity.repeatedSuffixLength(harmonicDepth: harmonicDepth), 1)
         if rarity.isHeaderRarity {
-            return "Smallest 1/7 fraction"
+            return "Adjacent repunit interval R\(suffixLength)"
         }
-        return "\(rarity.repeatedDigit)/7 filled"
+        return "\(rarity.repeatedDigit) x R\(suffixLength)"
     }
 
     var body: some View {
@@ -683,6 +754,334 @@ private struct RarityPeriodRow: View {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.year, .month, .day, .hour, .minute]
         formatter.unitsStyle = .full
+        formatter.maximumUnitCount = 3
+        return formatter
+    }()
+}
+
+private struct SarosTimeUnitsSettingsView: View {
+    @AppStorage(JournalSettings.unitSpectrumBaseKey) private var baseRawValue = SarosFractalUnitBase.averageSaros.rawValue
+
+    private var base: SarosFractalUnitBase {
+        SarosFractalUnitBase(rawValue: baseRawValue) ?? .averageSaros
+    }
+
+    private var rows: [SarosFractalTimeUnit] {
+        SarosFractalUnitModel.timeRows(basePeriod: base.period)
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Base", selection: $baseRawValue) {
+                    ForEach(SarosFractalUnitBase.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                MetadataRow(title: "Period", value: SarosFractalUnitModel.formatTemporalPeriod(base.period))
+                MetadataRow(title: "Depth", value: "\(SarosFractalUnitModel.carrierDigitCount)")
+                MetadataRow(title: "Rule", value: "Recursive /8")
+                Text("Time units use the octal carrier directly: each row is the selected base interval recursively subdivided by 8.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Time Units (fractal subdivision by 8)") {
+                ForEach(rows) { row in
+                    SarosFractalTimeUnitRow(row: row)
+                }
+            }
+        }
+        .navigationTitle("Time Units")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct SarosSpaceUnitsSettingsView: View {
+    @AppStorage(JournalSettings.unitSpectrumBaseKey) private var baseRawValue = SarosFractalUnitBase.averageSaros.rawValue
+
+    private var base: SarosFractalUnitBase {
+        SarosFractalUnitBase(rawValue: baseRawValue) ?? .averageSaros
+    }
+
+    private var rows: [SarosFractalSpaceUnit] {
+        SarosFractalUnitModel.spaceRows(basePeriod: base.period)
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Base", selection: $baseRawValue) {
+                    ForEach(SarosFractalUnitBase.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                MetadataRow(title: "Period", value: SarosFractalUnitModel.formatTemporalPeriod(base.period))
+                MetadataRow(title: "Carrier", value: "\(SarosFractalUnitModel.carrierDigitCount) octal digits")
+                MetadataRow(title: "Rule", value: "Repunit ones")
+                Text("Spatial units use repunit-one landmark intervals over the selected base: how far light and sound travel while one repunit interval elapses.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Space Units (repunit travel distances)") {
+                ForEach(rows) { row in
+                    SarosFractalSpaceUnitRow(row: row)
+                }
+            }
+        }
+        .navigationTitle("Space Units")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct SarosFractalTimeUnitRow: View {
+    let row: SarosFractalTimeUnit
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(row.indexLabel)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.primaryValue)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                Text("light length \(row.lightDistance)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("sound length \(row.soundDistance)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text("/8^\(row.depth)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct SarosFractalSpaceUnitRow: View {
+    let row: SarosFractalSpaceUnit
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(row.indexLabel)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.lightDistance)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                Text(row.addressLabel)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("light time \(row.lightTime)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("sound length \(row.soundDistance)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text("R\(row.suffixLength)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct SarosFractalTimeUnit: Identifiable {
+    let depth: Int
+    let primaryValue: String
+    let lightDistance: String
+    let soundDistance: String
+
+    var id: Int { depth }
+    var indexLabel: String { "T\(depth)" }
+}
+
+private struct SarosFractalSpaceUnit: Identifiable {
+    let order: Int
+    let suffixLength: Int
+    let addressLabel: String
+    let lightDistance: String
+    let lightTime: String
+    let soundDistance: String
+
+    var id: Int { order }
+    var indexLabel: String { "O\(order)" }
+}
+
+private enum SarosFractalUnitBase: String, CaseIterable, Identifiable {
+    case anomalisticYear
+    case averageSaros
+    case day
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .anomalisticYear: "Anomalistic year"
+        case .averageSaros: "Average Saros"
+        case .day: "1 day"
+        }
+    }
+
+    var period: TimeInterval {
+        switch self {
+        case .anomalisticYear:
+            365.259636 * 24 * 60 * 60
+        case .averageSaros:
+            JournalSettings.averageSarosPeriod
+        case .day:
+            24 * 60 * 60
+        }
+    }
+}
+
+private enum SarosFractalUnitModel {
+    static let carrierDigitCount = 64
+    private static let lightSpeedMetersPerSecond = 299_792_458.0
+    private static let soundSpeedMetersPerSecond = 343.0
+
+    static func timeRows(basePeriod: TimeInterval) -> [SarosFractalTimeUnit] {
+        (0...carrierDigitCount).map { depth in
+            let period = basePeriod / pow(8.0, Double(depth))
+            return SarosFractalTimeUnit(
+                depth: depth,
+                primaryValue: formatTemporalPeriod(period),
+                lightDistance: formatLength(lightSpeedMetersPerSecond * period),
+                soundDistance: formatLength(soundSpeedMetersPerSecond * period)
+            )
+        }
+    }
+
+    static func spaceRows(basePeriod: TimeInterval) -> [SarosFractalSpaceUnit] {
+        (1...carrierDigitCount).map { order in
+            let suffixLength = carrierDigitCount - order + 1
+            let period = landmarkPeriod(
+                suffixLength: suffixLength,
+                carrierDigits: carrierDigitCount,
+                basePeriod: basePeriod
+            )
+            return SarosFractalSpaceUnit(
+                order: order,
+                suffixLength: suffixLength,
+                addressLabel: addressLabel(prefixZeros: order - 1, suffixOnes: suffixLength),
+                lightDistance: formatLength(lightSpeedMetersPerSecond * period),
+                lightTime: formatTemporalPeriod(period),
+                soundDistance: formatLength(soundSpeedMetersPerSecond * period)
+            )
+        }
+    }
+
+    static func landmarkPeriod(
+        suffixLength: Int,
+        carrierDigits: Int,
+        basePeriod: TimeInterval = JournalSettings.averageSarosPeriod
+    ) -> TimeInterval {
+        basePeriod * landmarkRatio(
+            suffixLength: suffixLength,
+            carrierDigits: carrierDigits
+        )
+    }
+
+    private static func landmarkRatio(suffixLength rawSuffixLength: Int, carrierDigits rawCarrierDigits: Int) -> Double {
+        let carrierDigits = max(rawCarrierDigits, 1)
+        let suffixLength = min(max(rawSuffixLength, 1), carrierDigits)
+        let prefixZeros = carrierDigits - suffixLength
+        let repunitNormalizedWithinSuffix = (1 - pow(8, -Double(suffixLength))) / 7
+        return repunitNormalizedWithinSuffix / pow(8, Double(prefixZeros))
+    }
+
+    private static func addressLabel(prefixZeros: Int, suffixOnes: Int) -> String {
+        if prefixZeros <= 0 {
+            return "1 x\(suffixOnes)"
+        }
+        return "0 x\(prefixZeros) + 1 x\(suffixOnes)"
+    }
+
+    static func formatTemporalPeriod(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0 Hz" }
+        if seconds < 1 {
+            return formatFrequency(1 / seconds)
+        }
+        if seconds < 60 {
+            return "\(formatNumber(seconds)) s"
+        }
+        return durationFormatter.string(from: seconds) ?? "\(formatNumber(seconds)) s"
+    }
+
+    private static func formatFrequency(_ hertz: Double) -> String {
+        let units: [(String, Double)] = [
+            ("YHz", 1e24),
+            ("ZHz", 1e21),
+            ("EHz", 1e18),
+            ("PHz", 1e15),
+            ("THz", 1e12),
+            ("GHz", 1e9),
+            ("MHz", 1e6),
+            ("kHz", 1e3),
+            ("Hz", 1)
+        ]
+
+        for unit in units where hertz >= unit.1 {
+            return "\(formatNumber(hertz / unit.1)) \(unit.0)"
+        }
+        return "\(formatNumber(hertz)) Hz"
+    }
+
+    private static func formatLength(_ meters: Double) -> String {
+        guard meters.isFinite, meters > 0 else { return "0 m" }
+
+        let units: [(String, Double)] = [
+            ("ly", 9_460_730_472_580_800),
+            ("AU", 149_597_870_700),
+            ("km", 1_000),
+            ("m", 1),
+            ("cm", 0.01),
+            ("mm", 0.001),
+            ("um", 0.000_001),
+            ("nm", 0.000_000_001),
+            ("pm", 0.000_000_000_001),
+            ("Planck", 1.616_255e-35)
+        ]
+
+        for unit in units where meters >= unit.1 {
+            return "\(formatNumber(meters / unit.1)) \(unit.0)"
+        }
+
+        return String(format: "%.2e m", meters)
+    }
+
+    private static func formatNumber(_ value: Double) -> String {
+        guard value.isFinite else { return "n/a" }
+        if value >= 100 {
+            return String(format: "%.0f", value)
+        }
+        if value >= 10 {
+            return String(format: "%.1f", value)
+        }
+        if value >= 1 {
+            return String(format: "%.2f", value)
+        }
+        return String(format: "%.2e", value)
+    }
+
+    private static let durationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.year, .month, .day, .hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
         formatter.maximumUnitCount = 3
         return formatter
     }()

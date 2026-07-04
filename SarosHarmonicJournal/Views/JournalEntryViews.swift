@@ -352,7 +352,7 @@ struct JournalEntryDetailView: View {
 
             Section {
                 JournalEntryWaveformView(context: context, endDate: entry.effectiveEndDate)
-                    .frame(height: 190)
+                    .frame(height: 230)
             } header: {
                 Text("Waveform")
                     .textCase(nil)
@@ -705,7 +705,7 @@ struct JournalEntryCaptureView: View {
                         size: 38
                     )
                     JournalEntryWaveformView(context: context, endDate: normalizedEndDate)
-                        .frame(height: 150)
+                        .frame(height: 190)
                 } else {
                     ContentUnavailableView("Saros context unavailable", systemImage: "waveform.path.ecg")
                 }
@@ -2969,9 +2969,9 @@ private struct JournalEntryWaveformView: View {
 
     @State private var plot = JournalEntryWaveformPlot.empty
     @State private var lunarTicks: [LunarRulerTick] = []
-    @State private var pulseTicks: [SarosPulseTick] = []
+    @State private var solarTicks: [SolarYearRulerTick] = []
     @State private var displayMegaUnits = JournalEntryWaveform.defaultMegaUnits
-    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+    @AppStorage(JournalSettings.solarSiderealReferenceDateKey) private var solarSiderealReferenceTimestamp = SolarYearRuler.defaultSiderealReferenceDate.timeIntervalSince1970
 
     var body: some View {
         ZStack {
@@ -2989,7 +2989,13 @@ private struct JournalEntryWaveformView: View {
                 let lunarBottomY = JournalEntryWaveform.lunarRulerTopInset
                     + JournalEntryWaveform.lunarRulerRowSpacing * 2
                     + LunarRulerTickLevel.major.height
-                let insets = EdgeInsets(top: lunarBottomY, leading: 14, bottom: 24, trailing: 14)
+                let solarTopY = JournalEntryWaveform.solarRulerTopY(in: size.height)
+                let insets = EdgeInsets(
+                    top: lunarBottomY,
+                    leading: 14,
+                    bottom: max(size.height - solarTopY + 18, 32),
+                    trailing: 14
+                )
                 let width = max(size.width - insets.leading - insets.trailing, 1)
                 let height = max(size.height - insets.top - insets.bottom, 1)
                 let baseline = insets.top + height
@@ -3011,7 +3017,7 @@ private struct JournalEntryWaveformView: View {
                     let x = insets.leading + CGFloat(midpoint.timeIntervalSince(interval.start) / interval.duration) * width
                     var line = Path()
                     line.move(to: CGPoint(x: x, y: lunarBottomY))
-                    line.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                    line.addLine(to: CGPoint(x: x, y: solarTopY))
                     graphics.stroke(
                         line,
                         with: .color(.gray.opacity(0.5)),
@@ -3029,7 +3035,7 @@ private struct JournalEntryWaveformView: View {
                     let baseY = baseline - CGFloat(spikeEnergy / maxEnergy) * waveHeight
                     var dotY = baseY
                     var collisionLevel = 0
-                    let dotStep = dotSize + 5
+                    let dotStep = dotSize + 7
                     let maxUpLevels = max(Int((baseY - insets.top - dotSize / 2) / dotStep), 0)
 
                     while placedDots.contains(where: { abs($0.x - x) < dotSize + 4 && abs($0.y - dotY) < dotSize + 4 }),
@@ -3048,11 +3054,11 @@ private struct JournalEntryWaveformView: View {
 
                     var line = Path()
                     line.move(to: CGPoint(x: x, y: lunarBottomY))
-                    line.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                    line.addLine(to: CGPoint(x: x, y: solarTopY))
                     graphics.stroke(line, with: .color(spike.rarity.color.opacity(0.42)), lineWidth: 1)
 
                     let contributors = group.contributors.isEmpty ? [spike] : group.contributors
-                    let dotGap = dotSize + 3
+                    let dotGap = dotSize + 7
                     let startOffset = -CGFloat(contributors.count - 1) * dotGap / 2
                     for (index, contributor) in contributors.enumerated() {
                         let y = dotY + startOffset + CGFloat(index) * dotGap
@@ -3089,7 +3095,7 @@ private struct JournalEntryWaveformView: View {
                     for x in [clampedStartX, clampedEndX] {
                         var marker = Path()
                         marker.move(to: CGPoint(x: x, y: insets.top))
-                        marker.addLine(to: CGPoint(x: x, y: size.height - insets.bottom))
+                        marker.addLine(to: CGPoint(x: x, y: solarTopY))
                         graphics.stroke(
                             marker,
                             with: .color(.green.opacity(0.85)),
@@ -3103,7 +3109,7 @@ private struct JournalEntryWaveformView: View {
                 } else {
                     var marker = Path()
                     marker.move(to: CGPoint(x: eventX, y: insets.top))
-                    marker.addLine(to: CGPoint(x: eventX, y: size.height - insets.bottom))
+                    marker.addLine(to: CGPoint(x: eventX, y: solarTopY))
                     graphics.stroke(marker, with: .color(.green.opacity(0.85)), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
                     graphics.fill(Path(ellipseIn: CGRect(x: eventX - 4, y: eventY - 4, width: 8, height: 8)), with: .color(.green))
                 }
@@ -3115,9 +3121,11 @@ private struct JournalEntryWaveformView: View {
                 rowSpacing: JournalEntryWaveform.lunarRulerRowSpacing,
                 labelOffset: 15
             )
-            JournalEntryPulseRulerCanvas(
-                ticks: pulseTicks,
-                displayInterval: plot.interval
+            SolarYearRulerCanvas(
+                ticks: solarTicks,
+                displayInterval: plot.interval,
+                baselineRatio: JournalEntryWaveform.solarRulerBaselineRatio,
+                rowSpacing: JournalEntryWaveform.solarRulerRowSpacing
             )
             HStack(spacing: 0) {
                 Color.clear
@@ -3144,9 +3152,8 @@ private struct JournalEntryWaveformView: View {
             let context = context
             let contextService = services.sarosEventContextService
             let moonService = services.moonPhaseService
-            let eclipseService = services.eclipseService
-            let pulseSaros = pulseSaros
             let endDate = resolvedEndDate
+            let siderealReferenceDate = Date(timeIntervalSince1970: solarSiderealReferenceTimestamp)
             let displayDuration = JournalEntryWaveform.displayDuration(megaUnits: displayMegaUnits)
             let parabolaA = JournalWaveformSettings.currentParabolaA
             let options = JournalWaveformOptions(
@@ -3157,7 +3164,7 @@ private struct JournalEntryWaveformView: View {
                 mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
                 amplitudeMultiplier: clampedAmplitudeMultiplier
             )
-            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick], [SarosPulseTick]) in
+            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick], [SolarYearRulerTick]) in
                 let spikes = (
                     try? contextService.waveformSpikes(
                         around: context.eventDate,
@@ -3176,31 +3183,12 @@ private struct JournalEntryWaveformView: View {
                     options: options
                 )
                 let lunarTicks = LunarRulerTickBuilder.ticks(in: plot.interval, moonService: moonService)
-                let resolvedPulseSaros: Int?
-                if pulseSaros > 0 {
-                    resolvedPulseSaros = pulseSaros
-                } else {
-                    resolvedPulseSaros = context.closestSpike?.saros ?? (try? SarosPulseCalculator.defaultActiveSaros(
-                        at: context.eventDate,
-                        eclipseService: eclipseService
-                    ))
-                }
-                let pulseTicks: [SarosPulseTick]
-                if let resolvedPulseSaros {
-                    pulseTicks = (try? SarosPulseCalculator.ticks(
-                        in: plot.interval,
-                        saros: resolvedPulseSaros,
-                        harmonicDepth: context.waveformHarmonicDepth,
-                        eclipseService: eclipseService
-                    )) ?? []
-                } else {
-                    pulseTicks = []
-                }
-                return (plot, lunarTicks, pulseTicks)
+                let solarTicks = SolarYearRuler.ticks(in: plot.interval, siderealReferenceDate: siderealReferenceDate)
+                return (plot, lunarTicks, solarTicks)
             }.value
             plot = generated.0
             lunarTicks = generated.1
-            pulseTicks = generated.2
+            solarTicks = generated.2
         }
     }
 
@@ -3214,7 +3202,7 @@ private struct JournalEntryWaveformView: View {
             "\(clampedSubdivisionDepth)",
             "\(Int((clampedAmplitudeMultiplier * 100).rounded()))",
             "\(displayMegaUnits)",
-            "\(pulseSaros)"
+            "\(Int(solarSiderealReferenceTimestamp))"
         ].joined(separator: "-")
     }
 
@@ -3382,7 +3370,16 @@ private enum JournalEntryWaveform {
     static let maximumMegaUnits = 12
     static let lunarRulerTopInset: CGFloat = 10
     static let lunarRulerRowSpacing: CGFloat = 15
-    static let amplitudeScale: CGFloat = 0.34
+    static let solarRulerBaselineRatio: CGFloat = 0.86
+    static let solarRulerRowSpacing: CGFloat = 15
+    static let amplitudeScale: CGFloat = 0.56
+
+    static func solarRulerTopY(in height: CGFloat) -> CGFloat {
+        max(
+            lunarRulerTopInset + lunarRulerRowSpacing * 2 + LunarRulerTickLevel.major.height + 8,
+            height * solarRulerBaselineRatio - solarRulerRowSpacing * 2 - LunarRulerTickLevel.major.height
+        )
+    }
 
     static func displayDuration(megaUnits: Int) -> TimeInterval {
         SarosPulseCalculator.averageDuration(for: .mega)
@@ -3391,10 +3388,10 @@ private enum JournalEntryWaveform {
 
     static func dotSize(for rarity: FlipRarity) -> CGFloat {
         switch rarity.baseRarity {
-        case .mythic: 9
-        case .legendary: 7.5
-        case .epic: 6.5
-        default: 6
+        case .mythic: 7
+        case .legendary: 6.5
+        case .epic: 5.5
+        default: 5
         }
     }
 }

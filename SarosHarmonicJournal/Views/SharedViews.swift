@@ -106,6 +106,8 @@ enum JournalSettings {
     static let deviceNameKey = "syncDeviceName"
     static let deviceEmojiKey = "syncDeviceEmoji"
     static let pulseSarosKey = "pulseSaros"
+    static let unitSpectrumBaseKey = "unitSpectrumBase"
+    static let solarSiderealReferenceDateKey = "solarSiderealReferenceDate"
     static let lastSyncAtKey = "lastSyncAt"
     static let lastWeatherCodeKey = "lastWeatherCode"
     static let lastWeatherEmojiKey = "lastWeatherEmoji"
@@ -470,16 +472,16 @@ enum LunarRulerTickLevel: Int, Hashable {
         case .major: .red
         case .eighth: .yellow
         case .sixtyFourth: .blue
-        case .fiveHundredTwelfth: .white
+        case .fiveHundredTwelfth: .gray
         }
     }
 
     var height: CGFloat {
-        15
+        11.25
     }
 
     var lineWidth: CGFloat {
-        1.2
+        0.7
     }
 
     var opacity: Double {
@@ -703,6 +705,670 @@ struct LunarRulerCanvas: View {
     private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
         let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
         return CGFloat(ratio) * width
+    }
+}
+
+enum EarthAnomalisticEventKind: String, Codable, Hashable, Sendable {
+    case perihelion
+    case aphelion
+
+    var displayName: String {
+        switch self {
+        case .perihelion: "Perihelion"
+        case .aphelion: "Aphelion"
+        }
+    }
+}
+
+struct EarthAnomalisticEvent: Codable, Hashable, Sendable {
+    let kind: EarthAnomalisticEventKind
+    let date: Date
+    let au: Double
+}
+
+struct EarthAnomalisticReading: Hashable, Sendable {
+    let date: Date
+    let previousEvent: EarthAnomalisticEvent
+    let nextEvent: EarthAnomalisticEvent
+    let normalizedPhase: Double
+    let octalAddress: String
+
+    var duration: TimeInterval {
+        max(nextEvent.date.timeIntervalSince(previousEvent.date), 1)
+    }
+}
+
+enum EarthAnomalisticRulerTickLevel: Int, Hashable, Sendable {
+    case major
+    case yearSixtyFourth
+    case yearFiveHundredTwelfth
+    case yearFourThousandNinetySix
+
+    var color: Color {
+        switch self {
+        case .major: .red
+        case .yearSixtyFourth: .yellow
+        case .yearFiveHundredTwelfth: .blue
+        case .yearFourThousandNinetySix: .gray
+        }
+    }
+
+    var height: CGFloat {
+        11.25
+    }
+
+    var lineWidth: CGFloat {
+        0.7
+    }
+
+    var opacity: Double {
+        switch self {
+        case .major: 0.95
+        case .yearSixtyFourth: 0.86
+        case .yearFiveHundredTwelfth: 0.7
+        case .yearFourThousandNinetySix: 0.44
+        }
+    }
+}
+
+struct EarthAnomalisticRulerTick: Identifiable, Hashable, Sendable {
+    let level: EarthAnomalisticRulerTickLevel
+    let date: Date
+    let label: String?
+
+    var id: String {
+        "\(level.rawValue)-\(Int(date.timeIntervalSince1970))-\(label ?? "")"
+    }
+}
+
+enum EarthAnomalisticRuler {
+    static let octalDepth = 6
+
+    static var coverage: DateInterval? {
+        let events = EarthAnomalisticEventStore.shared.events
+        guard let first = events.first, let last = events.last else { return nil }
+        return DateInterval(start: first.date, end: last.date)
+    }
+
+    static func reading(for date: Date) -> EarthAnomalisticReading? {
+        let perihelia = EarthAnomalisticEventStore.shared.perihelia
+        guard perihelia.count >= 2 else { return nil }
+
+        let index = insertionIndex(for: date, in: perihelia)
+        let previousIndex = max(min(index - 1, perihelia.count - 2), 0)
+        let nextIndex = previousIndex + 1
+        let previous = perihelia[previousIndex]
+        let next = perihelia[nextIndex]
+        let duration = max(next.date.timeIntervalSince(previous.date), 1)
+        let phase = min(max(date.timeIntervalSince(previous.date) / duration, 0), 1)
+        let binCount = pow(8.0, Double(octalDepth))
+        let bin = min(Int(floor(phase * binCount)), Int(binCount) - 1)
+        let address = String(bin, radix: 8).leftPadded(toLength: octalDepth, withPad: "0")
+
+        return EarthAnomalisticReading(
+            date: date,
+            previousEvent: previous,
+            nextEvent: next,
+            normalizedPhase: phase,
+            octalAddress: address
+        )
+    }
+
+    static func ticks(in interval: DateInterval) -> [EarthAnomalisticRulerTick] {
+        let events = EarthAnomalisticEventStore.shared.events
+        let perihelia = EarthAnomalisticEventStore.shared.perihelia
+        guard perihelia.count >= 2 else { return [] }
+
+        var ticks: [EarthAnomalisticRulerTick] = []
+        let startIndex = max(insertionIndex(for: interval.start, in: perihelia) - 1, 0)
+        let endIndex = min(insertionIndex(for: interval.end, in: perihelia), perihelia.count - 1)
+
+        if startIndex < endIndex {
+            for index in startIndex..<endIndex {
+                appendSubdivisions(
+                    start: perihelia[index],
+                    end: perihelia[index + 1],
+                    interval: interval,
+                    into: &ticks
+                )
+            }
+        }
+
+        for event in events where interval.contains(event.date) {
+            ticks.append(
+                EarthAnomalisticRulerTick(
+                    level: .major,
+                    date: event.date,
+                    label: event.kind == .perihelion ? "Peri" : "Aph"
+                )
+            )
+        }
+
+        return ticks.sorted { lhs, rhs in
+            if lhs.date != rhs.date { return lhs.date < rhs.date }
+            return lhs.level.rawValue < rhs.level.rawValue
+        }
+    }
+
+    static func averageYearPeriod() -> TimeInterval {
+        let events = EarthAnomalisticEventStore.shared.perihelia
+        let durations = zip(events, events.dropFirst()).map {
+            $1.date.timeIntervalSince($0.date)
+        }
+        guard !durations.isEmpty else {
+            return 365.259636 * 86_400
+        }
+        return durations.reduce(0, +) / Double(durations.count)
+    }
+
+    private static func appendSubdivisions(
+        start: EarthAnomalisticEvent,
+        end: EarthAnomalisticEvent,
+        interval: DateInterval,
+        into ticks: inout [EarthAnomalisticRulerTick]
+    ) {
+        let duration = max(end.date.timeIntervalSince(start.date), 1)
+        let divisions = 4096
+        for index in 1..<divisions {
+            let level: EarthAnomalisticRulerTickLevel
+            if index.isMultiple(of: 64) {
+                level = .yearSixtyFourth
+            } else if index.isMultiple(of: 8) {
+                level = .yearFiveHundredTwelfth
+            } else {
+                level = .yearFourThousandNinetySix
+            }
+            let date = start.date.addingTimeInterval(Double(index) / Double(divisions) * duration)
+            guard interval.contains(date) else { continue }
+            ticks.append(EarthAnomalisticRulerTick(level: level, date: date, label: nil))
+        }
+    }
+
+    private static func insertionIndex(for date: Date, in events: [EarthAnomalisticEvent]) -> Int {
+        var low = 0
+        var high = events.count
+        while low < high {
+            let mid = (low + high) / 2
+            if events[mid].date < date {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
+    }
+}
+
+struct EarthAnomalisticRulerCanvas: View {
+    let ticks: [EarthAnomalisticRulerTick]
+    let displayInterval: DateInterval
+    var baselineRatio: CGFloat = 0.94
+
+    var body: some View {
+        Canvas { context, size in
+            guard displayInterval.duration > 0, !ticks.isEmpty else { return }
+
+            let baseline = size.height * baselineRatio
+            var lastXByLevel: [EarthAnomalisticRulerTickLevel: CGFloat] = [:]
+
+            for tick in ticks {
+                let x = xPosition(for: tick.date, width: size.width)
+                if tick.level != .major,
+                   let lastX = lastXByLevel[tick.level],
+                   abs(lastX - x) < 1.4 {
+                    continue
+                }
+                lastXByLevel[tick.level] = x
+
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: baseline))
+                line.addLine(to: CGPoint(x: x, y: baseline - tick.level.height))
+                context.stroke(
+                    line,
+                    with: .color(tick.level.color.opacity(tick.level.opacity)),
+                    lineWidth: tick.level.lineWidth
+                )
+
+                if let label = tick.label {
+                    context.draw(
+                        Text(label)
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(tick.level.color.opacity(0.92)),
+                        at: CGPoint(x: x, y: max(8, baseline - tick.level.height - 10))
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
+    }
+}
+
+enum SolarYearCycleKind: String, CaseIterable, Hashable, Sendable {
+    case equinox
+    case solstice
+    case anomalistic
+
+    var displayName: String {
+        switch self {
+        case .equinox: "Equinox"
+        case .solstice: "Solstice"
+        case .anomalistic: "Anomalistic"
+        }
+    }
+
+    var rowIndex: Int {
+        switch self {
+        case .equinox: 0
+        case .solstice: 1
+        case .anomalistic: 2
+        }
+    }
+}
+
+struct SolarYearRulerTick: Identifiable, Hashable, Sendable {
+    let cycle: SolarYearCycleKind
+    let level: EarthAnomalisticRulerTickLevel
+    let date: Date
+    let label: String?
+
+    var id: String {
+        "\(cycle.rawValue)-\(level.rawValue)-\(Int(date.timeIntervalSince1970))-\(label ?? "")"
+    }
+}
+
+enum SolarYearRuler {
+    static let civilYearDuration: TimeInterval = 365.2425 * 86_400
+    static let siderealYearDuration: TimeInterval = civilYearDuration
+    static let defaultSiderealReferenceDate = Date(timeIntervalSince1970: 946_684_800)
+
+    static func siderealReferenceDate() -> Date {
+        let stored = UserDefaults.standard.double(forKey: JournalSettings.solarSiderealReferenceDateKey)
+        guard stored > 0 else { return defaultSiderealReferenceDate }
+        return Date(timeIntervalSince1970: stored)
+    }
+
+    static func ticks(in interval: DateInterval, siderealReferenceDate: Date = siderealReferenceDate()) -> [SolarYearRulerTick] {
+        (
+            solsticeTicks(in: interval)
+            + equinoxTicks(in: interval)
+            + anomalisticTicks(in: interval)
+        )
+        .sorted { lhs, rhs in
+            if lhs.date != rhs.date { return lhs.date < rhs.date }
+            if lhs.cycle != rhs.cycle { return lhs.cycle.rowIndex < rhs.cycle.rowIndex }
+            return lhs.level.rawValue < rhs.level.rawValue
+        }
+    }
+
+    static func averageTropicalYearDuration() -> TimeInterval {
+        let solstices = TropicalSolarEventStore.shared.juneSolstices
+        let durations = zip(solstices, solstices.dropFirst()).map {
+            $1.date.timeIntervalSince($0.date)
+        }
+        guard !durations.isEmpty else { return 365.24219 * 86_400 }
+        return durations.reduce(0, +) / Double(durations.count)
+    }
+
+    private static func solsticeTicks(in interval: DateInterval) -> [SolarYearRulerTick] {
+        let store = TropicalSolarEventStore.shared
+        let events = store.solstices
+        guard events.count >= 2 else { return [] }
+
+        return tropicalHalfCycleTicks(cycle: .solstice, events: events, interval: interval)
+    }
+
+    private static func equinoxTicks(in interval: DateInterval) -> [SolarYearRulerTick] {
+        let store = TropicalSolarEventStore.shared
+        let events = store.equinoxes
+        guard events.count >= 2 else { return [] }
+
+        return tropicalHalfCycleTicks(cycle: .equinox, events: events, interval: interval)
+    }
+
+    private static var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        return calendar
+    }
+
+    private static func tropicalHalfCycleTicks(
+        cycle: SolarYearCycleKind,
+        events: [TropicalSolarEvent],
+        interval: DateInterval
+    ) -> [SolarYearRulerTick] {
+        var ticks: [SolarYearRulerTick] = []
+        let startIndex = max(insertionIndex(for: interval.start, in: events) - 1, 0)
+        let endIndex = min(insertionIndex(for: interval.end, in: events), events.count - 1)
+
+        if startIndex < endIndex {
+            for index in startIndex..<endIndex {
+                appendYearSubdivisions(
+                    cycle: cycle,
+                    start: events[index].date,
+                    end: events[index + 1].date,
+                    interval: interval,
+                    into: &ticks
+                )
+            }
+        }
+
+        for event in events where interval.contains(event.date) {
+            ticks.append(
+                SolarYearRulerTick(
+                    cycle: cycle,
+                    level: .major,
+                    date: event.date,
+                    label: event.kind.shortLabel
+                )
+            )
+        }
+
+        return ticks
+    }
+
+    private static func anomalisticTicks(in interval: DateInterval) -> [SolarYearRulerTick] {
+        let events = EarthAnomalisticEventStore.shared.events
+        guard events.count >= 2 else { return [] }
+
+        var ticks: [SolarYearRulerTick] = []
+        let startIndex = max(insertionIndex(for: interval.start, in: events) - 1, 0)
+        let endIndex = min(insertionIndex(for: interval.end, in: events), events.count - 1)
+
+        if startIndex < endIndex {
+            for index in startIndex..<endIndex {
+                appendYearSubdivisions(
+                    cycle: .anomalistic,
+                    start: events[index].date,
+                    end: events[index + 1].date,
+                    interval: interval,
+                    into: &ticks
+                )
+            }
+        }
+
+        for event in events where interval.contains(event.date) {
+            ticks.append(
+                SolarYearRulerTick(
+                    cycle: .anomalistic,
+                    level: .major,
+                    date: event.date,
+                    label: event.kind == .perihelion ? "Peri" : "Aph"
+                )
+            )
+        }
+
+        return ticks
+    }
+
+    private static func appendYearSubdivisions(
+        cycle: SolarYearCycleKind,
+        start: Date,
+        end: Date,
+        interval: DateInterval,
+        into ticks: inout [SolarYearRulerTick]
+    ) {
+        let duration = max(end.timeIntervalSince(start), 1)
+        let divisions = 4096
+        for index in 1..<divisions {
+            let level: EarthAnomalisticRulerTickLevel
+            if index.isMultiple(of: 64) {
+                level = .yearSixtyFourth
+            } else if index.isMultiple(of: 8) {
+                level = .yearFiveHundredTwelfth
+            } else {
+                level = .yearFourThousandNinetySix
+            }
+            let date = start.addingTimeInterval(Double(index) / Double(divisions) * duration)
+            guard interval.contains(date) else { continue }
+            ticks.append(SolarYearRulerTick(cycle: cycle, level: level, date: date, label: nil))
+        }
+    }
+
+    private static func insertionIndex(for date: Date, in events: [EarthAnomalisticEvent]) -> Int {
+        var low = 0
+        var high = events.count
+        while low < high {
+            let mid = (low + high) / 2
+            if events[mid].date < date {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
+    }
+
+    private static func insertionIndex(for date: Date, in events: [TropicalSolarEvent]) -> Int {
+        var low = 0
+        var high = events.count
+        while low < high {
+            let mid = (low + high) / 2
+            if events[mid].date < date {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
+    }
+}
+
+struct SolarYearRulerCanvas: View {
+    let ticks: [SolarYearRulerTick]
+    let displayInterval: DateInterval
+    var baselineRatio: CGFloat = 0.94
+    var rowSpacing: CGFloat = 15
+
+    var body: some View {
+        Canvas { context, size in
+            guard displayInterval.duration > 0, !ticks.isEmpty else { return }
+
+            let baseline = size.height * baselineRatio
+            var lastXByKey: [String: CGFloat] = [:]
+
+            for tick in ticks {
+                let x = xPosition(for: tick.date, width: size.width)
+                let key = "\(tick.cycle.rawValue)-\(tick.level.rawValue)"
+                if tick.level != .major,
+                   let lastX = lastXByKey[key],
+                   abs(lastX - x) < 1.4 {
+                    continue
+                }
+                lastXByKey[key] = x
+
+                let y = baseline - CGFloat(tick.cycle.rowIndex) * rowSpacing
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: y))
+                line.addLine(to: CGPoint(x: x, y: y - tick.level.height))
+                context.stroke(
+                    line,
+                    with: .color(tick.level.color.opacity(tick.level.opacity)),
+                    lineWidth: tick.level.lineWidth
+                )
+
+                if let label = tick.label {
+                    context.draw(
+                        Text(label)
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(tick.level.color.opacity(0.92)),
+                        at: CGPoint(x: x, y: max(8, y - tick.level.height - 10))
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
+    }
+}
+
+enum TropicalSolarEventKind: String, Codable, Hashable, Sendable {
+    case decemberSolstice
+    case juneSolstice
+    case vernalEquinox
+    case autumnalEquinox
+
+    var displayName: String {
+        switch self {
+        case .decemberSolstice: "December solstice"
+        case .juneSolstice: "June solstice"
+        case .vernalEquinox: "Vernal equinox"
+        case .autumnalEquinox: "Autumnal equinox"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .vernalEquinox: "Mar"
+        case .juneSolstice: "Jun"
+        case .autumnalEquinox: "Sep"
+        case .decemberSolstice: "Dec"
+        }
+    }
+}
+
+struct TropicalSolarEvent: Hashable, Sendable {
+    let kind: TropicalSolarEventKind
+    let date: Date
+}
+
+private final class TropicalSolarEventStore {
+    static let shared = TropicalSolarEventStore()
+
+    let events: [TropicalSolarEvent]
+    let solstices: [TropicalSolarEvent]
+    let equinoxes: [TropicalSolarEvent]
+    let juneSolstices: [EarthAnomalisticEvent]
+
+    private init(bundle: Bundle = .main) {
+        events = (try? Self.loadEvents(bundle: bundle)) ?? []
+        solstices = events
+            .filter { $0.kind == .juneSolstice || $0.kind == .decemberSolstice }
+            .sorted { $0.date < $1.date }
+        equinoxes = events
+            .filter { $0.kind == .vernalEquinox || $0.kind == .autumnalEquinox }
+            .sorted { $0.date < $1.date }
+        juneSolstices = events
+            .filter { $0.kind == .juneSolstice }
+            .map { EarthAnomalisticEvent(kind: .perihelion, date: $0.date, au: 1) }
+            .sorted { $0.date < $1.date }
+    }
+
+    private static func loadEvents(bundle: Bundle) throws -> [TropicalSolarEvent] {
+        guard let url = bundle.url(
+            forResource: "tropical_solstice_equinox_1899_2100",
+            withExtension: "json",
+            subdirectory: "EarthData"
+        ) ?? bundle.url(
+            forResource: "tropical_solstice_equinox_1899_2100",
+            withExtension: "json",
+            subdirectory: "Resources/EarthData"
+        ) else {
+            return fallbackEvents()
+        }
+
+        let payload = try JSONDecoder().decode(TropicalSolarPayload.self, from: Data(contentsOf: url))
+        return payload.events
+            .compactMap { record -> TropicalSolarEvent? in
+                guard let kind = TropicalSolarEventKind(rawValue: record.kind) else { return nil }
+                return TropicalSolarEvent(kind: kind, date: Date(timeIntervalSince1970: record.unix))
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    private static func fallbackEvents() -> [TropicalSolarEvent] {
+        let calendar = Calendar(identifier: .gregorian)
+        return (1899...2100).flatMap { year -> [TropicalSolarEvent] in
+            let vernal = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 3, day: 20)) ?? Date()
+            let june = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 6, day: 21)) ?? Date()
+            let autumnal = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 9, day: 22)) ?? Date()
+            let december = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 12, day: 21)) ?? Date()
+            return [
+                TropicalSolarEvent(kind: .vernalEquinox, date: vernal),
+                TropicalSolarEvent(kind: .juneSolstice, date: june),
+                TropicalSolarEvent(kind: .autumnalEquinox, date: autumnal),
+                TropicalSolarEvent(kind: .decemberSolstice, date: december)
+            ]
+        }
+        .sorted { $0.date < $1.date }
+    }
+
+    private struct TropicalSolarPayload: Decodable {
+        let events: [TropicalSolarRecord]
+    }
+
+    private struct TropicalSolarRecord: Decodable {
+        let kind: String
+        let unix: Double
+    }
+}
+
+private final class EarthAnomalisticEventStore {
+    static let shared = EarthAnomalisticEventStore()
+
+    let events: [EarthAnomalisticEvent]
+    let perihelia: [EarthAnomalisticEvent]
+
+    private init(bundle: Bundle = .main) {
+        events = (try? Self.loadEvents(bundle: bundle)) ?? []
+        perihelia = events.filter { $0.kind == .perihelion }.sorted { $0.date < $1.date }
+    }
+
+    private static func loadEvents(bundle: Bundle) throws -> [EarthAnomalisticEvent] {
+        guard let url = bundle.url(
+            forResource: "perihelion_aphelion_1900_2099",
+            withExtension: "json",
+            subdirectory: "EarthData"
+        ) ?? bundle.url(
+            forResource: "perihelion_aphelion_1900_2099",
+            withExtension: "json",
+            subdirectory: "Resources/EarthData"
+        ) else {
+            return fallbackEvents()
+        }
+
+        let payload = try JSONDecoder().decode(EarthAnomalisticPayload.self, from: Data(contentsOf: url))
+        return payload.events
+            .compactMap { record -> EarthAnomalisticEvent? in
+                guard let kind = EarthAnomalisticEventKind(rawValue: record.kind) else { return nil }
+                return EarthAnomalisticEvent(
+                    kind: kind,
+                    date: Date(timeIntervalSince1970: record.unix),
+                    au: record.au
+                )
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    private static func fallbackEvents() -> [EarthAnomalisticEvent] {
+        let calendar = Calendar(identifier: .gregorian)
+        return (1900...2099).flatMap { year -> [EarthAnomalisticEvent] in
+            let perihelion = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 1, day: 3)) ?? Date()
+            let aphelion = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: 7, day: 4)) ?? Date()
+            return [
+                EarthAnomalisticEvent(kind: .perihelion, date: perihelion, au: 0.9833),
+                EarthAnomalisticEvent(kind: .aphelion, date: aphelion, au: 1.0167)
+            ]
+        }
+        .sorted { $0.date < $1.date }
+    }
+
+    private struct EarthAnomalisticPayload: Decodable {
+        let events: [EarthAnomalisticRecord]
+    }
+
+    private struct EarthAnomalisticRecord: Decodable {
+        let kind: String
+        let unix: Double
+        let au: Double
     }
 }
 

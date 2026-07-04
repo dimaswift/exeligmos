@@ -11,6 +11,7 @@
 		5A1000000000000000000001 /* SarosGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000000000000000000002 /* SarosGridView.swift */; };
 		0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */; };
 		0B6D0F1A9C8E4D3AB2C90125 /* NaturalEarth in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */; };
+		0B6D0F1A9C8E4D3AB2C90127 /* EarthData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90128 /* EarthData */; };
 		0C3B8821A71E4A6CB0F60123 /* MirrorReflectionProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */; };
 		0C3B8821A71E4A6CB0F60125 /* SymbolicCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */; };
 		0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */; };
@@ -107,6 +108,7 @@
 /* Begin PBXFileReference section */
 			0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
 			0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = NaturalEarth; path = SarosHarmonicJournal/Resources/NaturalEarth; sourceTree = "<group>"; };
+			0B6D0F1A9C8E4D3AB2C90128 /* EarthData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = EarthData; path = SarosHarmonicJournal/Resources/EarthData; sourceTree = "<group>"; };
 			0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
 			0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MirrorReflectionProcessor.swift; path = SarosHarmonicJournal/Services/MirrorReflectionProcessor.swift; sourceTree = "<group>"; };
 			0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
@@ -226,6 +228,7 @@
 				A20000000000000000000011 /* LiveTrackingFlip.wav */,
 				0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */,
 				0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */,
+				0B6D0F1A9C8E4D3AB2C90128 /* EarthData */,
 				DAD000000000000000000004 /* MoonData */,
 				76E9E6EB19D2AD2F20AE959E /* eclipse_info.db */,
 				BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */,
@@ -457,6 +460,7 @@
 				A10000000000000000000009 /* LiveTrackingFlip.wav in Resources */,
 				0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */,
 				0B6D0F1A9C8E4D3AB2C90125 /* NaturalEarth in Resources */,
+				0B6D0F1A9C8E4D3AB2C90127 /* EarthData in Resources */,
 				DAD000000000000000000003 /* MoonData in Resources */,
 				7283A4D9A7650EC64088EB86 /* saros.db in Resources */,
 			);
