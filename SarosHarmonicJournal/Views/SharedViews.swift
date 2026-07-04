@@ -451,6 +451,222 @@ enum SarosPulseUnit: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+enum SarosCountdownDirection: Hashable {
+    case up
+    case down
+}
+
+enum SarosCountdownScale: String, CaseIterable, Codable, Identifiable, Hashable {
+    case saros
+    case kilosaros
+    case megasaros
+    case gigasaros
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .saros: "Kilosaros"
+        case .kilosaros: "Kilosaros"
+        case .megasaros: "Megasaros"
+        case .gigasaros: "Gigasaros"
+        }
+    }
+
+    var digitCount: Int {
+        switch self {
+        case .saros, .kilosaros: 5
+        case .megasaros: 6
+        case .gigasaros: 7
+        }
+    }
+
+    var baseSarosCount: Int {
+        switch self {
+        case .saros: 8
+        case .kilosaros: 8
+        case .megasaros: 64
+        case .gigasaros: 512
+        }
+    }
+
+    var duration: TimeInterval {
+        SarosPulseCalculator.averageDuration(for: .saros) * Double(baseSarosCount)
+    }
+
+    var leastSignificantDigitDuration: TimeInterval {
+        duration / Double(Self.octalPower(digitCount))
+    }
+
+    var color: Color {
+        switch self {
+        case .saros: SarosPulseUnit.kilo.color
+        case .kilosaros: SarosPulseUnit.kilo.color
+        case .megasaros: SarosPulseUnit.mega.color
+        case .gigasaros: SarosPulseUnit.giga.color
+        }
+    }
+
+    static func normalized(forBaseSarosCount rawCount: Int) -> SarosCountdownSelection {
+        let baseCount = max(rawCount, 1)
+        let scale: SarosCountdownScale
+        if baseCount >= SarosCountdownScale.gigasaros.baseSarosCount {
+            scale = .gigasaros
+        } else if baseCount >= SarosCountdownScale.megasaros.baseSarosCount {
+            scale = .megasaros
+        } else {
+            scale = .kilosaros
+        }
+
+        let amount = Int(ceil(Double(baseCount) / Double(scale.baseSarosCount)))
+        return SarosCountdownSelection(scale: scale, amount: amount)
+    }
+
+    static func normalized(forDuration duration: TimeInterval) -> SarosCountdownSelection {
+        let sarosDuration = max(SarosPulseCalculator.averageDuration(for: .saros), 0.000_001)
+        let baseCount = Int(ceil(max(duration, sarosDuration) / sarosDuration))
+        return normalized(forBaseSarosCount: baseCount)
+    }
+
+    private static func octalPower(_ exponent: Int) -> Int {
+        (0..<max(exponent, 0)).reduce(1) { result, _ in result * 8 }
+    }
+}
+
+struct SarosCountdownSelection: Codable, Hashable {
+    var scale: SarosCountdownScale
+    var amount: Int
+
+    static let defaultSaros = SarosCountdownSelection(scale: .kilosaros, amount: 1)
+    static let timerDefault = SarosCountdownSelection(scale: .kilosaros, amount: 1)
+
+    init(scale: SarosCountdownScale, amount: Int) {
+        self.scale = scale
+        self.amount = max(amount, 1)
+    }
+
+    var totalDuration: TimeInterval {
+        scale.duration * Double(amount)
+    }
+}
+
+struct SarosCountdownReading: Hashable {
+    let scale: SarosCountdownScale
+    let direction: SarosCountdownDirection
+    let octalAddress: String
+    let dotCount: Int
+    let progress: Double
+    let isComplete: Bool
+}
+
+enum SarosCountdownCalculator {
+    static func reading(
+        startDate: Date,
+        endDate: Date?,
+        now: Date,
+        direction: SarosCountdownDirection,
+        selection: SarosCountdownSelection
+    ) -> SarosCountdownReading {
+        let scale = selection.scale
+        let unitDuration = max(scale.duration, 0.000_001)
+        let binCount = Self.octalPower(scale.digitCount)
+
+        switch direction {
+        case .down:
+            let fallbackEndDate = startDate.addingTimeInterval(selection.totalDuration)
+            let resolvedEndDate = endDate ?? fallbackEndDate
+            let remaining = max(resolvedEndDate.timeIntervalSince(now), 0)
+            let fraction = countdownFraction(remaining: remaining, unitDuration: unitDuration)
+            let index = countdownIndex(fraction: fraction, binCount: binCount)
+            let dots = min(max(Int(ceil(remaining / unitDuration)) - 1, 0), 7)
+
+            return SarosCountdownReading(
+                scale: scale,
+                direction: direction,
+                octalAddress: octalAddress(index: index, digitCount: scale.digitCount),
+                dotCount: dots,
+                progress: 1 - fraction,
+                isComplete: remaining <= 0
+            )
+        case .up:
+            let elapsed = max(now.timeIntervalSince(startDate), 0)
+            let cycleDuration = unitDuration * Double(max(selection.amount, 1))
+            let cycleElapsed = elapsed.truncatingRemainder(dividingBy: max(cycleDuration, unitDuration))
+            let unitElapsed = cycleElapsed.truncatingRemainder(dividingBy: unitDuration)
+            let fraction = min(max(unitElapsed / unitDuration, 0), 1)
+            let index = min(Int(floor(fraction * Double(binCount))), binCount - 1)
+            let dots = min(max(Int(floor(cycleElapsed / unitDuration)), 0), 7)
+
+            return SarosCountdownReading(
+                scale: scale,
+                direction: direction,
+                octalAddress: octalAddress(index: index, digitCount: scale.digitCount),
+                dotCount: dots,
+                progress: fraction,
+                isComplete: false
+            )
+        }
+    }
+
+    private static func countdownFraction(remaining: TimeInterval, unitDuration: TimeInterval) -> Double {
+        guard remaining > 0 else { return 0 }
+        let remainder = remaining.truncatingRemainder(dividingBy: unitDuration)
+        if remainder < 0.000_001 {
+            return 1
+        }
+        return min(max(remainder / unitDuration, 0), 1)
+    }
+
+    private static func countdownIndex(fraction: Double, binCount: Int) -> Int {
+        guard fraction > 0 else { return 0 }
+        return min(max(Int(floor(fraction * Double(binCount))), 0), binCount - 1)
+    }
+
+    private static func octalAddress(index: Int, digitCount: Int) -> String {
+        String(max(index, 0), radix: 8)
+            .leftPadded(toLength: digitCount, withPad: "0")
+    }
+
+    private static func octalPower(_ exponent: Int) -> Int {
+        (0..<max(exponent, 0)).reduce(1) { result, _ in result * 8 }
+    }
+}
+
+struct SarosCountdownGlyphTimer: View {
+    let reading: SarosCountdownReading
+    var size: CGFloat = 58
+
+    var body: some View {
+        VStack(spacing: 3) {
+            if reading.dotCount > 0 {
+                dotStack
+            }
+
+            OctalGlyph(
+                value: reading.octalAddress,
+                depth: reading.scale.digitCount,
+                color: reading.scale.color
+            )
+            .frame(width: size, height: size)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(reading.scale.title) \(reading.direction == .down ? "countdown" : "timer")")
+        .accessibilityValue(reading.octalAddress)
+    }
+
+    private var dotStack: some View {
+        VStack(spacing: 3) {
+            ForEach(0..<reading.dotCount, id: \.self) { _ in
+                Circle()
+                    .fill(reading.scale.color)
+                    .frame(width: 6, height: 6)
+                    .opacity(0.82)
+            }
+        }
+        .frame(width: 10)
+    }
+}
+
 struct SarosPulseTick: Identifiable, Hashable {
     let saros: Int
     let unit: SarosPulseUnit

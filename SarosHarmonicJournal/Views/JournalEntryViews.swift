@@ -581,7 +581,7 @@ struct JournalEntryCaptureView: View {
         _weatherCode = State(initialValue: draft?.weatherCode ?? lastWeather.code)
         _weatherEmoji = State(initialValue: draft?.weatherEmoji ?? lastWeather.emoji)
         _temperatureC = State(initialValue: draft?.temperatureC ?? lastWeather.temperatureC)
-        _selectedTagIDs = State(initialValue: Set(draft?.tagIDs ?? []))
+        _selectedTagIDs = State(initialValue: Set(draft?.tagIDs ?? template.resolvedTagIDs))
     }
 
     init(editing entry: JournalEntry) {
@@ -1400,83 +1400,114 @@ private struct JournalTemplateCaptureRequest: Identifiable, Hashable {
     var longitude: Double?
 }
 
+private struct JournalTemplateRetroactiveMirrorRequest: Identifiable {
+    let id = UUID()
+    let startDate: Date
+    let template: JournalTemplateSeed
+    let image: UIImage
+    var latitude: Double?
+    var longitude: Double?
+}
+
 private struct ContinuousActivityLoggingPanel: View {
     let session: ContinuousActivitySession?
     let onBegin: () -> Void
     let onStop: () -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            HStack(spacing: 14) {
-                if let session {
-                    let glyph = ActivityLoggingGlyph.glyph(startDate: session.startDate, at: timeline.date)
-                    let color = Color(hex: ActivityLoggingGlyph.colorHex(for: glyph), fallback: .white)
-                    OctalGlyph(
-                        value: glyph,
-                        depth: ActivityLoggingGlyph.depth,
-                        color: color
-                    )
-                    .frame(width: 54, height: 54)
+        HStack(spacing: 14) {
+            if let session {
+                ContinuousActivitySessionGlyphBlock(session: session)
+            } else {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 36, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(session.isCountdown ? "Countdown" : ActivityLoggingGlyph.title(for: glyph))
-                            .font(.headline)
-                            .foregroundStyle(color)
-                        if let endDate = session.displayEndDate {
-                            if endDate > timeline.date {
-                                Text(timerInterval: timeline.date...endDate, countsDown: true)
-                                    .font(.title3.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(.primary)
-                            } else {
-                                Text("Done")
-                                    .font(.title3.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(.primary)
-                            }
-                        } else {
-                            Text(session.startDate, style: .timer)
-                                .font(.title3.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                } else {
-                    Image(systemName: "record.circle")
-                        .font(.system(size: 36, weight: .semibold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Continuous log")
+                        .font(.headline)
+                    Text("Capture an activity as a time window.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Continuous log")
-                            .font(.headline)
-                        Text("Capture an activity as a time window.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
-
-                Spacer(minLength: 0)
-
-                Button(action: session == nil ? onBegin : onStop) {
-                    Label(
-                        session == nil ? "Begin" : "Stop",
-                        systemImage: session == nil ? "play.circle.fill" : "stop.circle.fill"
-                    )
-                    .font(.callout.weight(.semibold))
-                    .labelStyle(.titleAndIcon)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(session == nil ? Color.accentColor : Color.red, in: Capsule())
-                    .foregroundStyle(.white)
-                }
-                .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .padding(.vertical, 4)
+
+            Spacer(minLength: 0)
+
+            Button(action: session == nil ? onBegin : onStop) {
+                Label(
+                    session == nil ? "Begin" : "Stop",
+                    systemImage: session == nil ? "play.circle.fill" : "stop.circle.fill"
+                )
+                .font(.callout.weight(.semibold))
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(session == nil ? Color.accentColor : Color.red, in: Capsule())
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ContinuousActivitySessionGlyphBlock: View {
+    let session: ContinuousActivitySession
+
+    private var fallbackSelection: SarosCountdownSelection {
+        session.displayEndDate.map {
+            SarosCountdownScale.normalized(forDuration: $0.timeIntervalSince(session.startDate))
+        } ?? SarosCountdownSelection.defaultSaros
+    }
+
+    private var selection: SarosCountdownSelection {
+        session.sarosCountdownSelection ?? fallbackSelection
+    }
+
+    private var direction: SarosCountdownDirection {
+        session.isCountdown ? .down : .up
+    }
+
+    private var refreshInterval: TimeInterval {
+        max(selection.scale.leastSignificantDigitDuration, 1.0 / 60.0)
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: session.startDate, by: refreshInterval)) { timeline in
+            let reading = SarosCountdownCalculator.reading(
+                startDate: session.startDate,
+                endDate: session.displayEndDate,
+                now: timeline.date,
+                direction: direction,
+                selection: selection
+            )
+
+            HStack(spacing: 14) {
+                SarosCountdownGlyphTimer(reading: reading, size: 78)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(sessionTitle)
+                        .font(.headline)
+                        .foregroundStyle(reading.scale.color)
+                    Text(reading.octalAddress)
+                        .font(.title3.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+    }
+
+    private var sessionTitle: String {
+        "\(session.template.resolvedStaticEmoji) \(session.template.name.nilIfBlank ?? "Activity")"
     }
 }
 
 struct JournalTemplatesView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalTemplate.createdAt, order: .forward) private var templates: [JournalTemplate]
     @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
 
@@ -1484,10 +1515,12 @@ struct JournalTemplatesView: View {
 
     @State private var selectedTemplateAction: JournalTemplateSeed?
     @State private var captureRequest: JournalTemplateCaptureRequest?
+    @State private var retroactiveMirrorRequest: JournalTemplateRetroactiveMirrorRequest?
     @State private var selectedEntryDraft: JournalEntryDraft?
     @State private var pendingTemplate: JournalTemplateSeed?
     @State private var isReplacingDraft = false
     @State private var draft: JournalTemplateDraft?
+    @State private var errorMessage: String?
 
     private var activeDraft: JournalEntryDraft? {
         entryDrafts.first
@@ -1497,70 +1530,69 @@ struct JournalTemplatesView: View {
         ContinuousActivityLogger.session(from: activitySessionData)
     }
 
+    private var templateGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 74), spacing: 12)]
+    }
+
     var body: some View {
-        List {
-            Section {
-                ContinuousActivityLoggingPanel(
-                    session: activitySession,
-                    onBegin: { beginActivityLogging(template: .random) },
-                    onStop: stopActivityLogging
-                )
-            }
-
-            if let activeDraft {
-                Section {
-                    Button {
-                        selectedEntryDraft = activeDraft
-                    } label: {
-                        Label("Resume draft", systemImage: "arrow.uturn.forward.circle")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                }
-            }
-
-            Section {
-                Button {
-                    openTemplate(.random)
-                } label: {
-                    JournalTemplateRow(
-                        title: "Random",
-                        emoji: JournalRecordMarkers.fallback,
-                        text: "Random emoji, empty text"
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                JournalRecordSectionCard {
+                    ContinuousActivityLoggingPanel(
+                        session: activitySession,
+                        onBegin: { beginActivityLogging(template: .random) },
+                        onStop: stopActivityLogging
                     )
                 }
-                .buttonStyle(.plain)
 
-                ForEach(templates) { template in
-                    Button {
-                        openTemplate(JournalTemplateSeed(template: template))
-                    } label: {
-                        JournalTemplateRow(
-                            title: template.displayName,
-                            emoji: template.displayEmoji,
-                            text: template.text.nilIfBlank ?? "Empty text"
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            deleteTemplate(template)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-
+                if let activeDraft {
+                    JournalRecordSectionCard {
                         Button {
-                            draft = JournalTemplateDraft(template: template)
+                            selectedEntryDraft = activeDraft
                         } label: {
-                            Label("Edit", systemImage: "pencil")
+                            Label("Resume draft", systemImage: "arrow.uturn.forward.circle")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
-                        .tint(.blue)
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Templates")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 2)
+
+                    LazyVGrid(columns: templateGridColumns, spacing: 12) {
+                        Button {
+                            openTemplate(.random)
+                        } label: {
+                            JournalTemplateGridTile(
+                                title: "Random",
+                                emoji: JournalRecordMarkers.fallback
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        ForEach(templates) { template in
+                            JournalTemplateGridButton(
+                                template: template,
+                                onOpen: { openTemplate(JournalTemplateSeed(template: template)) },
+                                onEdit: { draft = JournalTemplateDraft(template: template) },
+                                onDelete: { deleteTemplate(template) }
+                            )
+                        }
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Record")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -1580,20 +1612,26 @@ struct JournalTemplatesView: View {
                         captureRequest = request
                         selectedTemplateAction = nil
                     },
-                    onCountdown: { template, duration in
-                        beginCountdown(template: template, duration: duration)
+                    onCountdown: { template, duration, selection in
+                        beginCountdown(
+                            template: template,
+                            duration: duration,
+                            selection: selection
+                        )
                         selectedTemplateAction = nil
                     },
-                    onTimer: { template in
-                        beginActivityLogging(template: template)
+                    onTimer: { template, selection in
+                        beginActivityLogging(template: template, selection: selection)
                         selectedTemplateAction = nil
                     },
                     onRetroactive: { request in
-                        captureRequest = request
+                        retroactiveMirrorRequest = request
                         selectedTemplateAction = nil
                     }
                 )
             }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $captureRequest) { request in
             NavigationStack {
@@ -1607,6 +1645,11 @@ struct JournalTemplatesView: View {
                 )
             }
         }
+        .fullScreenCover(item: $retroactiveMirrorRequest) { request in
+            MirrorCameraView(initialReviewImage: request.image) { media in
+                completeRetroactiveMirror(request: request, media: media)
+            }
+        }
         .sheet(item: $selectedEntryDraft) { draft in
             NavigationStack {
                 JournalEntryCaptureView(draft: draft)
@@ -1614,7 +1657,7 @@ struct JournalTemplatesView: View {
         }
         .sheet(item: $draft) { draft in
             NavigationStack {
-                JournalTemplateEditorView(draft: draft) { savedDraft in
+                JournalTemplateEditorView(draft: draft, tags: tags) { savedDraft in
                     saveTemplate(savedDraft)
                 }
             }
@@ -1633,6 +1676,11 @@ struct JournalTemplatesView: View {
         } message: {
             Text("Opening a template starts a new entry and deletes the unsaved draft.")
         }
+        .alert("Record failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func openTemplate(_ template: JournalTemplateSeed) {
@@ -1645,8 +1693,14 @@ struct JournalTemplatesView: View {
     }
 
     @MainActor
-    private func beginActivityLogging(template: JournalTemplateSeed) {
-        let session = ContinuousActivityLogger.beginTimer(template: template)
+    private func beginActivityLogging(
+        template: JournalTemplateSeed,
+        selection: SarosCountdownSelection = .timerDefault
+    ) {
+        let session = ContinuousActivityLogger.beginTimer(
+            template: template,
+            sarosCountdownSelection: selection
+        )
         Task {
             try? await ThreadLiveActivityService.start(
                 snapshot: ThreadLiveActivityService.activityLoggingSnapshot(
@@ -1674,8 +1728,16 @@ struct JournalTemplatesView: View {
     }
 
     @MainActor
-    private func beginCountdown(template: JournalTemplateSeed, duration: TimeInterval) {
-        let session = ContinuousActivityLogger.beginCountdown(template: template, duration: duration)
+    private func beginCountdown(
+        template: JournalTemplateSeed,
+        duration: TimeInterval,
+        selection: SarosCountdownSelection
+    ) {
+        let session = ContinuousActivityLogger.beginCountdown(
+            template: template,
+            duration: duration,
+            sarosCountdownSelection: selection
+        )
         Task {
             await NotificationScheduler.shared.scheduleActivityCountdownCompletion(for: session)
             try? await ThreadLiveActivityService.start(
@@ -1688,17 +1750,20 @@ struct JournalTemplatesView: View {
     }
 
     private func saveTemplate(_ draft: JournalTemplateDraft) {
+        let tagIDs = draft.sortedTagIDs(tags: tags)
         if let existing = templates.first(where: { $0.id == draft.id }) {
             existing.name = draft.name.nilIfBlank ?? "Template"
             existing.emoji = draft.emoji.nilIfBlank ?? JournalRecordMarkers.random()
             existing.text = draft.text
+            existing.tagIDs = tagIDs
             existing.touch()
         } else {
             modelContext.insert(JournalTemplate(
                 id: draft.id,
                 name: draft.name.nilIfBlank ?? "Template",
                 emoji: draft.emoji.nilIfBlank ?? JournalRecordMarkers.random(),
-                text: draft.text
+                text: draft.text,
+                tagIDs: tagIDs
             ))
         }
         try? modelContext.save()
@@ -1714,6 +1779,29 @@ struct JournalTemplatesView: View {
         modelContext.delete(draft)
         try? modelContext.save()
     }
+
+    private func completeRetroactiveMirror(
+        request: JournalTemplateRetroactiveMirrorRequest,
+        media: MirrorCameraCapturedMedia
+    ) {
+        do {
+            let mediaItem = try JournalPendingMediaAttachment(media: media).save()
+            let nextCaptureRequest = JournalTemplateCaptureRequest(
+                startDate: request.startDate,
+                endDate: request.startDate,
+                template: request.template,
+                mediaItems: [mediaItem],
+                latitude: request.latitude,
+                longitude: request.longitude
+            )
+            retroactiveMirrorRequest = nil
+            DispatchQueue.main.async {
+                captureRequest = nextCaptureRequest
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
 
 private struct JournalTemplateActionView: View {
@@ -1721,96 +1809,104 @@ private struct JournalTemplateActionView: View {
 
     let template: JournalTemplateSeed
     let onNow: (JournalTemplateCaptureRequest) -> Void
-    let onCountdown: (JournalTemplateSeed, TimeInterval) -> Void
-    let onTimer: (JournalTemplateSeed) -> Void
-    let onRetroactive: (JournalTemplateCaptureRequest) -> Void
+    let onCountdown: (JournalTemplateSeed, TimeInterval, SarosCountdownSelection) -> Void
+    let onTimer: (JournalTemplateSeed, SarosCountdownSelection) -> Void
+    let onRetroactive: (JournalTemplateRetroactiveMirrorRequest) -> Void
 
+    @State private var gigaCount = 0
     @State private var megaCount = 0
     @State private var kiloCount = 0
     @State private var sarosCount = 1
-    @State private var miliCount = 0
     @State private var isCountdownExpanded = false
     @State private var retroactivePhotoItem: PhotosPickerItem?
     @State private var isLoadingRetroactivePhoto = false
     @State private var errorMessage: String?
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 12) {
-                        Text(template.resolvedStaticEmoji)
-                            .font(.system(size: 44))
-                            .frame(width: 54, height: 54)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(template.name)
-                                .font(.headline)
-                            Text(template.text.nilIfBlank ?? "Empty text")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
+        ScrollView {
+            VStack(spacing: 16) {
+                HStack(spacing: 12) {
+                    Text(template.resolvedStaticEmoji)
+                        .font(.system(size: 46))
+                        .frame(width: 58, height: 58)
+                        .background(Color(.secondarySystemGroupedBackground), in: Circle())
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
-                        JournalTemplateActionButton(title: "Now", systemName: "record.circle") {
-                            let now = Date()
-                            onNow(JournalTemplateCaptureRequest(
-                                startDate: now,
-                                endDate: now,
-                                template: template
-                            ))
-                            dismiss()
-                        }
-
-                        JournalTemplateActionButton(title: "Countdown", systemName: "timer") {
-                            withAnimation(.snappy) {
-                                isCountdownExpanded.toggle()
-                            }
-                        }
-
-                        JournalTemplateActionButton(title: "Timer", systemName: "stopwatch") {
-                            onTimer(template)
-                            dismiss()
-                        }
-
-                        PhotosPicker(selection: $retroactivePhotoItem, matching: .images) {
-                            JournalTemplateActionButtonLabel(title: "Retroactive", systemName: "photo.badge.clock")
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isLoadingRetroactivePhoto)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(template.name)
+                            .font(.headline)
+                        Text(template.text.nilIfBlank ?? "Empty text")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                 }
-                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                    JournalTemplateActionButton(title: "Instant", systemName: "bolt.circle") {
+                        let now = Date()
+                        onNow(JournalTemplateCaptureRequest(
+                            startDate: now,
+                            endDate: now,
+                            template: template
+                        ))
+                        dismiss()
+                    }
+
+                    JournalTemplateActionButton(title: "Countdown", systemName: "timer") {
+                        withAnimation(.snappy) {
+                            isCountdownExpanded.toggle()
+                        }
+                    }
+
+                    JournalTemplateActionButton(title: "Timer", systemName: "stopwatch") {
+                        onTimer(template, .timerDefault)
+                        dismiss()
+                    }
+
+                    PhotosPicker(selection: $retroactivePhotoItem, matching: .images) {
+                        JournalTemplateActionButtonLabel(title: "Retroactive", systemName: "clock.arrow.circlepath")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isLoadingRetroactivePhoto)
+                }
 
                 if isCountdownExpanded {
                     JournalCountdownConfigurationView(
+                        gigaCount: $gigaCount,
                         megaCount: $megaCount,
                         kiloCount: $kiloCount,
                         sarosCount: $sarosCount,
-                        miliCount: $miliCount,
                         duration: countdownDuration
                     ) {
-                        onCountdown(template, countdownDuration)
+                        onCountdown(template, countdownDuration, countdownSelection)
                         dismiss()
                     }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 if isLoadingRetroactivePhoto {
-                    HStack {
+                    HStack(spacing: 8) {
                         ProgressView()
                         Text("Loading photo")
                             .foregroundStyle(.secondary)
                     }
+                    .font(.caption)
                 }
 
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .padding(18)
+            .frame(maxWidth: 430)
+            .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Record")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1826,13 +1922,35 @@ private struct JournalTemplateActionView: View {
                 await importRetroactivePhoto(item)
             }
         }
+        .onChange(of: gigaCount) { oldValue, newValue in
+            clearDefaultSarosCountIfNeeded(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: megaCount) { oldValue, newValue in
+            clearDefaultSarosCountIfNeeded(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: kiloCount) { oldValue, newValue in
+            clearDefaultSarosCountIfNeeded(oldValue: oldValue, newValue: newValue)
+        }
     }
 
     private var countdownDuration: TimeInterval {
-        Double(megaCount) * SarosPulseCalculator.averageDuration(for: .mega)
-            + Double(kiloCount) * SarosPulseCalculator.averageDuration(for: .kilo)
-            + Double(sarosCount) * SarosPulseCalculator.averageDuration(for: .saros)
-            + Double(miliCount) * SarosPulseCalculator.averageDuration(for: .mili)
+        Double(countdownBaseSarosCount) * SarosPulseCalculator.averageDuration(for: .saros)
+    }
+
+    private var countdownSelection: SarosCountdownSelection {
+        SarosCountdownScale.normalized(forBaseSarosCount: countdownBaseSarosCount)
+    }
+
+    private var countdownBaseSarosCount: Int {
+        gigaCount * SarosCountdownScale.gigasaros.baseSarosCount
+            + megaCount * SarosCountdownScale.megasaros.baseSarosCount
+            + kiloCount * SarosCountdownScale.kilosaros.baseSarosCount
+            + sarosCount
+    }
+
+    private func clearDefaultSarosCountIfNeeded(oldValue: Int, newValue: Int) {
+        guard oldValue == 0, newValue > 0, sarosCount == 1 else { return }
+        sarosCount = 0
     }
 
     @MainActor
@@ -1849,18 +1967,16 @@ private struct JournalTemplateActionView: View {
                 errorMessage = "Photo unavailable."
                 return
             }
+            guard let image = UIImage(data: pickedPhoto.data) else {
+                errorMessage = "Photo unavailable."
+                return
+            }
             let metadata = JournalImportedPhotoMetadataReader.read(from: pickedPhoto.data)
-            let mediaItem = try MediaStorage.saveData(
-                pickedPhoto.data,
-                fileExtension: item.supportedContentTypes.first(where: { $0.conforms(to: .image) })?.preferredFilenameExtension ?? "jpg",
-                type: .photo
-            )
             let date = metadata.date ?? Date()
-            onRetroactive(JournalTemplateCaptureRequest(
+            onRetroactive(JournalTemplateRetroactiveMirrorRequest(
                 startDate: date,
-                endDate: date,
                 template: template,
-                mediaItems: [mediaItem],
+                image: MirrorCameraView.preparedImportedImage(image),
                 latitude: metadata.latitude,
                 longitude: metadata.longitude
             ))
@@ -1891,33 +2007,40 @@ private struct JournalTemplateActionButtonLabel: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: systemName)
-                .font(.title2.weight(.semibold))
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 36, height: 36)
+                .background(Color.accentColor.opacity(0.12), in: Circle())
             Text(title)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 86)
+        .frame(height: 88)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
         .contentShape(Rectangle())
     }
 }
 
 private struct JournalCountdownConfigurationView: View {
+    @Binding var gigaCount: Int
     @Binding var megaCount: Int
     @Binding var kiloCount: Int
     @Binding var sarosCount: Int
-    @Binding var miliCount: Int
 
     let duration: TimeInterval
     let onStart: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            JournalCountdownStepper(label: "Mega", value: $megaCount)
-            JournalCountdownStepper(label: "Kilo", value: $kiloCount)
+            JournalCountdownStepper(label: "Gigasaros", value: $gigaCount)
+            JournalCountdownStepper(label: "Megasaros", value: $megaCount)
+            JournalCountdownStepper(label: "Kilosaros", value: $kiloCount)
             JournalCountdownStepper(label: "Saros", value: $sarosCount)
-            JournalCountdownStepper(label: "Mili", value: $miliCount)
 
             HStack {
                 Text(SarosDurationUnitFormatter.verboseDuration(duration, maxUnits: 3))
@@ -2019,6 +2142,7 @@ struct JournalTemplateSeed: Identifiable, Hashable, Codable {
     let emoji: String?
     let text: String
     let usesRandomEmoji: Bool
+    let tagIDs: [String]?
 
     static var random: JournalTemplateSeed {
         JournalTemplateSeed(
@@ -2026,7 +2150,8 @@ struct JournalTemplateSeed: Identifiable, Hashable, Codable {
             name: "Random",
             emoji: nil,
             text: "",
-            usesRandomEmoji: true
+            usesRandomEmoji: true,
+            tagIDs: nil
         )
     }
 
@@ -2036,14 +2161,16 @@ struct JournalTemplateSeed: Identifiable, Hashable, Codable {
         self.emoji = template.emoji
         self.text = template.text
         self.usesRandomEmoji = false
+        self.tagIDs = template.tagIDs
     }
 
-    private init(id: String, name: String, emoji: String?, text: String, usesRandomEmoji: Bool) {
+    private init(id: String, name: String, emoji: String?, text: String, usesRandomEmoji: Bool, tagIDs: [String]?) {
         self.id = id
         self.name = name
         self.emoji = emoji
         self.text = text
         self.usesRandomEmoji = usesRandomEmoji
+        self.tagIDs = tagIDs
     }
 
     var resolvedEmoji: String {
@@ -2059,30 +2186,75 @@ struct JournalTemplateSeed: Identifiable, Hashable, Codable {
             ?? name.nilIfBlank
             ?? "Activity"
     }
+
+    var resolvedTagIDs: [String] {
+        tagIDs ?? []
+    }
 }
 
-private struct JournalTemplateRow: View {
-    let title: String
-    let emoji: String
-    let text: String
+private struct JournalRecordSectionCard<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(emoji)
-                .font(.system(size: 32))
-                .frame(width: 44)
+        VStack(alignment: .leading, spacing: 0) {
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(text)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+private struct JournalTemplateGridButton: View {
+    let template: JournalTemplate
+    let onOpen: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            JournalTemplateGridTile(
+                title: template.displayName,
+                emoji: template.displayEmoji
+            )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: onEdit) {
+                Label("Edit", systemImage: "pencil")
+            }
+
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
             }
         }
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct JournalTemplateGridTile: View {
+    let title: String
+    let emoji: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(emoji)
+                .font(.system(size: 34))
+                .frame(width: 52, height: 52)
+                .background(Color(.secondarySystemGroupedBackground), in: Circle())
+
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 84, alignment: .top)
         .contentShape(Rectangle())
     }
 }
@@ -2091,7 +2263,9 @@ private struct JournalTemplateEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State var draft: JournalTemplateDraft
+    let tags: [JournalTag]
     let onSave: (JournalTemplateDraft) -> Void
+    @State private var isTagPickerPresented = false
 
     var body: some View {
         Form {
@@ -2100,6 +2274,15 @@ private struct JournalTemplateEditorView: View {
                 TextField("Emoji marker", text: $draft.emoji)
                 TextEditor(text: $draft.text)
                     .frame(minHeight: 180)
+            }
+
+            Section("Tags") {
+                JournalSelectedTagsRow(
+                    tags: selectedTags,
+                    hasAvailableTags: !availableTags.isEmpty,
+                    onAdd: { isTagPickerPresented = true },
+                    onRemove: { tag in draft.selectedTagIDs.remove(tag.compactID) }
+                )
             }
         }
         .navigationTitle("Template")
@@ -2117,6 +2300,25 @@ private struct JournalTemplateEditorView: View {
                 }
             }
         }
+        .sheet(isPresented: $isTagPickerPresented) {
+            NavigationStack {
+                JournalTagPickerView(
+                    tags: availableTags,
+                    onSelect: { tag in
+                        draft.selectedTagIDs.insert(tag.compactID)
+                        isTagPickerPresented = false
+                    }
+                )
+            }
+        }
+    }
+
+    private var selectedTags: [JournalTag] {
+        tags.filter { draft.selectedTagIDs.contains($0.compactID) }
+    }
+
+    private var availableTags: [JournalTag] {
+        tags.filter { !draft.selectedTagIDs.contains($0.compactID) }
     }
 }
 
@@ -2265,12 +2467,20 @@ private struct JournalTemplateDraft: Identifiable {
     var name: String
     var emoji: String
     var text: String
+    var selectedTagIDs: Set<String>
 
-    init(id: UUID = UUID(), name: String = "", emoji: String = JournalRecordMarkers.random(), text: String = "") {
+    init(
+        id: UUID = UUID(),
+        name: String = "",
+        emoji: String = JournalRecordMarkers.random(),
+        text: String = "",
+        selectedTagIDs: Set<String> = []
+    ) {
         self.id = id
         self.name = name
         self.emoji = emoji
         self.text = text
+        self.selectedTagIDs = selectedTagIDs
     }
 
     init(template: JournalTemplate) {
@@ -2278,6 +2488,21 @@ private struct JournalTemplateDraft: Identifiable {
         self.name = template.name
         self.emoji = template.emoji
         self.text = template.text
+        self.selectedTagIDs = Set(template.tagIDs)
+    }
+
+    func sortedTagIDs(tags: [JournalTag]) -> [String] {
+        let order = JournalTag.compactIDOrderMap(for: tags)
+        return selectedTagIDs
+            .compactMap(JournalTag.normalizedOctalID)
+            .sorted { lhs, rhs in
+                let lhsOrder = order[lhs] ?? Int.max
+                let rhsOrder = order[rhs] ?? Int.max
+                if lhsOrder != rhsOrder {
+                    return lhsOrder < rhsOrder
+                }
+                return lhs < rhs
+            }
     }
 }
 
@@ -2967,6 +3192,7 @@ private struct JournalEntryWaveformView: View {
     @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
     @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
     @AppStorage(JournalSettings.timelineWaveColorModeKey) private var timelineWaveColorModeRaw = TimelineWaveColorMode.current.rawValue
+    @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     let context: JournalEventContext
     var endDate: Date? = nil
@@ -2974,6 +3200,7 @@ private struct JournalEntryWaveformView: View {
     @State private var plot = JournalEntryWaveformPlot.empty
     @State private var lunarTicks: [LunarRulerTick] = []
     @State private var solarTicks: [SolarYearRulerTick] = []
+    @State private var pulseTicks: [SarosPulseTick] = []
     @State private var displayMegaUnits = JournalEntryWaveform.defaultMegaUnits
     @AppStorage(JournalSettings.solarSiderealReferenceDateKey) private var solarSiderealReferenceTimestamp = SolarYearRuler.defaultSiderealReferenceDate.timeIntervalSince1970
 
@@ -3139,6 +3366,14 @@ private struct JournalEntryWaveformView: View {
                 wavelengthOption: timelineWavelengthOption,
                 waveColorMode: timelineWaveColorMode
             )
+            GeometryReader { proxy in
+                SarosPulseRulerCanvas(
+                    ticks: pulseTicks,
+                    displayInterval: plot.interval,
+                    tickStartY: JournalEntryWaveform.pulseTickTopY(in: proxy.size.height),
+                    tickEndY: JournalEntryWaveform.solarRulerTopY(in: proxy.size.height)
+                )
+            }
             HStack(spacing: 0) {
                 Color.clear
                     .contentShape(Rectangle())
@@ -3167,7 +3402,9 @@ private struct JournalEntryWaveformView: View {
             let endDate = resolvedEndDate
             let siderealReferenceDate = Date(timeIntervalSince1970: solarSiderealReferenceTimestamp)
             let displayDuration = JournalEntryWaveform.displayDuration(megaUnits: displayMegaUnits)
+            let configuredPulseSaros = pulseSaros
             let parabolaA = JournalWaveformSettings.currentParabolaA
+            let eclipseService = services.eclipseService
             let options = JournalWaveformOptions(
                 ignorePartialEclipses: false,
                 mergeCloseSpikes: waveformMergeCloseSpikes,
@@ -3176,7 +3413,7 @@ private struct JournalEntryWaveformView: View {
                 mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
                 amplitudeMultiplier: clampedAmplitudeMultiplier
             )
-            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick], [SolarYearRulerTick]) in
+            let generated = await Task.detached(priority: .userInitiated) { () -> (JournalEntryWaveformPlot, [LunarRulerTick], [SolarYearRulerTick], [SarosPulseTick]) in
                 let spikes = (
                     try? contextService.waveformSpikes(
                         around: context.eventDate,
@@ -3196,11 +3433,24 @@ private struct JournalEntryWaveformView: View {
                 )
                 let lunarTicks = LunarRulerTickBuilder.ticks(in: plot.interval, moonService: moonService)
                 let solarTicks = SolarYearRuler.ticks(in: plot.interval, siderealReferenceDate: siderealReferenceDate)
-                return (plot, lunarTicks, solarTicks)
+                let resolvedPulseSaros = configuredPulseSaros > 0
+                    ? configuredPulseSaros
+                    : (context.closestSpike?.saros ?? 0)
+                let pulseTicks = resolvedPulseSaros > 0
+                    ? ((try? SarosPulseCalculator.ticks(
+                        in: plot.interval,
+                        saros: resolvedPulseSaros,
+                        harmonicDepth: context.waveformHarmonicDepth,
+                        eclipseService: eclipseService,
+                        units: [.rollover, .giga, .mega, .kilo]
+                    )) ?? [])
+                    : []
+                return (plot, lunarTicks, solarTicks, pulseTicks)
             }.value
             plot = generated.0
             lunarTicks = generated.1
             solarTicks = generated.2
+            pulseTicks = generated.3
         }
     }
 
@@ -3214,6 +3464,7 @@ private struct JournalEntryWaveformView: View {
             "\(clampedSubdivisionDepth)",
             "\(Int((clampedAmplitudeMultiplier * 100).rounded()))",
             "\(displayMegaUnits)",
+            "\(pulseSaros)",
             "\(Int(solarSiderealReferenceTimestamp))"
         ].joined(separator: "-")
     }
@@ -3394,6 +3645,13 @@ private enum JournalEntryWaveform {
         max(
             lunarRulerTopInset + lunarRulerRowSpacing * 2 + LunarRulerTickLevel.major.height + 8,
             height * solarRulerBaselineRatio - solarRulerRowSpacing * 2 - LunarRulerTickLevel.major.height
+        )
+    }
+
+    static func pulseTickTopY(in height: CGFloat) -> CGFloat {
+        min(
+            max(lunarRulerTopInset + lunarRulerRowSpacing * 2 + LunarRulerTickLevel.major.height, 0),
+            solarRulerTopY(in: height)
         )
     }
 

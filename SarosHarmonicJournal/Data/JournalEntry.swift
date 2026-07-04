@@ -694,6 +694,7 @@ final class JournalTemplate {
     var name: String
     var emoji: String
     var text: String
+    var tagIDsRawValue: String?
 
     init(
         id: UUID = UUID(),
@@ -701,7 +702,8 @@ final class JournalTemplate {
         updatedAt: Date = Date(),
         name: String,
         emoji: String,
-        text: String = ""
+        text: String = "",
+        tagIDs: [String] = []
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -709,6 +711,7 @@ final class JournalTemplate {
         self.name = name
         self.emoji = emoji
         self.text = text
+        self.tagIDsRawValue = Self.encodeTagIDs(tagIDs)
     }
 
     var displayName: String {
@@ -719,7 +722,31 @@ final class JournalTemplate {
         emoji.nilIfBlank ?? JournalRecordMarkers.random()
     }
 
+    var tagIDs: [String] {
+        get {
+            guard let tagIDsRawValue else { return [] }
+            return Self.decodeTagIDs(tagIDsRawValue)
+        }
+        set {
+            tagIDsRawValue = Self.encodeTagIDs(newValue)
+            touch()
+        }
+    }
+
     func touch() {
         updatedAt = Date()
+    }
+
+    private static func encodeTagIDs(_ tagIDs: [String]) -> String {
+        normalizedTagIDs(tagIDs).joined(separator: ",")
+    }
+
+    private static func decodeTagIDs(_ rawValue: String) -> [String] {
+        normalizedTagIDs(rawValue.split(separator: ",").map(String.init))
+    }
+
+    private static func normalizedTagIDs(_ tagIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return tagIDs.compactMap { JournalTag.normalizedOctalID($0) }.filter { seen.insert($0).inserted }
     }
 }

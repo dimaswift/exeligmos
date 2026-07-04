@@ -1435,18 +1435,13 @@ private struct SarosSpikeWaveTimelineView: View {
                 TickingStatePanel(
                     probeDate: probeDate,
                     waveField: waveField,
+                    events: events,
+                    segment: selectedSegment,
                     pulseReadingAt: { date in pulseReading(at: date) },
                     sarosReadingFor: { state in sarosReading(for: state) },
-                    onHeaderTap: { scrollToPresent(proxy: scrollProxy) }
+                    onHeaderTap: { scrollToPresent(proxy: scrollProxy) },
+                    onShowEvents: { showingSegmentEvents = selectedSegment }
                 )
-
-                if let selectedSegment {
-                    SarosSpikeWaveSegmentInfoView(segment: selectedSegment) {
-                        showingSegmentEvents = selectedSegment
-                    }
-                    .padding(.horizontal)
-                    .transition(.opacity)
-                }
 
                 if let selectedEntry {
                     VStack(alignment: .leading, spacing: 6) {
@@ -2853,45 +2848,7 @@ private struct SarosSpikeWaveSegment: Identifiable, Hashable {
 
 }
 
-private struct SarosSpikeWaveSegmentInfoView: View {
-    let segment: SarosSpikeWaveSegment
-    let onShowEvents: () -> Void
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: segment.kind == .ascent ? "arrow.up.right" : "arrow.down.right")
-                .font(.caption.weight(.bold))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(segment.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2, reservesSpace: true)
-                Text(segment.durationText)
-                    .font(.caption.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.secondary)
-                Text(segment.civilDurationText)
-                    .font(.caption2.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.secondary.opacity(0.85))
-            }
-            Spacer(minLength: 0)
-            
-            Button(action: onShowEvents) {
-                HStack(spacing: 4) {
-                    Image(systemName: "list.bullet")
-                    Text("Events")
-                }
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.primary.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .foregroundStyle(.primary)
-        .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
 
 private struct SegmentEventsSheet: View {
     let segment: SarosSpikeWaveSegment
@@ -2978,24 +2935,48 @@ private struct TickingStatePanel: View {
     @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     let probeDate: Date?
     let waveField: SarosSpikeWaveField
+    let events: [SarosGlobalFlipEvent]
+    let segment: SarosSpikeWaveSegment?
     let pulseReadingAt: (Date) -> SarosPulseReading?
     let sarosReadingFor: (SarosSpikeWaveState) -> SarosClockReading?
     let onHeaderTap: () -> Void
+    let onShowEvents: () -> Void
 
     var body: some View {
         let date = probeDate ?? timeTicker.date
         if let state = waveField.sample(at: date) {
-            Button(action: onHeaderTap) {
-                SarosSpikeWaveStatePanel(
-                    state: state,
-                    sarosReading: sarosReadingFor(state),
-                    pulseReading: pulseReadingAt(state.date)
-                )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            SarosSpikeWaveStatePanel(
+                state: state,
+                adjacentSpikes: adjacentSpikes,
+                closestSpike: closestSpike,
+                segment: segment,
+                sarosReading: sarosReadingFor(state),
+                pulseReading: pulseReadingAt(state.date),
+                onHeaderTap: onHeaderTap,
+                onShowEvents: onShowEvents
+            )
             .padding(.horizontal)
             .padding(.top, 12)
+        }
+    }
+
+    private var adjacentSpikes: [SarosGlobalFlipEvent] {
+        let date = probeDate ?? timeTicker.date
+        let past = events.filter { $0.date <= date }.sorted { $0.date > $1.date }.prefix(2)
+        let future = events.filter { $0.date > date }.sorted { $0.date < $1.date }.prefix(2)
+        var selected = Array(past).reversed() + Array(future)
+        if selected.count < 4 {
+            selected = Array(events.sorted {
+                abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+            }.prefix(4)).sorted { $0.date < $1.date }
+        }
+        return selected
+    }
+
+    private var closestSpike: SarosGlobalFlipEvent? {
+        let date = probeDate ?? timeTicker.date
+        return adjacentSpikes.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
         }
     }
 }
@@ -3084,10 +3065,51 @@ private struct SarosSpikeContentMinXPreferenceKey: PreferenceKey {
     }
 }
 
+private struct TimelineSpikeGlyphStrip: View {
+    let spikes: [SarosGlobalFlipEvent]
+    let highlightedSpikeID: String?
+    let size: CGFloat
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(spikes) { spike in
+                VStack(spacing: 3) {
+                    OctalGlyph(
+                        value: spike.octalAddress,
+                        depth: spike.harmonicDepth,
+                        style: spike.rarity.glyphStyle
+                    )
+                    .frame(width: size, height: size)
+                    .padding(size * 0.10)
+                    .background(
+                        spike.id == highlightedSpikeID ? spike.rarity.color.opacity(0.18) : .clear,
+                        in: Circle()
+                    )
+                    .overlay {
+                        if spike.id == highlightedSpikeID {
+                            Circle()
+                                .stroke(spike.rarity.color.opacity(0.52), lineWidth: 1)
+                        }
+                    }
+                    Text("\(spike.saros)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(spike.id == highlightedSpikeID ? spike.rarity.color : .secondary)
+                }
+                .frame(minWidth: size + 8)
+            }
+        }
+    }
+}
+
 private struct SarosSpikeWaveStatePanel: View {
     let state: SarosSpikeWaveState
+    let adjacentSpikes: [SarosGlobalFlipEvent]
+    let closestSpike: SarosGlobalFlipEvent?
+    let segment: SarosSpikeWaveSegment?
     var sarosReading: SarosClockReading? = nil
     var pulseReading: SarosPulseReading? = nil
+    var onHeaderTap: (() -> Void)? = nil
+    var onShowEvents: (() -> Void)? = nil
 
     private var displayedSarosGlyph: String {
         sarosReading?.octalAddress ?? state.period.spike.octalAddress
@@ -3113,53 +3135,102 @@ private struct SarosSpikeWaveStatePanel: View {
         )
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            OctalGlyph(
-                value: displayedSarosGlyph,
-                depth: displayedSarosDepth,
-                color: displayedSarosColor
-            )
-            .frame(width: 44, height: 44)
-            .padding(8)
-            .background(.black.opacity(0.28), in: Circle())
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(state.period.spike.saros) Saros \(state.period.spike.rarity.title)")
-                    .font(.headline.monospacedDigit())
-                    .foregroundStyle(state.period.spike.rarity.color)
-                Text(eventDescription)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            if let pulseReading {
-                SarosPulseGlyph(reading: pulseReading, size: 54)
-            }
-
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(waveSignature.type.emoji)
-                    .font(.caption)
-                Text(waveSignature.energyText)
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                Text(waveSignature.momentumText)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(state.period.spike.rarity.color.opacity(0.22), lineWidth: 1)
-        }
-    }
-
     private var eventDescription: String {
         waveSignature.label
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Top Row
+            HStack(spacing: 12) {
+                // Left: 4 adjacent glyphs strip
+                TimelineSpikeGlyphStrip(
+                    spikes: adjacentSpikes,
+                    highlightedSpikeID: closestSpike?.id,
+                    size: 22
+                )
+
+                Spacer(minLength: 8)
+
+                // Right side: Pulse & Wave Signature
+                HStack(spacing: 10) {
+                    if let pulseReading {
+                        SarosPulseGlyph(reading: pulseReading, size: 40)
+                    }
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(waveSignature.type.emoji)
+                            .font(.caption2)
+                        Text(waveSignature.energyText)
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                        Text(waveSignature.momentumText)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onHeaderTap?()
+            }
+
+            if let segment = segment {
+                Divider()
+                    .background(.white.opacity(0.12))
+
+                HStack(spacing: 10) {
+                    // Info text
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let closest = closestSpike {
+                            Text("\(closest.saros) Saros \(closest.rarity.title)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(closest.rarity.color)
+                        } else {
+                            Text("\(state.period.spike.saros) Saros \(state.period.spike.rarity.title)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(state.period.spike.rarity.color)
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: segment.kind == .ascent ? "arrow.up.right" : "arrow.down.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            Text("\(eventDescription)  •  \(segment.durationText) (\(segment.civilDurationText))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onHeaderTap?()
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if let onShowEvents = onShowEvents {
+                        Button(action: onShowEvents) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "list.bullet")
+                                Text("Events")
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke((closestSpike?.rarity.color ?? state.period.spike.rarity.color).opacity(0.2), lineWidth: 1)
+        }
     }
 }
 
@@ -3346,7 +3417,7 @@ private struct SarosSpikeMarkersCanvas: View {
     }
 }
 
-private struct SarosPulseRulerCanvas: View {
+struct SarosPulseRulerCanvas: View {
     let ticks: [SarosPulseTick]
     let displayInterval: DateInterval
     var tickStartY: CGFloat? = nil

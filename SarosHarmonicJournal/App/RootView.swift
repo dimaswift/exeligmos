@@ -254,6 +254,7 @@ struct ContinuousActivitySession: Codable, Hashable {
     let startDate: Date
     let endDate: Date?
     let template: JournalTemplateSeed
+    let sarosCountdownSelection: SarosCountdownSelection?
 
     var isCountdown: Bool { kind == .countdown }
 
@@ -290,27 +291,38 @@ enum ContinuousActivityLogger {
     }
 
     @discardableResult
-    static func beginTimer(template: JournalTemplateSeed = .random, at date: Date = Date()) -> ContinuousActivitySession {
+    static func beginTimer(
+        template: JournalTemplateSeed = .random,
+        sarosCountdownSelection: SarosCountdownSelection = .timerDefault,
+        at date: Date = Date()
+    ) -> ContinuousActivitySession {
         let session = ContinuousActivitySession(
             id: UUID(),
             kind: .timer,
             startDate: date,
             endDate: nil,
-            template: template
+            template: template,
+            sarosCountdownSelection: sarosCountdownSelection
         )
         save(session)
         return session
     }
 
     @discardableResult
-    static func beginCountdown(template: JournalTemplateSeed, duration: TimeInterval, at date: Date = Date()) -> ContinuousActivitySession {
+    static func beginCountdown(
+        template: JournalTemplateSeed,
+        duration: TimeInterval,
+        sarosCountdownSelection: SarosCountdownSelection? = nil,
+        at date: Date = Date()
+    ) -> ContinuousActivitySession {
         let safeDuration = max(duration, 1)
         let session = ContinuousActivitySession(
             id: UUID(),
             kind: .countdown,
             startDate: date,
             endDate: date.addingTimeInterval(safeDuration),
-            template: template
+            template: template,
+            sarosCountdownSelection: sarosCountdownSelection ?? SarosCountdownScale.normalized(forDuration: safeDuration)
         )
         save(session)
         return session
@@ -357,7 +369,8 @@ enum ContinuousActivityLogger {
             kind: .timer,
             startDate: Date(timeIntervalSince1970: timestamp),
             endDate: nil,
-            template: .random
+            template: .random,
+            sarosCountdownSelection: .timerDefault
         )
     }
 }
@@ -443,6 +456,13 @@ private struct FeedView: View {
                                 JournalEntryRow(entry: entry, tags: tags)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    finishEntry(entry)
+                                } label: {
+                                    Label("Finish", systemImage: "checkmark.circle")
+                                }
+                            }
                             .listRowSeparator(index == group.entries.count - 1 ? .hidden : .visible, edges: .bottom)
                             .listRowSeparator(.hidden, edges: .top)
                             .listRowSeparatorTint(.white.opacity(0.28))
@@ -552,6 +572,20 @@ private struct FeedView: View {
             return "Yesterday"
         }
         return JournalFormatters.date.string(from: day)
+    }
+
+    @MainActor
+    private func finishEntry(_ entry: JournalEntry) {
+        entry.endDate = Date()
+        entry.updatedAt = Date()
+        entry.version += 1
+        SyncLocalCommand.enqueue(
+            .entryUpsert,
+            subjectID: entry.id.uuidString,
+            existing: syncCommands,
+            modelContext: modelContext
+        )
+        try? modelContext.save()
     }
 }
 

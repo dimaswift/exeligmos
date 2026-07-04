@@ -3130,10 +3130,16 @@ struct MirrorCameraView: View {
     @State private var sonificationSession: ImageSonificationSession?
     @State private var importPhotoItem: PhotosPickerItem?
     @State private var isImportingPhoto = false
+    @State private var didApplyInitialReviewImage = false
 
+    private let initialReviewImage: UIImage?
     private let onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)?
 
-    init(onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)? = nil) {
+    init(
+        initialReviewImage: UIImage? = nil,
+        onCapturedMedia: ((MirrorCameraCapturedMedia) -> Void)? = nil
+    ) {
+        self.initialReviewImage = initialReviewImage
         self.onCapturedMedia = onCapturedMedia
     }
 
@@ -3241,6 +3247,7 @@ struct MirrorCameraView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             ensureTemporalCaptureSelection()
+            applyInitialReviewImageIfNeeded()
             camera.configurePreferredCamera(
                 position: preferredCameraPosition,
                 backLens: preferredBackLens
@@ -4077,19 +4084,38 @@ struct MirrorCameraView: View {
                 return
             }
 
-            beginReview(.photo(Self.centerSquareCropped(image)))
+            beginReview(.photo(Self.preparedImportedImage(
+                image,
+                sideLimit: camera.captureImageSide() ?? Self.importedPhotoSideLimit
+            )))
         } catch {
             saver.showFailure(error.localizedDescription)
         }
     }
 
-    private static func centerSquareCropped(_ image: UIImage) -> UIImage {
+    private static let importedPhotoSideLimit: CGFloat = 1080
+
+    static func preparedImportedImage(
+        _ image: UIImage,
+        sideLimit: CGFloat = importedPhotoSideLimit
+    ) -> UIImage {
+        centerSquareCropped(image, maxSide: sideLimit)
+    }
+
+    private func applyInitialReviewImageIfNeeded() {
+        guard !didApplyInitialReviewImage, let initialReviewImage else { return }
+        didApplyInitialReviewImage = true
+        beginReview(.photo(Self.preparedImportedImage(initialReviewImage)))
+    }
+
+    private static func centerSquareCropped(_ image: UIImage, maxSide: CGFloat) -> UIImage {
         let side = min(image.size.width, image.size.height)
         guard side > 0 else { return image }
 
-        let targetSize = CGSize(width: side, height: side)
+        let targetSide = min(side, max(maxSide, 2))
+        let targetSize = CGSize(width: targetSide, height: targetSide)
         let rendererFormat = UIGraphicsImageRendererFormat()
-        rendererFormat.scale = image.scale
+        rendererFormat.scale = 1
         rendererFormat.opaque = false
 
         return UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
@@ -5404,6 +5430,11 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     @MainActor
     func captureImage() -> UIImage? {
         latestOriginalImage
+    }
+
+    @MainActor
+    func captureImageSide() -> CGFloat? {
+        latestOriginalImage.map { min($0.size.width, $0.size.height) }
     }
 
     @MainActor
