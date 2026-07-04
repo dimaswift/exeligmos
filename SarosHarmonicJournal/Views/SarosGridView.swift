@@ -541,6 +541,34 @@ private struct SarosSpikeWaveSamples {
     func energy(for event: SarosGlobalFlipEvent) -> Double {
         eventEnergyByID[event.id] ?? 0
     }
+
+    func energy(at date: Date) -> Double {
+        guard !points.isEmpty, interval.duration > 0 else { return 0 }
+        let targetPos = date.timeIntervalSince(interval.start) / interval.duration
+        
+        var low = 0
+        var high = points.count - 1
+        
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].position < targetPos {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        
+        var closestIndex = low
+        if low > 0 {
+            let diffCurrent = abs(points[low].position - targetPos)
+            let diffPrev = abs(points[low - 1].position - targetPos)
+            if diffPrev < diffCurrent {
+                closestIndex = low - 1
+            }
+        }
+        
+        return points[closestIndex].energy
+    }
 }
 
 private struct SarosSpikeWaveCacheKey: Hashable {
@@ -1171,20 +1199,38 @@ private struct SarosSpikeCalendarReference: Identifiable, Hashable {
     let date: Date
 }
 
+private class TimelineCurrentTimeTicker: ObservableObject {
+    @Published var date = Date()
+    private var timer: Timer?
+    
+    init() {
+        DispatchQueue.main.async {
+            self.timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.date = Date()
+            }
+        }
+    }
+    
+    deinit {
+        timer?.invalidate()
+    }
+}
+
 private struct SarosSpikeWaveTimelineView: View {
     @EnvironmentObject private var services: AppServices
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var allEntries: [JournalEntry]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     let flip: SarosGridNearestFlip
 
     @State private var events: [SarosGlobalFlipEvent] = []
     @State private var waveField = SarosSpikeWaveField.empty
     @State private var waveSamples = SarosSpikeWaveSamples.empty
-    @State private var currentState: SarosSpikeWaveState?
+    @StateObject private var timeTicker = TimelineCurrentTimeTicker()
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var zoom: CGFloat = Self.initialZoom
     @State private var gestureScale: CGFloat = 1
-    @State private var presentDate = Date()
     @State private var contentMinX: CGFloat = 0
     @State private var scrollAnchorDate: Date?
     @State private var scrollAnchorID: String?
@@ -1199,7 +1245,23 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var loadedPageStarts: [Date] = []
     @State private var pendingPageScrollDate: Date?
     @State private var isEdgeLoading = false
+    @State private var selectedEntry: JournalEntry?
+    @State private var selectedDetailEntry: JournalEntry?
+    @State private var showingSegmentEvents: SarosSpikeWaveSegment?
+    @AppStorage("timelineShowEvents") private var timelineShowEvents = true
+ 
+    @AppStorage("timelineMinimumWaveRarity") private var timelineMinimumWaveRarityRaw = "epic"
+    @AppStorage("timelineUseSineWaveforms") private var timelineUseSineWaveforms = false
+    @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
+    @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
+
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+
+    private let densityOptions: [FlipRarity] = [.rare, .epic, .legendary, .mythic]
+
+    private var timelineMinimumWaveRarity: FlipRarity {
+        FlipRarity(rawValue: timelineMinimumWaveRarityRaw) ?? .epic
+    }
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
@@ -1245,32 +1307,165 @@ private struct SarosSpikeWaveTimelineView: View {
         }
     }
 
+    private var visibleEntries: [JournalEntry] {
+        allEntries.filter { entry in
+            guard let emoji = entry.emoji, !emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            let start = entry.eventDate
+            let end = entry.effectiveEndDate
+            return start <= displayInterval.end && end >= displayInterval.start
+        }
+    }
+
+    private struct OneTimeEmojiMarker: Identifiable {
+        let entry: JournalEntry
+        let x: CGFloat
+        let y: CGFloat
+        var id: UUID { entry.id }
+    }
+
+    private struct ContinuousEmojiMarker: Identifiable {
+        let entry: JournalEntry
+        let startX: CGFloat
+        let endX: CGFloat
+        let midX: CGFloat
+        let controlY: CGFloat
+        let emojiY: CGFloat
+        var id: UUID { entry.id }
+    }
+
+    private func computeEmojiMarkers(
+        entries: [JournalEntry],
+        contentWidth: CGFloat,
+        height: CGFloat,
+        waveBaseline: CGFloat,
+        waveHeight: CGFloat,
+        waveMaxEnergy: Double
+    ) -> (oneTime: [OneTimeEmojiMarker], continuous: [ContinuousEmojiMarker]) {
+        let KsDuration = SarosPulseCalculator.averageDuration(for: .kilo)
+        let visible = entries.filter { entry in
+            guard let emoji = entry.emoji, !emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            return true
+        }
+        
+        let oneTimeEntries = visible.filter { $0.effectiveEndDate.timeIntervalSince($0.eventDate) <= KsDuration }
+        let continuousEntries = visible.filter { $0.effectiveEndDate.timeIntervalSince($0.eventDate) > KsDuration }
+        
+        // 1. Compute One-Time Markers
+        var oneTimeMarkers: [OneTimeEmojiMarker] = []
+        var oneTimePlaced: [Int: [ClosedRange<CGFloat>]] = [:] // level -> ranges
+        
+        let sortedOneTime = oneTimeEntries.sorted(by: { $0.eventDate < $1.eventDate })
+        for entry in sortedOneTime {
+            let x = xPosition(for: entry.eventDate, width: contentWidth)
+            let eventEnergy = waveSamples.energy(at: entry.eventDate)
+            let waveY = waveBaseline - CGFloat(eventEnergy / max(waveMaxEnergy, 0.000_000_001)) * waveHeight
+            
+            let range = (x - 10)...(x + 10)
+            var level = 0
+            while true {
+                let overlaps = oneTimePlaced[level]?.contains(where: { $0.overlaps(range) }) ?? false
+                if !overlaps { break }
+                level += 1
+            }
+            if oneTimePlaced[level] == nil {
+                oneTimePlaced[level] = []
+            }
+            oneTimePlaced[level]?.append(range)
+            
+            let y = waveY - 12 - CGFloat(level) * 16
+            oneTimeMarkers.append(OneTimeEmojiMarker(entry: entry, x: x, y: y))
+        }
+        
+        // 2. Compute Continuous Markers
+        var continuousMarkers: [ContinuousEmojiMarker] = []
+        var continuousPlaced: [Int: [ClosedRange<CGFloat>]] = [:] // level -> ranges
+        
+        let sortedContinuous = continuousEntries.sorted(by: { $0.eventDate < $1.eventDate })
+        for entry in sortedContinuous {
+            let startX = xPosition(for: entry.eventDate, width: contentWidth)
+            let endX = xPosition(for: entry.effectiveEndDate, width: contentWidth)
+            let midX = (startX + endX) / 2
+            
+            let range = (startX - 6)...(endX + 6)
+            var level = 0
+            while true {
+                let overlaps = continuousPlaced[level]?.contains(where: { $0.overlaps(range) }) ?? false
+                if !overlaps { break }
+                level += 1
+            }
+            if continuousPlaced[level] == nil {
+                continuousPlaced[level] = []
+            }
+            continuousPlaced[level]?.append(range)
+            
+            let controlY = waveBaseline + 36 + CGFloat(level) * 24
+            let emojiY = waveBaseline + (controlY - waveBaseline) * 0.72
+            
+            continuousMarkers.append(ContinuousEmojiMarker(
+                entry: entry,
+                startX: startX,
+                endX: endX,
+                midX: midX,
+                controlY: controlY,
+                emojiY: emojiY
+            ))
+        }
+        
+        return (oneTimeMarkers, continuousMarkers)
+    }
+
     var body: some View {
         ScrollViewReader { scrollProxy in
             VStack(spacing: 14) {
-                if let currentState {
-                    Button {
-                        scrollToPresent(proxy: scrollProxy)
-                    } label: {
-                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                            let panelState = displayedWaveState ?? currentState
-                            SarosSpikeWaveStatePanel(
-                                state: panelState,
-                                sarosReading: sarosReading(for: panelState),
-                                pulseReading: pulseReading(at: panelState.date)
-                            )
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-                }
+                TickingStatePanel(
+                    timeTicker: timeTicker,
+                    waveField: waveField,
+                    pulseReadingAt: { date in pulseReading(at: date) },
+                    sarosReadingFor: { state in sarosReading(for: state) },
+                    onHeaderTap: { scrollToPresent(proxy: scrollProxy) }
+                )
 
                 if let selectedSegment {
-                    SarosSpikeWaveSegmentInfoView(segment: selectedSegment)
-                        .padding(.horizontal)
-                        .transition(.opacity)
+                    SarosSpikeWaveSegmentInfoView(segment: selectedSegment) {
+                        showingSegmentEvents = selectedSegment
+                    }
+                    .padding(.horizontal)
+                    .transition(.opacity)
+                }
+
+                if let selectedEntry {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Selected Entry")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                self.selectedEntry = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        
+                        JournalEntryRow(entry: selectedEntry, tags: tags)
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                            )
+                            .onTapGesture {
+                                selectedDetailEntry = selectedEntry
+                            }
+                    }
+                    .padding(.horizontal)
+                    .transition(.opacity)
                 }
 
                 HStack(spacing: 10) {
@@ -1326,7 +1521,6 @@ private struct SarosSpikeWaveTimelineView: View {
                         maxEnergy: waveMaxEnergy,
                         amplitudeScale: timelineWaveAmplitudeScale
                     )
-                    let markerDate = probeDate ?? presentDate
 
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
@@ -1361,7 +1555,10 @@ private struct SarosSpikeWaveTimelineView: View {
                                 displayInterval: displayInterval,
                                 topInset: Self.lunarRulerTopInset,
                                 rowSpacing: Self.lunarRulerRowSpacing,
-                                labelOffset: 15
+                                labelOffset: 15,
+                                showSineWave: timelineUseSineWaveforms,
+                                waveSumMode: timelineSineWaveSumMode,
+                                wavelengthOption: timelineWavelengthOption
                             )
                             .frame(width: contentWidth, height: height)
 
@@ -1369,9 +1566,88 @@ private struct SarosSpikeWaveTimelineView: View {
                                 ticks: solarTicks,
                                 displayInterval: displayInterval,
                                 baselineRatio: Self.solarRulerBaselineRatio,
-                                rowSpacing: Self.solarRulerRowSpacing
+                                rowSpacing: Self.solarRulerRowSpacing,
+                                showSineWave: timelineUseSineWaveforms,
+                                waveSumMode: timelineSineWaveSumMode,
+                                wavelengthOption: timelineWavelengthOption
                             )
                             .frame(width: contentWidth, height: height)
+
+                            if timelineShowEvents {
+                                let waveBaseline = height * 0.54
+                                let waveTop = height * 0.12
+                                let waveHeight = (waveBaseline - waveTop) * timelineWaveAmplitudeScale
+                                let waveMaxEnergy = max(waveMaxEnergy, 0.000_000_001)
+                                
+                                let markers = computeEmojiMarkers(
+                                    entries: visibleEntries,
+                                    contentWidth: contentWidth,
+                                    height: height,
+                                    waveBaseline: waveBaseline,
+                                    waveHeight: waveHeight,
+                                    waveMaxEnergy: waveMaxEnergy
+                                )
+                                
+                                // 1. Arcs for continuous events
+                                ForEach(markers.continuous) { marker in
+                                    Path { path in
+                                        path.move(to: CGPoint(x: marker.startX, y: waveBaseline))
+                                        path.addQuadCurve(
+                                            to: CGPoint(x: marker.endX, y: waveBaseline),
+                                            control: CGPoint(x: marker.midX, y: marker.controlY)
+                                        )
+                                    }
+                                    .stroke(Color.primary.opacity(0.24), lineWidth: 1.2)
+                                }
+                                
+                                // 2. Emojis for continuous events (middle of the arc)
+                                ForEach(markers.continuous) { marker in
+                                    Text(marker.entry.emoji ?? "")
+                                        .font(.system(size: 9))
+                                        .padding(3)
+                                        .background(Circle().fill(.ultraThinMaterial))
+                                        .shadow(color: .black.opacity(0.18), radius: 1.5, x: 0, y: 0.5)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                                        )
+                                        .contentShape(Circle())
+                                        .onTapGesture {
+                                            selectedDetailEntry = marker.entry
+                                        }
+                                        .simultaneousGesture(
+                                            LongPressGesture(minimumDuration: 0.45)
+                                                .onEnded { _ in
+                                                    selectedEntry = marker.entry
+                                                }
+                                        )
+                                        .position(x: marker.midX, y: marker.emojiY)
+                                }
+                                
+                                // 3. Emojis for one-time events (on top of the waveform)
+                                ForEach(markers.oneTime) { marker in
+                                    Text(marker.entry.emoji ?? "")
+                                        .font(.system(size: 9))
+                                        .padding(3)
+                                        .background(Circle().fill(.ultraThinMaterial))
+                                        .shadow(color: .black.opacity(0.18), radius: 1.5, x: 0, y: 0.5)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                                        )
+                                        .contentShape(Circle())
+                                        .onTapGesture {
+                                            selectedDetailEntry = marker.entry
+                                        }
+                                        .simultaneousGesture(
+                                            LongPressGesture(minimumDuration: 0.45)
+                                                .onEnded { _ in
+                                                    selectedEntry = marker.entry
+                                                }
+                                        )
+                                        .position(x: marker.x, y: marker.y)
+                                }
+                            }
 
                             ForEach(segments) { segment in
                                 let startX = xPosition(for: segment.startDate, width: contentWidth)
@@ -1392,28 +1668,25 @@ private struct SarosSpikeWaveTimelineView: View {
                                     )
                             }
 
-                            if displayInterval.contains(markerDate) {
-                                Color.clear
-                                    .frame(width: 1, height: height)
-                                    .position(
-                                        x: xPosition(for: markerDate, width: contentWidth),
-                                        y: height / 2
-                                    )
-                                    .id(Self.referenceScrollID)
-                            }
+                            TickingReferenceScrollAnchor(
+                                timeTicker: timeTicker,
+                                probeDate: probeDate,
+                                displayInterval: displayInterval,
+                                contentWidth: contentWidth,
+                                height: height,
+                                scrollID: Self.referenceScrollID
+                            )
 
-                            if displayInterval.contains(markerDate) {
-                                let markerX = xPosition(for: markerDate, width: contentWidth)
-                                SarosSpikeWaveProbeHandle(
-                                    x: markerX,
-                                    date: markerDate,
-                                    onDrag: { x in
-                                        moveProbe(toX: x, contentWidth: contentWidth)
-                                    }
-                                )
-                                .frame(width: 44, height: height)
-                                .position(x: markerX, y: height / 2)
-                            }
+                            TickingProbeHandle(
+                                timeTicker: timeTicker,
+                                probeDate: probeDate,
+                                displayInterval: displayInterval,
+                                contentWidth: contentWidth,
+                                height: height,
+                                onDrag: { x in
+                                    moveProbe(toX: x, contentWidth: contentWidth)
+                                }
+                            )
 
                             if let scrollAnchorDate,
                                let scrollAnchorID,
@@ -1465,7 +1738,7 @@ private struct SarosSpikeWaveTimelineView: View {
                             MagnificationGesture()
                                 .onChanged { value in
                                     if zoomAnchorDate == nil {
-                                        let candidate = probeDate ?? presentDate
+                                        let candidate = probeDate ?? Date()
                                         let anchorDate = displayInterval.contains(candidate)
                                             ? candidate
                                             : centerDate(
@@ -1525,19 +1798,60 @@ private struct SarosSpikeWaveTimelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        selectedCalendarReference = SarosSpikeCalendarReference(date: Date())
-                    } label: {
-                        Image(systemName: "calendar")
+                    HStack(spacing: 12) {
+                        Menu {
+                            Section("Waveform Settings") {
+                                Picker("Spike Density", selection: $timelineMinimumWaveRarityRaw) {
+                                    ForEach(densityOptions, id: \.rawValue) { rarity in
+                                        Text(rarity.title).tag(rarity.rawValue)
+                                    }
+                                }
+                            }
+
+                            Section("Ruler Style") {
+                                Toggle(isOn: $timelineUseSineWaveforms) {
+                                    Label("Sine Waveforms", systemImage: "waveform.path")
+                                }
+
+                                Picker("Sine Wave Mode", selection: $timelineSineWaveSumMode) {
+                                    Text("Wave Overlap").tag(false)
+                                    Text("Wave Sum").tag(true)
+                                }
+                                .pickerStyle(.menu)
+                                .disabled(!timelineUseSineWaveforms)
+
+                                Picker("Wavelength", selection: $timelineWavelengthOption) {
+                                    Text("0.5 Wavelength (Half)").tag(0.5)
+                                    Text("1 Wavelength").tag(1.0)
+                                    Text("2 Wavelengths").tag(2.0)
+                                    Text("3 Wavelengths").tag(3.0)
+                                    Text("4 Wavelengths").tag(4.0)
+                                }
+                                .pickerStyle(.menu)
+                                .disabled(!timelineUseSineWaveforms)
+                            }
+
+                            Section("Events") {
+                                Toggle(isOn: $timelineShowEvents) {
+                                    Label("Show Events", systemImage: "flag.fill")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "slider.horizontal.3")
+                        }
+                        .accessibilityLabel("Configure timeline settings")
+
+                        Button {
+                            selectedCalendarReference = SarosSpikeCalendarReference(date: Date())
+                        } label: {
+                            Image(systemName: "calendar")
+                        }
+                        .accessibilityLabel("Open Saros calendar")
                     }
-                    .accessibilityLabel("Open Saros calendar")
                 }
             }
             .task(id: waveformTaskID) {
                 loadEvents(force: true)
-            }
-            .task {
-                await runPresentTicker()
             }
             .task(id: solarRulerTaskID) {
                 await loadSolarTicks()
@@ -1551,6 +1865,13 @@ private struct SarosSpikeWaveTimelineView: View {
                 referenceDate: reference.date,
                 referenceEvent: nil
             )
+        }
+        .navigationDestination(item: $selectedDetailEntry) { entry in
+            JournalEntryDetailView(entry: entry, tags: tags)
+        }
+        .sheet(item: $showingSegmentEvents) { segment in
+            let segmentEntries = allEntries.filter { segment.interval.contains($0.eventDate) }
+            SegmentEventsSheet(segment: segment, entries: segmentEntries, tags: tags)
         }
     }
 
@@ -1601,7 +1922,8 @@ private struct SarosSpikeWaveTimelineView: View {
             "\(clampedSubdivisionDepth)",
             "\(Self.amplitudeCacheKey(clampedAmplitudeMultiplier))",
             "\(Int(displayInterval.start.timeIntervalSince1970))",
-            "\(Int(displayInterval.end.timeIntervalSince1970))"
+            "\(Int(displayInterval.end.timeIntervalSince1970))",
+            "\(timelineMinimumWaveRarityRaw)"
         ].joined(separator: "-")
     }
 
@@ -1641,15 +1963,6 @@ private struct SarosSpikeWaveTimelineView: View {
         )
     }
 
-    private var displayedWaveState: SarosSpikeWaveState? {
-        if let probeDate,
-           let state = waveField.sample(at: probeDate)
-        {
-            return state
-        }
-
-        return currentState
-    }
 
     private var visibleWaveSegments: [SarosSpikeWaveSegment] {
         waveField.components.flatMap { component in
@@ -1684,7 +1997,7 @@ private struct SarosSpikeWaveTimelineView: View {
             return selected
         }
 
-        let date = probeDate ?? presentDate
+        let date = probeDate ?? Date()
         if let containing = visibleWaveSegments.first(where: { $0.interval.contains(date) }) {
             return containing
         }
@@ -1826,9 +2139,8 @@ private struct SarosSpikeWaveTimelineView: View {
         let loadInterval = loadInterval
         let displayInterval = displayInterval
         let waveSampleCount = Self.waveSampleCount
-        let minimumRarity = Self.minimumWaveRarity
+        let minimumRarity = timelineMinimumWaveRarity
         let presentDate = Date()
-        self.presentDate = presentDate
         let cacheKey = Self.cacheKey(
             harmonicDepth: harmonicDepth,
             displayInterval: displayInterval,
@@ -1844,7 +2156,6 @@ private struct SarosSpikeWaveTimelineView: View {
             events = cached.events
             waveField = cached.field
             waveSamples = cached.samples
-            currentState = cached.field.sample(at: presentDate)
             isLoading = false
             errorMessage = nil
             return
@@ -1854,7 +2165,7 @@ private struct SarosSpikeWaveTimelineView: View {
         errorMessage = nil
 
         Task.detached(priority: .userInitiated) {
-            let result: Result<(events: [SarosGlobalFlipEvent], field: SarosSpikeWaveField, samples: SarosSpikeWaveSamples, currentState: SarosSpikeWaveState?), Error> = Result {
+            let result: Result<(events: [SarosGlobalFlipEvent], field: SarosSpikeWaveField, samples: SarosSpikeWaveSamples), Error> = Result {
                 let summaries = try eclipseService.allSarosSeries()
 
                 let loadedEvents = SarosGlobalTimelineBuilder.events(
@@ -1880,8 +2191,7 @@ private struct SarosSpikeWaveTimelineView: View {
                 return (
                     events: loadedEvents,
                     field: field,
-                    samples: samples,
-                    currentState: field.sample(at: presentDate)
+                    samples: samples
                 )
             }
 
@@ -1892,7 +2202,6 @@ private struct SarosSpikeWaveTimelineView: View {
                     events = loaded.events
                     waveField = loaded.field
                     waveSamples = loaded.samples
-                    currentState = loaded.currentState
                     SarosSpikeWaveTimelineCache.store(
                         SarosSpikeWaveCacheEntry(
                             events: loaded.events,
@@ -1906,7 +2215,6 @@ private struct SarosSpikeWaveTimelineView: View {
                     events = []
                     waveField = .empty
                     waveSamples = .empty
-                    currentState = nil
                     errorMessage = error.localizedDescription
                 }
             }
@@ -2047,8 +2355,6 @@ private struct SarosSpikeWaveTimelineView: View {
         let now = Date()
         probeDate = nil
         selectedSegmentID = nil
-        presentDate = now
-        currentState = waveField.sample(at: now) ?? currentState
         if !displayInterval.contains(now) {
             loadedPageStarts = [pageStart(containing: now)]
             pendingPageScrollDate = now
@@ -2082,16 +2388,6 @@ private struct SarosSpikeWaveTimelineView: View {
         scroll(to: pendingPageScrollDate, proxy: proxy, animated: false, layoutDelay: layoutDelay)
     }
 
-    @MainActor
-    private func runPresentTicker() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard !Task.isCancelled, probeDate == nil else { continue }
-            let now = Date()
-            presentDate = now
-            currentState = waveField.sample(at: now) ?? currentState
-        }
-    }
 
     @MainActor
     private func scroll(
@@ -2136,6 +2432,8 @@ private struct SarosSpikeWaveTimelineView: View {
         amplitudeScale: CGFloat
     ) -> [SarosSpikeDotMarker] {
         var placed: [(x: CGFloat, y: CGFloat)] = []
+        var placedLabelBoxes: [LabelBoundingBox] = []
+        var placedDotsCount = 0
 
         return components.sorted {
             if $0.period.spike.date != $1.period.spike.date {
@@ -2170,8 +2468,42 @@ private struct SarosSpikeWaveTimelineView: View {
                 x = min(contentWidth - size / 2, x + CGFloat(overflowLevel) * (size + 4))
             }
 
-            let labelOnLeadingSide = placed.count.isMultiple(of: 2)
+            let contributorsCount = component.contributors.isEmpty ? 1 : component.contributors.count
+            let leftBoxes = labelBoxes(forX: x, y: y, size: size, contributorsCount: contributorsCount, labelOnLeadingSide: true)
+            let rightBoxes = labelBoxes(forX: x, y: y, size: size, contributorsCount: contributorsCount, labelOnLeadingSide: false)
+
+            let leftOverlaps = leftBoxes.contains { box in
+                placedLabelBoxes.contains { $0.intersects(box) }
+            }
+            let rightOverlaps = rightBoxes.contains { box in
+                placedLabelBoxes.contains { $0.intersects(box) }
+            }
+
+            let labelOnLeadingSide: Bool
+            if leftOverlaps && !rightOverlaps {
+                labelOnLeadingSide = false
+            } else if !leftOverlaps && rightOverlaps {
+                labelOnLeadingSide = true
+            } else {
+                labelOnLeadingSide = placedDotsCount.isMultiple(of: 2)
+            }
+
+            let chosenBoxes = labelOnLeadingSide ? leftBoxes : rightBoxes
+            placedLabelBoxes.append(contentsOf: chosenBoxes)
+
+            let dotGap = size + 7
+            let startOffset = -CGFloat(contributorsCount - 1) * dotGap / 2
+            for index in 0..<contributorsCount {
+                let contributorY = y + startOffset + CGFloat(index) * dotGap
+                placedLabelBoxes.append(LabelBoundingBox(
+                    xRange: (x - size / 2)...(x + size / 2),
+                    yRange: (contributorY - size / 2)...(contributorY + size / 2)
+                ))
+            }
+
             placed.append((x, y))
+            placedDotsCount += 1
+
             return SarosSpikeDotMarker(
                 event: event,
                 contributors: component.contributors,
@@ -2181,6 +2513,36 @@ private struct SarosSpikeWaveTimelineView: View {
                 labelOnLeadingSide: labelOnLeadingSide
             )
         }
+    }
+
+    private func labelBoxes(
+        forX x: CGFloat,
+        y: CGFloat,
+        size: CGFloat,
+        contributorsCount: Int,
+        labelOnLeadingSide: Bool
+    ) -> [LabelBoundingBox] {
+        let dotGap = size + 7
+        let startOffset = -CGFloat(contributorsCount - 1) * dotGap / 2
+        let labelWidth: CGFloat = 24
+        let labelHeight: CGFloat = 10
+
+        var boxes: [LabelBoundingBox] = []
+        for index in 0..<contributorsCount {
+            let contributorY = y + startOffset + CGFloat(index) * dotGap
+            let labelX: CGFloat
+            if labelOnLeadingSide {
+                labelX = x - size / 2 - 5 - labelWidth
+            } else {
+                labelX = x + size / 2 + 5
+            }
+
+            boxes.append(LabelBoundingBox(
+                xRange: labelX...(labelX + labelWidth),
+                yRange: (contributorY - labelHeight / 2)...(contributorY + labelHeight / 2)
+            ))
+        }
+        return boxes
     }
 
     private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
@@ -2197,7 +2559,7 @@ private struct SarosSpikeWaveTimelineView: View {
         maxEnergy: Double,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.62
+        let baseline = height * 0.54
         let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
         let ratio = min(max(state.energy / maxEnergy, 0), 1)
@@ -2211,7 +2573,7 @@ private struct SarosSpikeWaveTimelineView: View {
         height: CGFloat,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.62
+        let baseline = height * 0.54
         let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
         let maxEnergy = max(maxEnergy, 0.000_000_001)
@@ -2248,6 +2610,14 @@ private struct SarosSpikeWaveTimelineView: View {
             LunarRulerTickBuilder.ticks(in: displayInterval, moonService: moonService)
         }.value
         lunarTicks = loaded
+    }
+}
+private struct LabelBoundingBox {
+    let xRange: ClosedRange<CGFloat>
+    let yRange: ClosedRange<CGFloat>
+
+    func intersects(_ other: LabelBoundingBox) -> Bool {
+        return xRange.overlaps(other.xRange) && yRange.overlaps(other.yRange)
     }
 }
 
@@ -2372,6 +2742,7 @@ private struct SarosSpikeWaveSegment: Identifiable, Hashable {
 
 private struct SarosSpikeWaveSegmentInfoView: View {
     let segment: SarosSpikeWaveSegment
+    let onShowEvents: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -2380,6 +2751,7 @@ private struct SarosSpikeWaveSegmentInfoView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(segment.title)
                     .font(.subheadline.weight(.semibold))
+                    .lineLimit(2, reservesSpace: true)
                 Text(segment.durationText)
                     .font(.caption.monospacedDigit().weight(.medium))
                     .foregroundStyle(.secondary)
@@ -2388,11 +2760,141 @@ private struct SarosSpikeWaveSegmentInfoView: View {
                     .foregroundStyle(.secondary.opacity(0.85))
             }
             Spacer(minLength: 0)
+            
+            Button(action: onShowEvents) {
+                HStack(spacing: 4) {
+                    Image(systemName: "list.bullet")
+                    Text("Events")
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .foregroundStyle(.primary)
         .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct SegmentEventsSheet: View {
+    let segment: SarosSpikeWaveSegment
+    let entries: [JournalEntry]
+    let tags: [JournalTag]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if entries.isEmpty {
+                    ContentUnavailableView(
+                        "No Events",
+                        systemImage: "calendar.badge.exclamationmark",
+                        description: Text("There are no journal entries recorded in this waveform segment.")
+                    )
+                } else {
+                    ForEach(entries) { entry in
+                        NavigationLink {
+                            JournalEntryDetailView(entry: entry, tags: tags)
+                        } label: {
+                            JournalEntryRow(entry: entry, tags: tags)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Events in Segment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct TickingStatePanel: View {
+    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    let waveField: SarosSpikeWaveField
+    let pulseReadingAt: (Date) -> SarosPulseReading?
+    let sarosReadingFor: (SarosSpikeWaveState) -> SarosClockReading?
+    let onHeaderTap: () -> Void
+
+    var body: some View {
+        let date = timeTicker.date
+        if let state = waveField.sample(at: date) {
+            Button(action: onHeaderTap) {
+                SarosSpikeWaveStatePanel(
+                    state: state,
+                    sarosReading: sarosReadingFor(state),
+                    pulseReading: pulseReadingAt(state.date)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            .padding(.top, 12)
+        }
+    }
+}
+
+private struct TickingProbeHandle: View {
+    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    let probeDate: Date?
+    let displayInterval: DateInterval
+    let contentWidth: CGFloat
+    let height: CGFloat
+    let onDrag: (CGFloat) -> Void
+
+    var body: some View {
+        let markerDate = probeDate ?? timeTicker.date
+        if displayInterval.contains(markerDate) {
+            let markerX = xPosition(for: markerDate, width: contentWidth)
+            SarosSpikeWaveProbeHandle(
+                x: markerX,
+                date: markerDate,
+                onDrag: onDrag
+            )
+            .frame(width: 44, height: height)
+            .position(x: markerX, y: height / 2)
+        }
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
+    }
+}
+
+private struct TickingReferenceScrollAnchor: View {
+    @ObservedObject var timeTicker: TimelineCurrentTimeTicker
+    let probeDate: Date?
+    let displayInterval: DateInterval
+    let contentWidth: CGFloat
+    let height: CGFloat
+    let scrollID: String
+
+    var body: some View {
+        let markerDate = probeDate ?? timeTicker.date
+        if displayInterval.contains(markerDate) {
+            Color.clear
+                .frame(width: 1, height: height)
+                .position(
+                    x: xPosition(for: markerDate, width: contentWidth),
+                    y: height / 2
+                )
+                .id(scrollID)
+        }
+    }
+
+    private func xPosition(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = min(max(date.timeIntervalSince(displayInterval.start) / displayInterval.duration, 0), 1)
+        return CGFloat(ratio) * width
     }
 }
 
@@ -2512,7 +3014,7 @@ private struct SarosSpikeWaveCanvas: View {
 
     var body: some View {
         Canvas { context, size in
-            let baseline = size.height * 0.62
+            let baseline = size.height * 0.54
             let top = size.height * 0.12
             let waveHeight = (baseline - top) * amplitudeScale
             let maxEnergy = max(maxEnergy, 0.000_000_001)

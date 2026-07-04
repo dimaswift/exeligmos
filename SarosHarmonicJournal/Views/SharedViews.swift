@@ -663,11 +663,15 @@ struct LunarRulerCanvas: View {
     var topInset: CGFloat = 8
     var rowSpacing: CGFloat = 15
     var labelOffset: CGFloat = 15
+    var showSineWave: Bool = false
+    var waveSumMode: Bool = false
+    var wavelengthOption: Double = 2.0
 
     var body: some View {
         Canvas { context, size in
             guard displayInterval.duration > 0 else { return }
 
+            // 1. Draw ticks unconditionally
             for tick in ticks {
                 let x = xPosition(for: tick.date, width: size.width)
                 let y = topInset + CGFloat(rowIndex(for: tick.cycle)) * rowSpacing
@@ -688,6 +692,94 @@ struct LunarRulerCanvas: View {
                         at: CGPoint(x: x, y: y + labelOffset),
                         anchor: .top
                     )
+                }
+            }
+
+            // 2. Draw sine wave on top if showSineWave is true
+            if showSineWave {
+                let yCenter = topInset + rowSpacing + 5.625
+                let amplitude: CGFloat = 5.625 * (2.0 / wavelengthOption)
+                
+                let cycles = MoonCycleKind.allCases
+                
+                let sortedDatesByCycle = Dictionary(uniqueKeysWithValues: cycles.map { cycle in
+                    (cycle, Array(Set(ticks.filter { $0.cycle == cycle }.map(\.date))).sorted())
+                })
+                
+                if waveSumMode {
+                    var path = Path()
+                    var first = true
+                    
+                    var intervalIndexes = [MoonCycleKind: Int]()
+                    for cycle in cycles {
+                        intervalIndexes[cycle] = 0
+                    }
+                    
+                    let step: CGFloat = 2
+                    for x in stride(from: CGFloat(0), through: size.width, by: step) {
+                        let ratio = x / size.width
+                        let date = displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
+                        
+                        var sum = 0.0
+                        for cycle in cycles {
+                            if let dates = sortedDatesByCycle[cycle], dates.count >= 2 {
+                                var idx = intervalIndexes[cycle] ?? 0
+                                sum += fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
+                                intervalIndexes[cycle] = idx
+                            }
+                        }
+                        let normSum = sum / Double(cycles.count)
+                        let y = yCenter - CGFloat(normSum) * amplitude
+                        
+                        if first {
+                            path.move(to: CGPoint(x: x, y: y))
+                            first = false
+                        } else {
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+                    
+                    context.stroke(
+                        path,
+                        with: .color(.purple.opacity(0.85)),
+                        lineWidth: 1.8
+                    )
+                } else {
+                    let colors: [MoonCycleKind: Color] = [
+                        .synodic: .orange,
+                        .anomalistic: .cyan,
+                        .draconic: .purple
+                    ]
+                    
+                    for cycle in cycles {
+                        guard let dates = sortedDatesByCycle[cycle], dates.count >= 2 else { continue }
+                        
+                        var path = Path()
+                        var first = true
+                        var idx = 0
+                        
+                        let step: CGFloat = 2
+                        for x in stride(from: CGFloat(0), through: size.width, by: step) {
+                            let ratio = x / size.width
+                            let date = displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
+                            
+                            let val = fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
+                            let y = yCenter - CGFloat(val) * amplitude
+                            
+                            if first {
+                                path.move(to: CGPoint(x: x, y: y))
+                                first = false
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        
+                        context.stroke(
+                            path,
+                            with: .color((colors[cycle] ?? .purple).opacity(0.75)),
+                            lineWidth: 1.4
+                        )
+                    }
                 }
             }
         }
@@ -1157,17 +1249,20 @@ enum SolarYearRuler {
         return low
     }
 }
-
 struct SolarYearRulerCanvas: View {
     let ticks: [SolarYearRulerTick]
     let displayInterval: DateInterval
     var baselineRatio: CGFloat = 0.94
     var rowSpacing: CGFloat = 15
+    var showSineWave: Bool = false
+    var waveSumMode: Bool = false
+    var wavelengthOption: Double = 2.0
 
     var body: some View {
         Canvas { context, size in
             guard displayInterval.duration > 0, !ticks.isEmpty else { return }
 
+            // 1. Draw ticks unconditionally
             let baseline = size.height * baselineRatio
             var lastXByKey: [String: CGFloat] = [:]
 
@@ -1198,6 +1293,94 @@ struct SolarYearRulerCanvas: View {
                             .foregroundStyle(tick.level.color.opacity(0.92)),
                         at: CGPoint(x: x, y: max(8, y - tick.level.height - 10))
                     )
+                }
+            }
+
+            // 2. Draw sine wave on top if showSineWave is true
+            if showSineWave {
+                let yCenter = baseline - rowSpacing - 5.625
+                let amplitude: CGFloat = 5.625 * (2.0 / wavelengthOption)
+                
+                let cycles = SolarYearCycleKind.allCases
+                
+                let sortedDatesByCycle = Dictionary(uniqueKeysWithValues: cycles.map { cycle in
+                    (cycle, Array(Set(ticks.filter { $0.cycle == cycle }.map(\.date))).sorted())
+                })
+                
+                if waveSumMode {
+                    var path = Path()
+                    var first = true
+                    
+                    var intervalIndexes = [SolarYearCycleKind: Int]()
+                    for cycle in cycles {
+                        intervalIndexes[cycle] = 0
+                    }
+                    
+                    let step: CGFloat = 2
+                    for x in stride(from: CGFloat(0), through: size.width, by: step) {
+                        let ratio = x / size.width
+                        let date = displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
+                        
+                        var sum = 0.0
+                        for cycle in cycles {
+                            if let dates = sortedDatesByCycle[cycle], dates.count >= 2 {
+                                var idx = intervalIndexes[cycle] ?? 0
+                                sum += fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
+                                intervalIndexes[cycle] = idx
+                            }
+                        }
+                        let normSum = sum / Double(cycles.count)
+                        let y = yCenter - CGFloat(normSum) * amplitude
+                        
+                        if first {
+                            path.move(to: CGPoint(x: x, y: y))
+                            first = false
+                        } else {
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+                    
+                    context.stroke(
+                        path,
+                        with: .color(.orange.opacity(0.85)),
+                        lineWidth: 1.8
+                    )
+                } else {
+                    let colors: [SolarYearCycleKind: Color] = [
+                        .equinox: .orange,
+                        .solstice: .yellow,
+                        .anomalistic: .green
+                    ]
+                    
+                    for cycle in cycles {
+                        guard let dates = sortedDatesByCycle[cycle], dates.count >= 2 else { continue }
+                        
+                        var path = Path()
+                        var first = true
+                        var idx = 0
+                        
+                        let step: CGFloat = 2
+                        for x in stride(from: CGFloat(0), through: size.width, by: step) {
+                            let ratio = x / size.width
+                            let date = displayInterval.start.addingTimeInterval(displayInterval.duration * Double(ratio))
+                            
+                            let val = fastWaveValue(for: date, in: dates, intervalIndex: &idx, wavelengthOption: wavelengthOption)
+                            let y = yCenter - CGFloat(val) * amplitude
+                            
+                            if first {
+                                path.move(to: CGPoint(x: x, y: y))
+                                first = false
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        
+                        context.stroke(
+                            path,
+                            with: .color((colors[cycle] ?? .orange).opacity(0.75)),
+                            lineWidth: 1.4
+                        )
+                    }
                 }
             }
         }
@@ -2869,4 +3052,37 @@ extension String {
     var nilIfBlank: String? {
         Optional(self).nilIfBlank
     }
+}
+
+fileprivate func fastWaveValue(for date: Date, in sortedDates: [Date], intervalIndex: inout Int, wavelengthOption: Double) -> Double {
+    guard sortedDates.count >= 2 else { return 0 }
+    
+    if date <= sortedDates[0] {
+        let t0 = sortedDates[0]
+        let t1 = sortedDates[1]
+        let p = max(t1.timeIntervalSince(t0), 1.0)
+        let u = date.timeIntervalSince(t0) / p
+        return cos(2.0 * .pi * wavelengthOption * u)
+    }
+    
+    if date >= sortedDates.last! {
+        let tn = sortedDates.last!
+        let tnMinus1 = sortedDates[sortedDates.count - 2]
+        let p = max(tn.timeIntervalSince(tnMinus1), 1.0)
+        let u = date.timeIntervalSince(tn) / p
+        return cos(2.0 * .pi * wavelengthOption * u)
+    }
+    
+    while intervalIndex < sortedDates.count - 2 && date >= sortedDates[intervalIndex + 1] {
+        intervalIndex += 1
+    }
+    while intervalIndex > 0 && date < sortedDates[intervalIndex] {
+        intervalIndex -= 1
+    }
+    
+    let t0 = sortedDates[intervalIndex]
+    let t1 = sortedDates[intervalIndex + 1]
+    let p = max(t1.timeIntervalSince(t0), 1.0)
+    let u = date.timeIntervalSince(t0) / p
+    return cos(2.0 * .pi * wavelengthOption * u)
 }

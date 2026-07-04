@@ -2963,6 +2963,9 @@ private struct JournalEntryWaveformView: View {
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
     @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var waveformAmplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
+    @AppStorage("timelineUseSineWaveforms") private var timelineUseSineWaveforms = false
+    @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
+    @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
 
     let context: JournalEventContext
     var endDate: Date? = nil
@@ -3119,13 +3122,19 @@ private struct JournalEntryWaveformView: View {
                 displayInterval: plot.interval,
                 topInset: JournalEntryWaveform.lunarRulerTopInset,
                 rowSpacing: JournalEntryWaveform.lunarRulerRowSpacing,
-                labelOffset: 15
+                labelOffset: 15,
+                showSineWave: timelineUseSineWaveforms,
+                waveSumMode: timelineSineWaveSumMode,
+                wavelengthOption: timelineWavelengthOption
             )
             SolarYearRulerCanvas(
                 ticks: solarTicks,
                 displayInterval: plot.interval,
                 baselineRatio: JournalEntryWaveform.solarRulerBaselineRatio,
-                rowSpacing: JournalEntryWaveform.solarRulerRowSpacing
+                rowSpacing: JournalEntryWaveform.solarRulerRowSpacing,
+                showSineWave: timelineUseSineWaveforms,
+                waveSumMode: timelineSineWaveSumMode,
+                wavelengthOption: timelineWavelengthOption
             )
             HStack(spacing: 0) {
                 Color.clear
