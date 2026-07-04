@@ -1199,6 +1199,11 @@ private struct SarosSpikeCalendarReference: Identifiable, Hashable {
     let date: Date
 }
 
+private struct SarosSpikeDateJump: Identifiable, Hashable {
+    let id = UUID()
+    let date: Date
+}
+
 private class TimelineCurrentTimeTicker: ObservableObject {
     @Published var date = Date()
     private var timer: Timer?
@@ -1248,6 +1253,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var selectedEntry: JournalEntry?
     @State private var selectedDetailEntry: JournalEntry?
     @State private var showingSegmentEvents: SarosSpikeWaveSegment?
+    @State private var dateJump: SarosSpikeDateJump?
     @AppStorage("timelineShowEvents") private var timelineShowEvents = true
  
     @AppStorage("timelineMinimumWaveRarity") private var timelineMinimumWaveRarityRaw = "epic"
@@ -1427,6 +1433,7 @@ private struct SarosSpikeWaveTimelineView: View {
         ScrollViewReader { scrollProxy in
             VStack(spacing: 14) {
                 TickingStatePanel(
+                    probeDate: probeDate,
                     waveField: waveField,
                     pulseReadingAt: { date in pulseReading(at: date) },
                     sarosReadingFor: { state in sarosReading(for: state) },
@@ -1482,12 +1489,18 @@ private struct SarosSpikeWaveTimelineView: View {
                     .controlSize(.small)
                     .accessibilityLabel("Previous period")
 
-                    Text(periodRangeTitle)
-                        .font(.caption.monospacedDigit().weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                        .frame(maxWidth: .infinity)
+                    Button {
+                        dateJump = SarosSpikeDateJump(date: defaultJumpDate)
+                    } label: {
+                        Text(periodRangeTitle)
+                            .font(.caption.monospacedDigit().weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Jump to date")
 
                     Button {
                         appendAdjacentPage(1, proxy: scrollProxy)
@@ -1883,6 +1896,11 @@ private struct SarosSpikeWaveTimelineView: View {
             .task(id: pulseTaskID) {
                 await loadPulseTicks()
             }
+            .sheet(item: $dateJump) { request in
+                SarosSpikeDateJumpSheet(initialDate: request.date) { selectedDate in
+                    jump(to: selectedDate, proxy: scrollProxy)
+                }
+            }
         }
         .navigationDestination(item: $selectedCalendarReference) { reference in
             SarosGlobalFlipTimelineView(
@@ -2094,6 +2112,19 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var periodRangeTitle: String {
         "\(Self.dayTickFormatter.string(from: displayInterval.start)) - \(Self.dayTickFormatter.string(from: displayInterval.end))"
+    }
+
+    private var defaultJumpDate: Date {
+        if let probeDate, displayInterval.contains(probeDate) {
+            return probeDate
+        }
+
+        let now = Date()
+        if displayInterval.contains(now) {
+            return now
+        }
+
+        return displayInterval.start.addingTimeInterval(displayInterval.duration / 2)
     }
 
     private func pageStart(containing date: Date) -> Date {
@@ -2394,6 +2425,23 @@ private struct SarosSpikeWaveTimelineView: View {
             return
         }
         scroll(to: now, proxy: proxy, animated: animated)
+    }
+
+    @MainActor
+    private func jump(
+        to date: Date,
+        proxy: ScrollViewProxy
+    ) {
+        probeDate = date
+        selectedSegmentID = nil
+        if displayInterval.contains(date) {
+            scroll(to: date, proxy: proxy, animated: true)
+            return
+        }
+
+        loadedPageStarts = [pageStart(containing: date)]
+        pendingPageScrollDate = date
+        applyPendingScrollIfNeeded(proxy: proxy, layoutDelay: 0.10)
     }
 
     @MainActor
@@ -2883,15 +2931,59 @@ private struct SegmentEventsSheet: View {
     }
 }
 
+private struct SarosSpikeDateJumpSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftDate: Date
+    let onApply: (Date) -> Void
+
+    init(initialDate: Date, onApply: @escaping (Date) -> Void) {
+        _draftDate = State(initialValue: initialDate)
+        self.onApply = onApply
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Date", selection: $draftDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+
+                Button {
+                    draftDate = Date()
+                } label: {
+                    Label("Today", systemImage: "clock.arrow.circlepath")
+                }
+            }
+            .navigationTitle("Jump to Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        onApply(draftDate)
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 private struct TickingStatePanel: View {
     @StateObject private var timeTicker = TimelineCurrentTimeTicker()
+    let probeDate: Date?
     let waveField: SarosSpikeWaveField
     let pulseReadingAt: (Date) -> SarosPulseReading?
     let sarosReadingFor: (SarosSpikeWaveState) -> SarosClockReading?
     let onHeaderTap: () -> Void
 
     var body: some View {
-        let date = timeTicker.date
+        let date = probeDate ?? timeTicker.date
         if let state = waveField.sample(at: date) {
             Button(action: onHeaderTap) {
                 SarosSpikeWaveStatePanel(
