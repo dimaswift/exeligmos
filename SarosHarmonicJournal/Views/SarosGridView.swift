@@ -1523,7 +1523,6 @@ private struct SarosSpikeWaveTimelineView: View {
                     let markerEvents = markerComponents.map(\.period.spike)
                     let midpointDates = markerComponents.flatMap { [$0.leftBoundary, $0.rightBoundary] }
                         .filter { displayInterval.contains($0) }
-                    let segments = visibleWaveSegments
                     let effectiveSelectedSegment = selectedSegment
                     let waveMaxEnergy = waveSamples.maxEnergy
                     let dotMarkers = eventDotMarkers(
@@ -1671,25 +1670,6 @@ private struct SarosSpikeWaveTimelineView: View {
                                 }
                             }
 
-                            ForEach(segments) { segment in
-                                let startX = xPosition(for: segment.startDate, width: contentWidth)
-                                let endX = xPosition(for: segment.endDate, width: contentWidth)
-                                let segmentWidth = max(abs(endX - startX), 44)
-                                Color.clear
-                                    .frame(width: segmentWidth, height: height - Self.lunarRulerBottomY)
-                                    .contentShape(Rectangle())
-                                    .position(
-                                        x: (startX + endX) / 2,
-                                        y: Self.lunarRulerBottomY + (height - Self.lunarRulerBottomY) / 2
-                                    )
-                                    .simultaneousGesture(
-                                        LongPressGesture(minimumDuration: 0.45)
-                                            .onEnded { _ in
-                                                selectedSegmentID = segment.id
-                                            }
-                                    )
-                            }
-
                             TickingReferenceScrollAnchor(
                                 probeDate: probeDate,
                                 displayInterval: displayInterval,
@@ -1754,7 +1734,7 @@ private struct SarosSpikeWaveTimelineView: View {
                                 )
                             }
                         )
-                        .gesture(
+                        .simultaneousGesture(
                             MagnificationGesture()
                                 .onChanged { value in
                                     if zoomAnchorDate == nil {

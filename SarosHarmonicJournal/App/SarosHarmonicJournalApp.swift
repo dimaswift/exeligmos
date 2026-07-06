@@ -30,6 +30,7 @@ struct SarosHarmonicJournalApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(services)
+                .preferredColorScheme(.dark)
         }
         .modelContainer(modelContainer)
     }

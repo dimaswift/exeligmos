@@ -40,18 +40,18 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Local sync can back up and restore private journal records through a server on your nearby network.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>The symbolic camera lets you capture mirrored images for private journal records.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Local sync can back up and restore private journal records through a server on your nearby network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Location lets records remember where they were created for private map lookup and export.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Audio recording lets you attach private voice notes to journal records.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Photo access lets you attach selected images to private journal records.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Photo saving lets mirrored camera captures be written to your camera roll.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo access lets you attach selected images to private journal records.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -61,6 +61,8 @@
 	</dict>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		06F61AE4E6D677B05E1F26FF /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AA771FEF8F1439B8C22F84E /* SharedViews.swift */; };
-		5A1000000000000000000001 /* SarosGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000000000000000000002 /* SarosGridView.swift */; };
 		0B6D0F1A9C8E4D3AB2C90123 /* SolarGeoData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */; };
 		0B6D0F1A9C8E4D3AB2C90125 /* NaturalEarth in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */; };
 		0B6D0F1A9C8E4D3AB2C90127 /* EarthData in Resources */ = {isa = PBXBuildFile; fileRef = 0B6D0F1A9C8E4D3AB2C90128 /* EarthData */; };
@@ -20,25 +19,11 @@
 		12345ABCDE12345ABCDE1234 /* JournalDeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */; };
 		12345ABCDE12345ABCDE1236 /* JournalEntryDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */; };
 		12345ABCDE12345ABCDE1238 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1239 /* WeatherService.swift */; };
+		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
 		1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */; };
 		1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */; };
 		1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */; };
 		1F2A3B4C5D6E7F8011223308 /* AnimacyDatasetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */; };
-		A10000000000000000000001 /* ThreadTrackingActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ThreadTrackingActivity.swift */; };
-		A10000000000000000000002 /* ThreadLiveActivityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ThreadLiveActivityService.swift */; };
-		A10000000000000000000003 /* ThreadTrackingActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ThreadTrackingActivity.swift */; };
-		A10000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift */; };
-		A10000000000000000000005 /* TrackedThreadWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* TrackedThreadWidget.swift */; };
-		A10000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift */; };
-		A10000000000000000000007 /* WidgetGlyphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* WidgetGlyphViews.swift */; };
-		A10000000000000000000008 /* SarosHarmonicJournalWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		A10000000000000000000009 /* LiveTrackingFlip.wav in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* LiveTrackingFlip.wav */; };
-		B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageSonificationEngine.swift */; };
-		B10000000000000000000002 /* ImageSonificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ImageSonificationView.swift */; };
-		C0DE00000000000000000001 /* CubeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* CubeMapView.swift */; };
-		DAD000000000000000000001 /* MoonPhaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAD000000000000000000002 /* MoonPhaseService.swift */; };
-		DAD000000000000000000003 /* MoonData in Resources */ = {isa = PBXBuildFile; fileRef = DAD000000000000000000004 /* MoonData */; };
-		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
 		22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A7C096DCD9F7577546E63A /* SettingsView.swift */; };
 		2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */; };
 		31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */; };
@@ -48,6 +33,7 @@
 		4C8CA36AA3A8BD095C43A3C3 /* ClockDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABACE0CE9DCE9344D8BF9C7 /* ClockDashboardView.swift */; };
 		5496DCEDE6A2EC6826D904C7 /* eclipse_times.db in Resources */ = {isa = PBXBuildFile; fileRef = BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */; };
 		59227DED7F89BB1BEB194661 /* CPlusPlusEclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */; };
+		5A1000000000000000000001 /* SarosGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000000000000000000002 /* SarosGridView.swift */; };
 		5A6D58421E75F58CB38EC48D /* LocalExportServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */; };
 		5DB2419448F0945916D97208 /* NotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */; };
 		61B3CF17BDAE4D88A9C15C70 /* SyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B3CF17BDAE4D88A9C15C71 /* SyncService.swift */; };
@@ -57,16 +43,30 @@
 		80CA9D5E1A334E9D93B1C001 /* CatalogCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */; };
 		89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */; };
 		97A27528B18250FBB6737695 /* JournalRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */; };
+		A10000000000000000000001 /* ThreadTrackingActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ThreadTrackingActivity.swift */; };
+		A10000000000000000000002 /* ThreadLiveActivityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ThreadLiveActivityService.swift */; };
+		A10000000000000000000003 /* ThreadTrackingActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ThreadTrackingActivity.swift */; };
+		A10000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift */; };
+		A10000000000000000000005 /* TrackedThreadWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* TrackedThreadWidget.swift */; };
+		A10000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift */; };
+		A10000000000000000000007 /* WidgetGlyphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* WidgetGlyphViews.swift */; };
+		A10000000000000000000008 /* SarosHarmonicJournalWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000009 /* LiveTrackingFlip.wav in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* LiveTrackingFlip.wav */; };
 		A1B2C3D4E5F607182930A101 /* JournalEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A104 /* JournalEntry.swift */; };
 		A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */; };
 		A1B2C3D4E5F607182930A107 /* JournalEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
+		B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageSonificationEngine.swift */; };
+		B10000000000000000000002 /* ImageSonificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ImageSonificationView.swift */; };
 		B4D1A2F43E6B4AF1920C1111 /* JournalTemporalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */; };
 		C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */; };
+		C0DE00000000000000000001 /* CubeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* CubeMapView.swift */; };
 		C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8072651E8AE5C7C39EC512D /* ArchiveView.swift */; };
 		CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */; };
 		D6CEB223176444B02D602DB0 /* BundledSolarEclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D70425E56BEB65E632655B2F /* BundledSolarEclipseService.swift */; };
 		D931AE0271736D1F1208198B /* MediaStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */; };
+		DAD000000000000000000001 /* MoonPhaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAD000000000000000000002 /* MoonPhaseService.swift */; };
+		DAD000000000000000000003 /* MoonData in Resources */ = {isa = PBXBuildFile; fileRef = DAD000000000000000000004 /* MoonData */; };
 		EA7B6F58455666A76E719BA1 /* eclipse_info.db in Resources */ = {isa = PBXBuildFile; fileRef = 76E9E6EB19D2AD2F20AE959E /* eclipse_info.db */; };
 		EECF3B46E1C7D16EEC306A4B /* SarosClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */; };
 		EF3054358820F684AD5D315E /* Resonance.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16E33843D12AFBD6A69B9FA /* Resonance.swift */; };
@@ -106,46 +106,30 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-			0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
-			0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = NaturalEarth; path = SarosHarmonicJournal/Resources/NaturalEarth; sourceTree = "<group>"; };
-			0B6D0F1A9C8E4D3AB2C90128 /* EarthData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = EarthData; path = SarosHarmonicJournal/Resources/EarthData; sourceTree = "<group>"; };
-			0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
-			0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MirrorReflectionProcessor.swift; path = SarosHarmonicJournal/Services/MirrorReflectionProcessor.swift; sourceTree = "<group>"; };
-			0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
-			0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomFlipEvent.swift; path = SarosHarmonicJournal/Data/CustomFlipEvent.swift; sourceTree = "<group>"; };
-			0E5F7A9148B640C49830214B /* ThreadGroup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadGroup.swift; path = SarosHarmonicJournal/Data/ThreadGroup.swift; sourceTree = "<group>"; };
-			0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecordDraft.swift; path = SarosHarmonicJournal/Data/RecordDraft.swift; sourceTree = "<group>"; };
-			12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalDeviceIdentity.swift; path = SarosHarmonicJournal/Data/JournalDeviceIdentity.swift; sourceTree = "<group>"; };
-			12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryDraft.swift; path = SarosHarmonicJournal/Data/JournalEntryDraft.swift; sourceTree = "<group>"; };
-			12345ABCDE12345ABCDE1239 /* WeatherService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WeatherService.swift; path = SarosHarmonicJournal/Services/WeatherService.swift; sourceTree = "<group>"; };
-			1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyResult.swift; path = SarosHarmonicJournal/Services/AnimacyResult.swift; sourceTree = "<group>"; };
-			1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScorer.swift; path = SarosHarmonicJournal/Services/AnimacyScorer.swift; sourceTree = "<group>"; };
-			1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScoreView.swift; path = SarosHarmonicJournal/Views/AnimacyScoreView.swift; sourceTree = "<group>"; };
-			1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyDatasetService.swift; path = SarosHarmonicJournal/Services/AnimacyDatasetService.swift; sourceTree = "<group>"; };
-			A20000000000000000000001 /* ThreadTrackingActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadTrackingActivity.swift; path = SarosHarmonicJournal/Services/ThreadTrackingActivity.swift; sourceTree = "<group>"; };
-			A20000000000000000000002 /* ThreadLiveActivityService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadLiveActivityService.swift; path = SarosHarmonicJournal/Services/ThreadLiveActivityService.swift; sourceTree = "<group>"; };
-			A20000000000000000000003 /* SarosHarmonicJournal.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = SarosHarmonicJournal.entitlements; path = SarosHarmonicJournal/Resources/SarosHarmonicJournal.entitlements; sourceTree = "<group>"; };
-			A20000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SarosHarmonicJournalWidgetsBundle.swift; sourceTree = "<group>"; };
-			A20000000000000000000005 /* TrackedThreadWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TrackedThreadWidget.swift; sourceTree = "<group>"; };
-			A20000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadTrackingLiveActivityWidget.swift; sourceTree = "<group>"; };
-			A20000000000000000000007 /* WidgetGlyphViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetGlyphViews.swift; sourceTree = "<group>"; };
-			A20000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-			A20000000000000000000009 /* SarosHarmonicJournalWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = SarosHarmonicJournalWidgets.entitlements; sourceTree = "<group>"; };
-			A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-			A20000000000000000000011 /* LiveTrackingFlip.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; name = LiveTrackingFlip.wav; path = SarosHarmonicJournal/Resources/LiveTrackingFlip.wav; sourceTree = "<group>"; };
-			B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
-			B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
-			C0DE00000000000000000002 /* CubeMapView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CubeMapView.swift; path = SarosHarmonicJournal/Views/CubeMapView.swift; sourceTree = "<group>"; };
-			DAD000000000000000000002 /* MoonPhaseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoonPhaseService.swift; path = SarosHarmonicJournal/Services/MoonPhaseService.swift; sourceTree = "<group>"; };
-			DAD000000000000000000004 /* MoonData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = MoonData; path = SarosHarmonicJournal/Resources/MoonData; sourceTree = "<group>"; };
-			1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
+		0B6D0F1A9C8E4D3AB2C90124 /* SolarGeoData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = SolarGeoData; path = SarosHarmonicJournal/Resources/SolarGeoData; sourceTree = "<group>"; };
+		0B6D0F1A9C8E4D3AB2C90126 /* NaturalEarth */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = NaturalEarth; path = SarosHarmonicJournal/Resources/NaturalEarth; sourceTree = "<group>"; };
+		0B6D0F1A9C8E4D3AB2C90128 /* EarthData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = EarthData; path = SarosHarmonicJournal/Resources/EarthData; sourceTree = "<group>"; };
+		0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MirrorReflectionProcessor.swift; path = SarosHarmonicJournal/Services/MirrorReflectionProcessor.swift; sourceTree = "<group>"; };
+		0C3B8821A71E4A6CB0F60126 /* SymbolicCameraView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SymbolicCameraView.swift; path = SarosHarmonicJournal/Views/SymbolicCameraView.swift; sourceTree = "<group>"; };
+		0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MediaStorage.swift; path = SarosHarmonicJournal/Services/MediaStorage.swift; sourceTree = "<group>"; };
+		0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomFlipEvent.swift; path = SarosHarmonicJournal/Data/CustomFlipEvent.swift; sourceTree = "<group>"; };
+		0E5F7A9148B640C49830214B /* ThreadGroup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadGroup.swift; path = SarosHarmonicJournal/Data/ThreadGroup.swift; sourceTree = "<group>"; };
+		0F1A2B3C4D5E6F708192A002 /* RecordDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecordDraft.swift; path = SarosHarmonicJournal/Data/RecordDraft.swift; sourceTree = "<group>"; };
+		12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalDeviceIdentity.swift; path = SarosHarmonicJournal/Data/JournalDeviceIdentity.swift; sourceTree = "<group>"; };
+		12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryDraft.swift; path = SarosHarmonicJournal/Data/JournalEntryDraft.swift; sourceTree = "<group>"; };
+		12345ABCDE12345ABCDE1239 /* WeatherService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WeatherService.swift; path = SarosHarmonicJournal/Services/WeatherService.swift; sourceTree = "<group>"; };
+		1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
 		1BCEE1F54899D79E29687187 /* CaptureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptureView.swift; path = SarosHarmonicJournal/Views/CaptureView.swift; sourceTree = "<group>"; };
+		1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyResult.swift; path = SarosHarmonicJournal/Services/AnimacyResult.swift; sourceTree = "<group>"; };
+		1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScorer.swift; path = SarosHarmonicJournal/Services/AnimacyScorer.swift; sourceTree = "<group>"; };
+		1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScoreView.swift; path = SarosHarmonicJournal/Views/AnimacyScoreView.swift; sourceTree = "<group>"; };
+		1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyDatasetService.swift; path = SarosHarmonicJournal/Services/AnimacyDatasetService.swift; sourceTree = "<group>"; };
 		246FCF65FF5518283A599C02 /* EntityEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityEditorView.swift; path = SarosHarmonicJournal/Views/EntityEditorView.swift; sourceTree = "<group>"; };
 		3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CPlusPlusEclipseService.swift; path = SarosHarmonicJournal/Services/CPlusPlusEclipseService.swift; sourceTree = "<group>"; };
 		41A7C096DCD9F7577546E63A /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = SarosHarmonicJournal/Views/SettingsView.swift; sourceTree = "<group>"; };
 		51B47D3B5A3E80817B4CAA8B /* SarosHarmonicJournal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SarosHarmonicJournal.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		5A1000000000000000000002 /* SarosGridView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosGridView.swift; path = SarosHarmonicJournal/Views/SarosGridView.swift; sourceTree = "<group>"; };
 		59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackedEntity.swift; path = SarosHarmonicJournal/Data/TrackedEntity.swift; sourceTree = "<group>"; };
+		5A1000000000000000000002 /* SarosGridView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosGridView.swift; path = SarosHarmonicJournal/Views/SarosGridView.swift; sourceTree = "<group>"; };
 		5ED4F9AF52D61D654A5C63C7 /* RootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RootView.swift; path = SarosHarmonicJournal/App/RootView.swift; sourceTree = "<group>"; };
 		5F7C85D182031A4CE95A9C7B /* JournalRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalRecord.swift; path = SarosHarmonicJournal/Data/JournalRecord.swift; sourceTree = "<group>"; };
 		61B3CF17BDAE4D88A9C15C71 /* SyncService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SyncService.swift; path = SarosHarmonicJournal/Services/SyncService.swift; sourceTree = "<group>"; };
@@ -155,22 +139,38 @@
 		7AA771FEF8F1439B8C22F84E /* SharedViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedViews.swift; path = SarosHarmonicJournal/Views/SharedViews.swift; sourceTree = "<group>"; };
 		7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NotificationScheduler.swift; path = SarosHarmonicJournal/Services/NotificationScheduler.swift; sourceTree = "<group>"; };
 		7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosClock.swift; path = SarosHarmonicJournal/Domain/SarosClock.swift; sourceTree = "<group>"; };
-		810C0A3E37210050EA9773EA /* CatalogView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogView.swift; path = SarosHarmonicJournal/Views/CatalogView.swift; sourceTree = "<group>"; };
 		80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogCardsView.swift; path = SarosHarmonicJournal/Views/CatalogCardsView.swift; sourceTree = "<group>"; };
+		810C0A3E37210050EA9773EA /* CatalogView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CatalogView.swift; path = SarosHarmonicJournal/Views/CatalogView.swift; sourceTree = "<group>"; };
 		82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioRecorder.swift; path = SarosHarmonicJournal/Services/AudioRecorder.swift; sourceTree = "<group>"; };
 		8BFEA87F6EA243E541D15FE7 /* AppServices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppServices.swift; path = SarosHarmonicJournal/App/AppServices.swift; sourceTree = "<group>"; };
 		9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseModels.swift; path = SarosHarmonicJournal/Domain/EclipseModels.swift; sourceTree = "<group>"; };
-		B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalTemporalEngine.swift; path = SarosHarmonicJournal/Domain/JournalTemporalEngine.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A104 /* JournalEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntry.swift; path = SarosHarmonicJournal/Data/JournalEntry.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosEventContextService.swift; path = SarosHarmonicJournal/Services/SarosEventContextService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalEntryViews.swift; path = SarosHarmonicJournal/Views/JournalEntryViews.swift; sourceTree = "<group>"; };
+		A20000000000000000000001 /* ThreadTrackingActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadTrackingActivity.swift; path = SarosHarmonicJournal/Services/ThreadTrackingActivity.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* ThreadLiveActivityService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ThreadLiveActivityService.swift; path = SarosHarmonicJournal/Services/ThreadLiveActivityService.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* SarosHarmonicJournal.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = SarosHarmonicJournal.entitlements; path = SarosHarmonicJournal/Resources/SarosHarmonicJournal.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SarosHarmonicJournalWidgetsBundle.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* TrackedThreadWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TrackedThreadWidget.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadTrackingLiveActivityWidget.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* WidgetGlyphViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetGlyphViews.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000009 /* SarosHarmonicJournalWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = SarosHarmonicJournalWidgets.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000011 /* LiveTrackingFlip.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; name = LiveTrackingFlip.wav; path = SarosHarmonicJournal/Resources/LiveTrackingFlip.wav; sourceTree = "<group>"; };
 		ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosHarmonicJournalApp.swift; path = SarosHarmonicJournal/App/SarosHarmonicJournalApp.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
+		B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalTemporalEngine.swift; path = SarosHarmonicJournal/Domain/JournalTemporalEngine.swift; sourceTree = "<group>"; };
 		BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = eclipse_times.db; path = SarosHarmonicJournal/Resources/SolarData/eclipse_times.db; sourceTree = "<group>"; };
+		C0DE00000000000000000002 /* CubeMapView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CubeMapView.swift; path = SarosHarmonicJournal/Views/CubeMapView.swift; sourceTree = "<group>"; };
 		C16E33843D12AFBD6A69B9FA /* Resonance.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Resonance.swift; path = SarosHarmonicJournal/Domain/Resonance.swift; sourceTree = "<group>"; };
 		C391FB837FAA81EF9A1D423F /* ExportService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExportService.swift; path = SarosHarmonicJournal/Services/ExportService.swift; sourceTree = "<group>"; };
 		C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LocalExportServer.swift; path = SarosHarmonicJournal/Services/LocalExportServer.swift; sourceTree = "<group>"; };
 		CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EclipseService.swift; path = SarosHarmonicJournal/Services/EclipseService.swift; sourceTree = "<group>"; };
 		D70425E56BEB65E632655B2F /* BundledSolarEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BundledSolarEclipseService.swift; path = SarosHarmonicJournal/Services/BundledSolarEclipseService.swift; sourceTree = "<group>"; };
+		DAD000000000000000000002 /* MoonPhaseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoonPhaseService.swift; path = SarosHarmonicJournal/Services/MoonPhaseService.swift; sourceTree = "<group>"; };
+		DAD000000000000000000004 /* MoonData */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; name = MoonData; path = SarosHarmonicJournal/Resources/MoonData; sourceTree = "<group>"; };
 		DD35701B7925466AD215607E /* SarosClockTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosClockTests.swift; path = SarosHarmonicJournalTests/SarosClockTests.swift; sourceTree = "<group>"; };
 		F1130915A1EB1D483B261DA9 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = SarosHarmonicJournal/Resources/Assets.xcassets; sourceTree = "<group>"; };
 		F8072651E8AE5C7C39EC512D /* ArchiveView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ArchiveView.swift; path = SarosHarmonicJournal/Views/ArchiveView.swift; sourceTree = "<group>"; };
@@ -244,7 +244,7 @@
 				8BFEA87F6EA243E541D15FE7 /* AppServices.swift */,
 				5ED4F9AF52D61D654A5C63C7 /* RootView.swift */,
 				ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */,
-					710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
+				710E46DDA87B0752A5F00CA1 /* EntityFactory.swift */,
 				0D4F2A6E02B2495AA63A1C91 /* CustomFlipEvent.swift */,
 				0E5F7A9148B640C49830214B /* ThreadGroup.swift */,
 				12345ABCDE12345ABCDE1235 /* JournalDeviceIdentity.swift */,
@@ -294,17 +294,6 @@
 			name = SarosHarmonicJournal;
 			sourceTree = "<group>";
 		};
-		A6FAFA372ECA40B56820B7D1 = {
-			isa = PBXGroup;
-			children = (
-				1C69C62B3175B71F070E74A8 /* Products */,
-				CBCFDD27257B252E345A21CB /* Frameworks */,
-				86AB1C569345615094E42E77 /* SarosHarmonicJournal */,
-				A30000000000000000000001 /* SarosHarmonicJournalWidgets */,
-				35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */,
-			);
-			sourceTree = "<group>";
-		};
 		A30000000000000000000001 /* SarosHarmonicJournalWidgets */ = {
 			isa = PBXGroup;
 			children = (
@@ -316,6 +305,17 @@
 				A20000000000000000000007 /* WidgetGlyphViews.swift */,
 			);
 			path = SarosHarmonicJournalWidgets;
+			sourceTree = "<group>";
+		};
+		A6FAFA372ECA40B56820B7D1 = {
+			isa = PBXGroup;
+			children = (
+				1C69C62B3175B71F070E74A8 /* Products */,
+				CBCFDD27257B252E345A21CB /* Frameworks */,
+				86AB1C569345615094E42E77 /* SarosHarmonicJournal */,
+				A30000000000000000000001 /* SarosHarmonicJournalWidgets */,
+				35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */,
+			);
 			sourceTree = "<group>";
 		};
 		CBCFDD27257B252E345A21CB /* Frameworks */ = {
@@ -401,12 +401,12 @@
 				TargetAttributes = {
 					4589DE551739F91922B242AB = {
 						CreatedOnToolsVersion = 26.5;
-						DevelopmentTeam = BRJ7VGZ8KW;
+						DevelopmentTeam = 3477AQKK6R;
 						ProvisioningStyle = Automatic;
 					};
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
-						DevelopmentTeam = BRJ7VGZ8KW;
+						DevelopmentTeam = 3477AQKK6R;
 						ProvisioningStyle = Automatic;
 					};
 					B1D227DBDE348C208CD4A1E5 = {
@@ -477,6 +477,18 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A40000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000003 /* ThreadTrackingActivity.swift in Sources */,
+				A10000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift in Sources */,
+				A10000000000000000000005 /* TrackedThreadWidget.swift in Sources */,
+				A10000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift in Sources */,
+				A10000000000000000000007 /* WidgetGlyphViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E2BCB4B66D7FE5AA54071563 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -484,7 +496,7 @@
 				482C82DF26BFCB98C4D65115 /* AppServices.swift in Sources */,
 				350F03141DC5AF24A8E8C539 /* RootView.swift in Sources */,
 				2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */,
-					CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
+				CAEE0EC9F911A9D93E5B85DE /* EntityFactory.swift in Sources */,
 				0D4F2A6E02B2495AA63A1C90 /* CustomFlipEvent.swift in Sources */,
 				0E5F7A9148B640C49830214A /* ThreadGroup.swift in Sources */,
 				12345ABCDE12345ABCDE1234 /* JournalDeviceIdentity.swift in Sources */,
@@ -533,18 +545,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A40000000000000000000001 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A10000000000000000000003 /* ThreadTrackingActivity.swift in Sources */,
-				A10000000000000000000004 /* SarosHarmonicJournalWidgetsBundle.swift in Sources */,
-				A10000000000000000000005 /* TrackedThreadWidget.swift in Sources */,
-				A10000000000000000000006 /* ThreadTrackingLiveActivityWidget.swift in Sources */,
-				A10000000000000000000007 /* WidgetGlyphViews.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -572,7 +572,7 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournal/Resources/SarosHarmonicJournal.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -582,7 +582,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -701,9 +701,10 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournal/Resources/SarosHarmonicJournal.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
@@ -712,8 +713,9 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -786,7 +788,7 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalWidgets/SarosHarmonicJournalWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -794,7 +796,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -812,14 +814,14 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalWidgets/SarosHarmonicJournalWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = BRJ7VGZ8KW;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournalWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -842,6 +844,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A70000000000000000000003 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A70000000000000000000002 /* Release */,
+				A70000000000000000000001 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		AC23209F804AD3420BA96C3F /* Build configuration list for PBXProject "SarosHarmonicJournal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -856,15 +867,6 @@
 			buildConfigurations = (
 				9A214D7B1556EDC95DFF9192 /* Release */,
 				059C89B2DE9FE39175179330 /* Debug */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		A70000000000000000000003 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalWidgets" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A70000000000000000000002 /* Release */,
-				A70000000000000000000001 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
