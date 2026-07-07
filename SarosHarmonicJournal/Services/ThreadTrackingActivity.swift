@@ -50,8 +50,8 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     let activityEndDate: Date?
 
     var deepLinkURL: URL? {
-        if isActivityLogging == true {
-            return URL(string: "exeligmos://activity/stop")
+        if isActivityLogging == true || ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
+            return URL(string: "exeligmos://record")
         }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://saros")
@@ -60,8 +60,8 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
     }
 
     var recordURL: URL? {
-        if isActivityLogging == true {
-            return URL(string: "exeligmos://activity/stop")
+        if isActivityLogging == true || ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
+            return URL(string: "exeligmos://record")
         }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://record")
@@ -77,12 +77,26 @@ struct TrackingWaveformSpikeMarker: Codable, Hashable {
 }
 
 enum ThreadTrackingSharedStore {
-    static let appGroupIdentifier = "group.com.exeligmos.sarosjournal"
+    static let appGroupIdentifier = "group.fractonica.exeligmos"
     static let journalTrackingID = "journal-live"
     static let activityLoggingID = "journal-activity-logging"
+    static let activityLoggingIDPrefix = "journal-activity-logging."
     static let snapshotKey = "trackedThread.snapshot"
     static let widgetKind = "TrackedThreadWidget"
     static let flipRolloverDelay: TimeInterval = 8
+
+    static func activityLoggingID(for sessionID: UUID) -> String {
+        "\(activityLoggingIDPrefix)\(sessionID.uuidString)"
+    }
+
+    static func isActivityLoggingID(_ threadID: String) -> Bool {
+        threadID == activityLoggingID || threadID.hasPrefix(activityLoggingIDPrefix)
+    }
+
+    static func activitySessionID(from threadID: String) -> UUID? {
+        guard threadID.hasPrefix(activityLoggingIDPrefix) else { return nil }
+        return UUID(uuidString: String(threadID.dropFirst(activityLoggingIDPrefix.count)))
+    }
 
     static func save(_ snapshot: ThreadTrackingSnapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }

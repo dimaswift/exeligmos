@@ -16,6 +16,19 @@ enum JournalFormatters {
         return formatter
     }()
 
+    static let monthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        return formatter
+    }()
+
+    static let timeOfDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     static let time: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.day, .hour, .minute]
@@ -96,16 +109,17 @@ extension Color {
 enum JournalRecordMarkers {
     static let fallback = "✦"
 
-    private static let emojiRanges: [ClosedRange<Int>] = [
-        0x1F300...0x1F5FF,
-        0x1F600...0x1F64F,
-        0x1F900...0x1F9FF
+    private static let supportedEmoji = [
+        "😀", "😄", "😂", "🙂", "😉", "😍", "😎", "🤔", "😴", "😇", "🥳",
+        "🐶", "🐱", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐸", "🐵", "🐙", "🦋",
+        "🌞", "🌙", "⭐️", "🔥", "💧", "🌊", "🌈", "☁️", "🌧️", "🌱", "🌿", "🍄", "🌵",
+        "⚡️", "✨", "💫", "🎯", "🎲", "🎨", "🎭", "🎧", "🎹", "📚", "✏️", "🔮", "🧭",
+        "⏳", "⌛️", "🚀", "🛸", "🚲", "🚗", "✈️", "⛵️", "🏔️", "🏝️", "🏠", "💎", "🔑",
+        "❤️", "💜", "💚", "💛"
     ]
 
     static func random() -> String {
-        let randomRange = emojiRanges.randomElement()!
-        let randomScalar = UnicodeScalar(randomRange.randomElement()!)!
-        return String(randomScalar)
+        supportedEmoji.randomElement() ?? fallback
     }
 
     static func marker(from value: String?) -> String {
@@ -635,10 +649,11 @@ enum SarosCountdownCalculator {
 struct SarosCountdownGlyphTimer: View {
     let reading: SarosCountdownReading
     var size: CGFloat = 58
+    var showsDots = true
 
     var body: some View {
         VStack(spacing: 3) {
-            if reading.dotCount > 0 {
+            if showsDots, reading.dotCount > 0 {
                 dotStack
             }
 
@@ -655,7 +670,7 @@ struct SarosCountdownGlyphTimer: View {
     }
 
     private var dotStack: some View {
-        VStack(spacing: 3) {
+        HStack(spacing: 3) {
             ForEach(0..<reading.dotCount, id: \.self) { _ in
                 Circle()
                     .fill(reading.scale.color)
@@ -663,7 +678,7 @@ struct SarosCountdownGlyphTimer: View {
                     .opacity(0.82)
             }
         }
-        .frame(width: 10)
+        .frame(height: 8)
     }
 }
 

@@ -39,8 +39,8 @@ struct ThreadTrackingLiveActivityWidget: Widget {
     }
 
     private func deepLinkURL(for threadID: String) -> URL? {
-        if threadID == ThreadTrackingSharedStore.activityLoggingID {
-            return URL(string: "exeligmos://activity/stop")
+        if ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
+            return URL(string: "exeligmos://record")
         }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
             return URL(string: "exeligmos://saros")
@@ -134,8 +134,8 @@ private struct ThreadTrackingLockScreenView: View {
     }
 
     private func actionURL(for threadID: String) -> URL? {
-        if threadID == ThreadTrackingSharedStore.activityLoggingID {
-            return URL(string: "exeligmos://activity/stop")
+        if ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
+            return URL(string: "exeligmos://record")
         }
         return URL(string: "exeligmos://record/\(threadID)")
     }
@@ -274,8 +274,8 @@ private struct LiveTrackingTimerView: View {
     }
 
     private func actionURL(for threadID: String) -> URL? {
-        if threadID == ThreadTrackingSharedStore.activityLoggingID {
-            return URL(string: "exeligmos://activity/stop")
+        if ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
+            return URL(string: "exeligmos://record")
         }
         return URL(string: "exeligmos://record/\(threadID)")
     }

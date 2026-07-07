@@ -29,8 +29,6 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
               endDate > Date(),
               await requestAuthorization() else { return }
 
-        await cancelActivityCountdown()
-
         let content = UNMutableNotificationContent()
         content.title = "Countdown complete"
         content.body = "\(session.template.resolvedStaticEmoji) \(session.template.previewTitle) is ready to record."
@@ -58,6 +56,12 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         let pending = await pendingRequests()
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix("\(identifierPrefix)activity.countdown.") }
+        )
+    }
+
+    func cancelActivityCountdown(sessionID: UUID) async {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: ["\(identifierPrefix)activity.countdown.\(sessionID.uuidString)"]
         )
     }
 

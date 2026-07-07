@@ -72,7 +72,9 @@ struct RootView: View {
                 JournalEntryCaptureView(
                     recordStartedAt: request.startDate,
                     eventEndDate: request.endDate,
-                    template: request.template
+                    template: request.template,
+                    initialText: request.text,
+                    initialMediaItems: request.mediaItems
                 )
             }
         }
@@ -133,6 +135,8 @@ struct RootView: View {
         case "activity":
             if url.pathComponents.dropFirst().first == "stop" {
                 stopContinuousActivityLogging()
+            } else {
+                selectedTab = .record
             }
         case "record":
             if let entityID = entityID(from: url) {
@@ -179,25 +183,25 @@ struct RootView: View {
         activityCaptureRequest = ActivityEntryCaptureRequest(
             startDate: window.startDate,
             endDate: window.endDate,
-            template: window.template
+            template: window.template,
+            text: window.text,
+            mediaItems: window.mediaItems
         )
         Task {
-            await ThreadLiveActivityService.stopActivityLogging()
-            await NotificationScheduler.shared.cancelActivityCountdown()
+            await ThreadLiveActivityService.stopActivityLogging(sessionID: window.sessionID)
+            await ThreadLiveActivityService.syncActivityLogging()
+            await NotificationScheduler.shared.cancelActivityCountdown(sessionID: window.sessionID)
         }
     }
 
     private func consumeCompletedCountdownIfNeeded() {
-        guard let window = ContinuousActivityLogger.finishCompletedCountdownIfNeeded() else { return }
-        selectedTab = .record
-        activityCaptureRequest = ActivityEntryCaptureRequest(
-            startDate: window.startDate,
-            endDate: window.endDate,
-            template: window.template
-        )
+        let completedIDs = ContinuousActivityLogger.markCompletedCountdownsIfNeeded()
+        guard !completedIDs.isEmpty else { return }
         Task {
-            await ThreadLiveActivityService.stopActivityLogging()
-            await NotificationScheduler.shared.cancelActivityCountdown()
+            await ThreadLiveActivityService.syncActivityLogging()
+            for sessionID in completedIDs {
+                await NotificationScheduler.shared.cancelActivityCountdown(sessionID: sessionID)
+            }
         }
     }
 
@@ -234,13 +238,18 @@ private struct ActivityEntryCaptureRequest: Identifiable {
     let startDate: Date
     let endDate: Date
     let template: JournalTemplateSeed
+    let text: String?
+    let mediaItems: [JournalMediaItem]
 }
 
 struct ContinuousActivityWindow: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
+    let sessionID: UUID
     let startDate: Date
     let endDate: Date
     let template: JournalTemplateSeed
+    let text: String?
+    let mediaItems: [JournalMediaItem]
 }
 
 enum ContinuousActivityKind: String, Codable, Hashable {
@@ -248,15 +257,20 @@ enum ContinuousActivityKind: String, Codable, Hashable {
     case countdown
 }
 
-struct ContinuousActivitySession: Codable, Hashable {
+struct ContinuousActivitySession: Codable, Hashable, Identifiable {
     let id: UUID
     let kind: ContinuousActivityKind
     let startDate: Date
     let endDate: Date?
     let template: JournalTemplateSeed
     let sarosCountdownSelection: SarosCountdownSelection?
+    var completedAt: Date?
+    var draftText: String?
+    var mediaItems: [JournalMediaItem]
+    var updatedAt: Date
 
     var isCountdown: Bool { kind == .countdown }
+    var isCompleted: Bool { completedAt != nil }
 
     var displayEndDate: Date? {
         switch kind {
@@ -273,7 +287,7 @@ enum ContinuousActivityLogger {
     private static let startDateKey = "continuousActivityLogger.startDate"
 
     static var startDate: Date? {
-        if let session {
+        if let session = sessions.first {
             return session.startDate
         }
         let timestamp = UserDefaults.standard.double(forKey: startDateKey)
@@ -281,13 +295,29 @@ enum ContinuousActivityLogger {
         return Date(timeIntervalSince1970: timestamp)
     }
 
+    static var sessions: [ContinuousActivitySession] {
+        sessions(from: UserDefaults.standard.data(forKey: sessionKey) ?? Data())
+    }
+
     static var session: ContinuousActivitySession? {
-        session(from: UserDefaults.standard.data(forKey: sessionKey) ?? Data())
+        sessions.first
     }
 
     static func session(from data: Data) -> ContinuousActivitySession? {
-        guard !data.isEmpty else { return nil }
-        return try? JSONDecoder().decode(ContinuousActivitySession.self, from: data)
+        sessions(from: data).first
+    }
+
+    static func sessions(from data: Data) -> [ContinuousActivitySession] {
+        guard !data.isEmpty else {
+            return legacySession().map { [$0] } ?? []
+        }
+        if let decoded = try? JSONDecoder().decode([ContinuousActivitySession].self, from: data) {
+            return decoded.sorted { $0.startDate < $1.startDate }
+        }
+        if let decoded = try? JSONDecoder().decode(ContinuousActivitySession.self, from: data) {
+            return [decoded]
+        }
+        return legacySession().map { [$0] } ?? []
     }
 
     @discardableResult
@@ -302,9 +332,13 @@ enum ContinuousActivityLogger {
             startDate: date,
             endDate: nil,
             template: template,
-            sarosCountdownSelection: sarosCountdownSelection
+            sarosCountdownSelection: sarosCountdownSelection,
+            completedAt: nil,
+            draftText: template.text.nilIfBlank,
+            mediaItems: [],
+            updatedAt: date
         )
-        save(session)
+        append(session)
         return session
     }
 
@@ -322,32 +356,82 @@ enum ContinuousActivityLogger {
             startDate: date,
             endDate: date.addingTimeInterval(safeDuration),
             template: template,
-            sarosCountdownSelection: sarosCountdownSelection ?? SarosCountdownScale.normalized(forDuration: safeDuration)
+            sarosCountdownSelection: sarosCountdownSelection ?? SarosCountdownScale.normalized(forDuration: safeDuration),
+            completedAt: nil,
+            draftText: template.text.nilIfBlank,
+            mediaItems: [],
+            updatedAt: date
         )
-        save(session)
+        append(session)
         return session
     }
 
-    static func finish(at date: Date = Date()) -> ContinuousActivityWindow? {
-        guard let session = session ?? legacySession() else { return nil }
-        clear()
-        return ContinuousActivityWindow(
-            startDate: session.startDate,
-            endDate: max(date, session.startDate),
-            template: session.template
-        )
+    static func updateDraft(
+        sessionID: UUID,
+        text: String? = nil,
+        mediaItems: [JournalMediaItem]? = nil,
+        at date: Date = Date()
+    ) {
+        var current = sessions
+        guard let index = current.firstIndex(where: { $0.id == sessionID }) else { return }
+        if let text {
+            current[index].draftText = text.nilIfBlank
+        }
+        if let mediaItems {
+            current[index].mediaItems = mediaItems
+        }
+        current[index].updatedAt = date
+        save(current)
     }
 
-    static func finishCompletedCountdownIfNeeded(at date: Date = Date()) -> ContinuousActivityWindow? {
-        guard let session, session.kind == .countdown, let endDate = session.endDate, date >= endDate else {
-            return nil
+    static func appendMedia(_ item: JournalMediaItem, to sessionID: UUID, at date: Date = Date()) {
+        var current = sessions
+        guard let index = current.firstIndex(where: { $0.id == sessionID }) else { return }
+        current[index].mediaItems.append(item)
+        current[index].updatedAt = date
+        save(current)
+    }
+
+    static func removeMedia(_ item: JournalMediaItem, from sessionID: UUID, at date: Date = Date()) {
+        var current = sessions
+        guard let index = current.firstIndex(where: { $0.id == sessionID }) else { return }
+        current[index].mediaItems.removeAll { $0.id == item.id }
+        current[index].updatedAt = date
+        save(current)
+    }
+
+    static func finish(sessionID: UUID? = nil, at date: Date = Date()) -> ContinuousActivityWindow? {
+        var current = sessions
+        guard !current.isEmpty else { return nil }
+        let index = sessionID.flatMap { id in current.firstIndex { $0.id == id } } ?? current.startIndex
+        let session = current.remove(at: index)
+        save(current)
+        let resolvedEndDate = session.completedAt ?? date
+        return window(for: session, endDate: max(resolvedEndDate, session.startDate))
+    }
+
+    @discardableResult
+    static func markCompletedCountdownsIfNeeded(at date: Date = Date()) -> [UUID] {
+        var current = sessions
+        var completedIDs: [UUID] = []
+        for index in current.indices {
+            guard current[index].kind == .countdown,
+                  current[index].completedAt == nil,
+                  let endDate = current[index].endDate,
+                  date >= endDate else {
+                continue
+            }
+            current[index].completedAt = endDate
+            current[index].updatedAt = date
+            completedIDs.append(current[index].id)
         }
-        clear()
-        return ContinuousActivityWindow(
-            startDate: session.startDate,
-            endDate: max(endDate, session.startDate),
-            template: session.template
-        )
+        guard !completedIDs.isEmpty else { return [] }
+        save(current)
+        return completedIDs
+    }
+
+    static func clear(sessionID: UUID) {
+        save(sessions.filter { $0.id != sessionID })
     }
 
     static func clear() {
@@ -355,10 +439,31 @@ enum ContinuousActivityLogger {
         UserDefaults.standard.removeObject(forKey: startDateKey)
     }
 
-    private static func save(_ session: ContinuousActivitySession) {
-        guard let data = try? JSONEncoder().encode(session) else { return }
-        UserDefaults.standard.set(data, forKey: sessionKey)
+    private static func append(_ session: ContinuousActivitySession) {
+        var current = sessions
+        current.append(session)
+        save(current)
+    }
+
+    private static func save(_ sessions: [ContinuousActivitySession]) {
+        if sessions.isEmpty {
+            UserDefaults.standard.removeObject(forKey: sessionKey)
+        } else if let data = try? JSONEncoder().encode(sessions.sorted(by: { $0.startDate < $1.startDate })) {
+            UserDefaults.standard.set(data, forKey: sessionKey)
+        }
         UserDefaults.standard.removeObject(forKey: startDateKey)
+    }
+
+    private static func window(for session: ContinuousActivitySession, endDate: Date) -> ContinuousActivityWindow {
+        ContinuousActivityWindow(
+            id: session.id,
+            sessionID: session.id,
+            startDate: session.startDate,
+            endDate: endDate,
+            template: session.template,
+            text: session.draftText,
+            mediaItems: session.mediaItems
+        )
     }
 
     private static func legacySession() -> ContinuousActivitySession? {
@@ -370,7 +475,11 @@ enum ContinuousActivityLogger {
             startDate: Date(timeIntervalSince1970: timestamp),
             endDate: nil,
             template: .random,
-            sarosCountdownSelection: .timerDefault
+            sarosCountdownSelection: .timerDefault,
+            completedAt: nil,
+            draftText: nil,
+            mediaItems: [],
+            updatedAt: Date(timeIntervalSince1970: timestamp)
         )
     }
 }

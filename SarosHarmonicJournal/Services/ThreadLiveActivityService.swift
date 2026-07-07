@@ -99,16 +99,19 @@ enum ThreadLiveActivityService {
     static func activityLoggingSnapshot(
         startDate: Date,
         endDate: Date? = nil,
+        sessionID: UUID? = nil,
+        title: String = "Activity",
         date: Date = Date()
     ) -> ThreadTrackingSnapshot {
         let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: date)
         let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
         return ThreadTrackingSnapshot(
-            threadID: ThreadTrackingSharedStore.activityLoggingID,
-            threadTitle: "Activity",
+            threadID: sessionID.map(ThreadTrackingSharedStore.activityLoggingID(for:))
+                ?? ThreadTrackingSharedStore.activityLoggingID,
+            threadTitle: title,
             saros: 0,
             harmonicDepth: ActivityLoggingGlyph.depth,
-            eventName: ActivityLoggingGlyph.title(for: glyph),
+            eventName: title,
             energyPercent: nil,
             momentum: nil,
             waveDirectionRawValue: nil,
@@ -147,6 +150,19 @@ enum ThreadLiveActivityService {
             isActivityLogging: true,
             activityStartDate: startDate,
             activityEndDate: endDate
+        )
+    }
+
+    static func activityLoggingSnapshot(
+        session: ContinuousActivitySession,
+        date: Date = Date()
+    ) -> ThreadTrackingSnapshot {
+        activityLoggingSnapshot(
+            startDate: session.startDate,
+            endDate: session.displayEndDate,
+            sessionID: session.id,
+            title: session.template.name.nilIfBlank ?? "Activity",
+            date: date
         )
     }
 
@@ -239,7 +255,9 @@ enum ThreadLiveActivityService {
     static func start(snapshot: ThreadTrackingSnapshot) async throws {
         ThreadTrackingSharedStore.save(snapshot)
         WidgetCenter.shared.reloadTimelines(ofKind: ThreadTrackingSharedStore.widgetKind)
-        await scheduleFlipAlarm(for: snapshot)
+        if snapshot.isActivityLogging != true {
+            await scheduleFlipAlarm(for: snapshot)
+        }
 
         #if canImport(ActivityKit)
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
@@ -299,8 +317,13 @@ enum ThreadLiveActivityService {
             staleDate: liveActivityStaleDate(for: snapshot, after: Date())
         )
 
-        for activity in Activity<ThreadTrackingAttributes>.activities where activity.attributes.threadID != snapshot.threadID {
-            await activity.end(nil, dismissalPolicy: .immediate)
+        for activity in Activity<ThreadTrackingAttributes>.activities {
+            guard activity.attributes.threadID != snapshot.threadID else { continue }
+            let isSnapshotActivityLogging = ThreadTrackingSharedStore.isActivityLoggingID(snapshot.threadID)
+            let isExistingActivityLogging = ThreadTrackingSharedStore.isActivityLoggingID(activity.attributes.threadID)
+            if !isSnapshotActivityLogging && !isExistingActivityLogging {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
         }
 
         if let existing = Activity<ThreadTrackingAttributes>.activities.first(where: { $0.attributes.threadID == snapshot.threadID }) {
@@ -318,17 +341,61 @@ enum ThreadLiveActivityService {
     }
 
     @MainActor
-    static func stopActivityLogging() async {
-        if ThreadTrackingSharedStore.load()?.threadID == ThreadTrackingSharedStore.activityLoggingID {
+    static func stopActivityLogging(sessionID: UUID? = nil) async {
+        let targetThreadID = sessionID.map(ThreadTrackingSharedStore.activityLoggingID(for:))
+
+        if let snapshot = ThreadTrackingSharedStore.load(),
+           ThreadTrackingSharedStore.isActivityLoggingID(snapshot.threadID),
+           targetThreadID == nil || snapshot.threadID == targetThreadID {
             ThreadTrackingSharedStore.clear()
             WidgetCenter.shared.reloadTimelines(ofKind: ThreadTrackingSharedStore.widgetKind)
         }
 
         #if canImport(ActivityKit)
-        for activity in Activity<ThreadTrackingAttributes>.activities where activity.attributes.threadID == ThreadTrackingSharedStore.activityLoggingID {
+        for activity in Activity<ThreadTrackingAttributes>.activities
+            where ThreadTrackingSharedStore.isActivityLoggingID(activity.attributes.threadID)
+                && (targetThreadID == nil || activity.attributes.threadID == targetThreadID) {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         #endif
+    }
+
+    @MainActor
+    static func syncActivityLogging(
+        sessions: [ContinuousActivitySession] = ContinuousActivityLogger.sessions,
+        preferredSessionID: UUID? = nil
+    ) async {
+        let activeSessionIDs = Set(sessions.map(\.id))
+
+        #if canImport(ActivityKit)
+        for activity in Activity<ThreadTrackingAttributes>.activities
+            where ThreadTrackingSharedStore.isActivityLoggingID(activity.attributes.threadID) {
+            if let sessionID = ThreadTrackingSharedStore.activitySessionID(from: activity.attributes.threadID),
+               activeSessionIDs.contains(sessionID) {
+                continue
+            }
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        #endif
+
+        guard let displaySession = preferredSessionID.flatMap({ id in sessions.first { $0.id == id } })
+            ?? sessions.first(where: { !$0.isCompleted })
+            ?? sessions.first
+        else {
+            if ThreadTrackingSharedStore.load().map({ ThreadTrackingSharedStore.isActivityLoggingID($0.threadID) }) == true {
+                ThreadTrackingSharedStore.clear()
+                WidgetCenter.shared.reloadTimelines(ofKind: ThreadTrackingSharedStore.widgetKind)
+            }
+            return
+        }
+
+        let snapshot = activityLoggingSnapshot(session: displaySession)
+        try? await start(snapshot: snapshot)
+    }
+
+    @MainActor
+    static func stopActivityLoggingIfNeeded() async {
+        await syncActivityLogging()
     }
 
     private static func liveActivityStaleDate(for snapshot: ThreadTrackingSnapshot, after date: Date) -> Date {

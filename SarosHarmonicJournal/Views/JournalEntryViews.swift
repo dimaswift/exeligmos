@@ -119,7 +119,7 @@ struct JournalEntryRow: View {
             }
 
             HStack(spacing: 10) {
-                Text(JournalFormatters.dateTime.string(from: entry.eventDate))
+                Text(entryDateLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let remoteDeviceEmoji {
@@ -148,6 +148,17 @@ struct JournalEntryRow: View {
 
     private var primaryTitle: String {
         context.displayTitleWithoutSaros
+    }
+
+    private var entryDateLabel: String {
+        guard entry.eventDuration > SarosPulseCalculator.averageDuration(for: .mega) else {
+            return JournalFormatters.dateTime.string(from: entry.eventDate)
+        }
+        let endDate = entry.effectiveEndDate
+        if Calendar.current.isDate(entry.eventDate, inSameDayAs: endDate) {
+            return "\(JournalFormatters.monthDay.string(from: entry.eventDate)) \(JournalFormatters.timeOfDay.string(from: entry.eventDate))-\(JournalFormatters.timeOfDay.string(from: endDate))"
+        }
+        return "\(JournalFormatters.dateTime.string(from: entry.eventDate)) - \(JournalFormatters.dateTime.string(from: endDate))"
     }
 
     private var displayDepth: Int {
@@ -562,6 +573,7 @@ struct JournalEntryCaptureView: View {
         eventEndDate: Date? = nil,
         template: JournalTemplateSeed = .random,
         draft: JournalEntryDraft? = nil,
+        initialText: String? = nil,
         initialMediaItems: [JournalMediaItem] = [],
         initialLatitude: Double? = nil,
         initialLongitude: Double? = nil
@@ -575,7 +587,7 @@ struct JournalEntryCaptureView: View {
         self.initialLongitude = draft?.longitude ?? initialLongitude
         _eventDate = State(initialValue: draft?.eventDate ?? startedAt)
         _eventEndDate = State(initialValue: draft?.endDate ?? eventEndDate ?? draft?.eventDate ?? startedAt)
-        _noteText = State(initialValue: draft?.text ?? template.text)
+        _noteText = State(initialValue: draft?.text ?? initialText ?? template.text)
         _emoji = State(initialValue: draft?.emoji ?? template.resolvedEmoji)
         _mediaItems = State(initialValue: draft?.mediaItems ?? initialMediaItems)
         _weatherCode = State(initialValue: draft?.weatherCode ?? lastWeather.code)
@@ -1395,6 +1407,7 @@ private struct JournalTemplateCaptureRequest: Identifiable, Hashable {
     let startDate: Date
     let endDate: Date
     let template: JournalTemplateSeed
+    var text: String? = nil
     var mediaItems: [JournalMediaItem] = []
     var latitude: Double?
     var longitude: Double?
@@ -1472,15 +1485,17 @@ private struct ContinuousActivitySessionGlyphBlock: View {
     }
 
     private var refreshInterval: TimeInterval {
-        max(selection.scale.leastSignificantDigitDuration, 1.0 / 60.0)
+        guard !session.isCompleted else { return 60 }
+        return max(selection.scale.leastSignificantDigitDuration, 1.0 / 60.0)
     }
 
     var body: some View {
         TimelineView(.periodic(from: session.startDate, by: refreshInterval)) { timeline in
+            let displayDate = session.completedAt ?? timeline.date
             let reading = SarosCountdownCalculator.reading(
                 startDate: session.startDate,
                 endDate: session.displayEndDate,
-                now: timeline.date,
+                now: displayDate,
                 direction: direction,
                 selection: selection
             )
@@ -1505,6 +1520,788 @@ private struct ContinuousActivitySessionGlyphBlock: View {
     }
 }
 
+private struct ActiveActivityDraftPager: View {
+    let sessions: [ContinuousActivitySession]
+    @Binding var selectedID: UUID?
+    let height: CGFloat
+    let recordingActivityID: UUID?
+    let isRecordingAudio: Bool
+    let onLibrary: ([PhotosPickerItem]) -> Void
+    let onCamera: () -> Void
+    let onToggleAudio: () -> Void
+    let onStop: (ContinuousActivitySession) -> Void
+    let onUpdateText: (ContinuousActivitySession, String) -> Void
+    let onRemoveMedia: (ContinuousActivitySession, JournalMediaItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GeometryReader { proxy in
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(sessions) { session in
+                            ActiveActivityDraftPage(
+                                session: session,
+                                noteText: textBinding(for: session),
+                                height: cardHeight,
+                                isRecordingAudio: isRecordingAudio && recordingActivityID == session.id,
+                                onLibrary: onLibrary,
+                                onCamera: onCamera,
+                                onToggleAudio: onToggleAudio,
+                                onStop: { onStop(session) },
+                                onRemoveMedia: { item in onRemoveMedia(session, item) }
+                            )
+                            .frame(width: proxy.size.width)
+                            .id(session.id)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollIndicators(.hidden)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $selectedID)
+                .frame(height: cardHeight)
+            }
+            .frame(height: cardHeight)
+            .onAppear {
+                selectedID = selectedID ?? sessions.first?.id
+            }
+
+            ActivitySessionSelectorStrip(
+                sessions: sessions,
+                selectedID: $selectedID
+            )
+        }
+        .frame(height: height)
+    }
+
+    private var cardHeight: CGFloat {
+        max(360, height - 44)
+    }
+
+    private func textBinding(for session: ContinuousActivitySession) -> Binding<String> {
+        Binding(
+            get: {
+                sessions.first(where: { $0.id == session.id })?.draftText ?? ""
+            },
+            set: { text in
+                onUpdateText(session, text)
+            }
+        )
+    }
+}
+
+private struct ActiveActivityDraftPage: View {
+    let session: ContinuousActivitySession
+    @Binding var noteText: String
+    let height: CGFloat
+    let isRecordingAudio: Bool
+    let onLibrary: ([PhotosPickerItem]) -> Void
+    let onCamera: () -> Void
+    let onToggleAudio: () -> Void
+    let onStop: () -> Void
+    let onRemoveMedia: (JournalMediaItem) -> Void
+
+    @FocusState private var isNoteFocused: Bool
+    @State private var photoItems: [PhotosPickerItem] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                ContinuousActivitySessionGlyphBlock(session: session)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(role: session.isCompleted ? nil : .destructive, action: onStop) {
+                    Image(systemName: session.isCompleted ? "checkmark.circle.fill" : "stop.circle.fill")
+                        .font(.title2.weight(.semibold))
+                        .frame(width: 42, height: 42)
+                        .foregroundStyle(session.isCompleted ? Color.green : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(session.isCompleted ? "Open completed activity" : "Stop activity")
+            }
+
+            HStack(spacing: 12) {
+                PhotosPicker(selection: $photoItems, matching: .images) {
+                    JournalEntryActionIcon(systemName: "photo.on.rectangle")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add image")
+                .onChange(of: photoItems) { _, newItems in
+                    guard !newItems.isEmpty else { return }
+                    onLibrary(newItems)
+                    photoItems = []
+                }
+
+                Button(action: onCamera) {
+                    JournalEntryActionIcon(systemName: "camera.viewfinder")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Capture photo")
+
+                Button(action: onToggleAudio) {
+                    JournalEntryActionIcon(
+                        systemName: isRecordingAudio ? "stop.circle.fill" : "mic.circle.fill",
+                        tint: isRecordingAudio ? .red : .accentColor
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isRecordingAudio ? "Stop audio" : "Record audio")
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            VStack(spacing: 6) {
+                HStack {
+                    Spacer()
+                    Button("Done") {
+                        dismissKeyboard()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.16), in: Capsule())
+                    .opacity(isNoteFocused ? 1 : 0)
+                    .disabled(!isNoteFocused)
+                }
+                .frame(height: 26)
+
+                TextField("Notes", text: $noteText, axis: .vertical)
+                    .font(.callout)
+                    .lineLimit(7...10)
+                    .textInputAutocapitalization(.sentences)
+                    .focused($isNoteFocused)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 150, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+                    .submitLabel(.done)
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done") {
+                                dismissKeyboard()
+                            }
+                        }
+                    }
+            }
+            .frame(maxHeight: .infinity)
+
+            ActivityDraftMediaStrip(items: session.mediaItems, onRemove: onRemoveMedia)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func dismissKeyboard() {
+        isNoteFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+private struct ActivityDraftMediaStrip: View {
+    let items: [JournalMediaItem]
+    let onRemove: (JournalMediaItem) -> Void
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if items.isEmpty {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.stack")
+                    Image(systemName: "waveform")
+                    Image(systemName: "mic.circle")
+                }
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary.opacity(0.65))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(items) { item in
+                            ActivityDraftMediaThumbnail(item: item) {
+                                onRemove(item)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+            }
+        }
+        .frame(height: 70)
+    }
+}
+
+private struct ActivitySessionSelectorStrip: View {
+    let sessions: [ContinuousActivitySession]
+    @Binding var selectedID: UUID?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(sessions) { session in
+                    Button {
+                        withAnimation(.snappy) {
+                            selectedID = session.id
+                        }
+                    } label: {
+                        ActivitySessionSelectorChip(
+                            session: session,
+                            isSelected: selectedID == session.id
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
+private struct ActivitySessionSelectorChip: View {
+    let session: ContinuousActivitySession
+    let isSelected: Bool
+
+    private var fallbackSelection: SarosCountdownSelection {
+        session.displayEndDate.map {
+            SarosCountdownScale.normalized(forDuration: $0.timeIntervalSince(session.startDate))
+        } ?? SarosCountdownSelection.defaultSaros
+    }
+
+    private var selection: SarosCountdownSelection {
+        session.sarosCountdownSelection ?? fallbackSelection
+    }
+
+    private var direction: SarosCountdownDirection {
+        session.isCountdown ? .down : .up
+    }
+
+    private var refreshInterval: TimeInterval {
+        guard !session.isCompleted else { return 60 }
+        return max(selection.scale.leastSignificantDigitDuration, 1.0 / 60.0)
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: session.startDate, by: refreshInterval)) { timeline in
+            let displayDate = session.completedAt ?? timeline.date
+            let reading = SarosCountdownCalculator.reading(
+                startDate: session.startDate,
+                endDate: session.displayEndDate,
+                now: displayDate,
+                direction: direction,
+                selection: selection
+            )
+
+            HStack(spacing: 8) {
+                Text(session.template.resolvedStaticEmoji)
+                    .font(.title3)
+                SarosCountdownGlyphTimer(reading: reading, size: 28, showsDots: false)
+                    .frame(width: 34, height: 34)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.20) : Color(.secondarySystemGroupedBackground),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(session.template.previewTitle)
+            .accessibilityValue(reading.octalAddress)
+        }
+    }
+}
+
+private struct ActivityDraftMediaThumbnail: View {
+    let item: JournalMediaItem
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if item.type.isImage {
+                    JournalAsyncMediaImage(item: item, contentMode: .fill)
+                } else {
+                    Image(systemName: systemImage(for: item.type))
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.thinMaterial)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Button(role: .destructive, action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption.weight(.bold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.65))
+            }
+            .buttonStyle(.plain)
+            .offset(x: 5, y: -5)
+            .accessibilityLabel("Remove media")
+        }
+        .frame(width: 62, height: 60)
+    }
+}
+
+private struct JournalRecordTopActionBar: View {
+    let hasDraft: Bool
+    let onStart: () -> Void
+    let onResume: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            JournalRecordTopActionButton(
+                title: "Start",
+                systemName: "play.circle.fill",
+                tint: .accentColor,
+                action: onStart
+            )
+
+            if hasDraft {
+                JournalRecordTopActionButton(
+                    title: "Resume",
+                    systemName: "arrow.uturn.forward.circle.fill",
+                    tint: .secondary,
+                    action: onResume
+                )
+            }
+        }
+    }
+}
+
+private struct JournalRecordTopActionButton: View {
+    let title: String
+    let systemName: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemName)
+                .font(.callout.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(tint.opacity(0.32), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct JournalActivityTemplatePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let templates: [JournalTemplate]
+    let onNow: (JournalTemplateCaptureRequest) -> Void
+    let onCountdown: (JournalTemplateSeed, TimeInterval, SarosCountdownSelection) -> Void
+    let onTimer: (JournalTemplateSeed, SarosCountdownSelection) -> Void
+    let onRetroactive: (JournalTemplateRetroactiveMirrorRequest) -> Void
+
+    @State private var selectedTemplate: JournalTemplateSeed?
+    @State private var currentRandomEmoji = JournalRecordMarkers.random()
+    @State private var retroactivePhotoItem: PhotosPickerItem?
+    @State private var isLoadingRetroactivePhoto = false
+    @State private var errorMessage: String?
+
+    private var templateGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 74), spacing: 12)]
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                LazyVGrid(columns: templateGridColumns, spacing: 12) {
+                    randomActivityTemplateCell()
+
+                    ForEach(templates) { template in
+                        activityTemplateCell(JournalTemplateSeed(template: template))
+                    }
+                }
+                .padding(.horizontal, 26)
+
+                if isLoadingRetroactivePhoto {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Loading photo")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Start")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+        }
+        .onChange(of: retroactivePhotoItem) { _, item in
+            guard let item, let selectedTemplate else { return }
+            Task {
+                await importRetroactivePhoto(item, template: selectedTemplate)
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 539_000_000)
+                currentRandomEmoji = JournalRecordMarkers.random()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func randomActivityTemplateCell() -> some View {
+        let isSelected = selectedTemplate?.id == JournalTemplateSeed.randomID
+        let frozenTemplate = isSelected ? selectedTemplate : nil
+        let displayEmoji = frozenTemplate?.resolvedStaticEmoji ?? currentRandomEmoji
+
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.snappy) {
+                    selectedTemplate = isSelected ? nil : JournalTemplateSeed.random(emoji: currentRandomEmoji)
+                }
+            } label: {
+                JournalTemplateGridTile(
+                    title: "Random",
+                    emoji: displayEmoji
+                )
+            }
+            .buttonStyle(.plain)
+
+            if let frozenTemplate, isSelected {
+                JournalActivityTemplateActionPopover(
+                    isLoadingRetroactivePhoto: isLoadingRetroactivePhoto,
+                    retroactivePhotoItem: $retroactivePhotoItem,
+                    onNow: {
+                        let now = Date()
+                        onNow(JournalTemplateCaptureRequest(
+                            startDate: now,
+                            endDate: now,
+                            template: frozenTemplate
+                        ))
+                        dismiss()
+                    },
+                    onCountdown: { duration, selection in
+                        onCountdown(frozenTemplate, duration, selection)
+                        dismiss()
+                    },
+                    onTimer: {
+                        onTimer(frozenTemplate, .timerDefault)
+                        dismiss()
+                    }
+                )
+                .zIndex(1)
+                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .zIndex(isSelected ? 20 : 0)
+    }
+
+    @ViewBuilder
+    private func activityTemplateCell(_ template: JournalTemplateSeed) -> some View {
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.snappy) {
+                    selectedTemplate = selectedTemplate?.id == template.id ? nil : template
+                }
+            } label: {
+                JournalTemplateGridTile(
+                    title: template.previewTitle,
+                    emoji: template.resolvedStaticEmoji
+                )
+            }
+            .buttonStyle(.plain)
+
+            if selectedTemplate?.id == template.id {
+                JournalActivityTemplateActionPopover(
+                    isLoadingRetroactivePhoto: isLoadingRetroactivePhoto,
+                    retroactivePhotoItem: $retroactivePhotoItem,
+                    onNow: {
+                        let now = Date()
+                        onNow(JournalTemplateCaptureRequest(
+                            startDate: now,
+                            endDate: now,
+                            template: template
+                        ))
+                        dismiss()
+                    },
+                    onCountdown: { duration, selection in
+                        onCountdown(template, duration, selection)
+                        dismiss()
+                    },
+                    onTimer: {
+                        onTimer(template, .timerDefault)
+                        dismiss()
+                    }
+                )
+                .zIndex(1)
+                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .zIndex(selectedTemplate?.id == template.id ? 20 : 0)
+    }
+
+    @MainActor
+    private func importRetroactivePhoto(_ item: PhotosPickerItem, template: JournalTemplateSeed) async {
+        isLoadingRetroactivePhoto = true
+        errorMessage = nil
+        defer {
+            isLoadingRetroactivePhoto = false
+            retroactivePhotoItem = nil
+        }
+
+        do {
+            guard let pickedPhoto = try await item.loadTransferable(type: JournalPickedPhotoTransfer.self),
+                  let image = UIImage(data: pickedPhoto.data) else {
+                errorMessage = "Photo unavailable."
+                return
+            }
+            let metadata = JournalImportedPhotoMetadataReader.read(from: pickedPhoto.data)
+            let date = metadata.date ?? Date()
+            onRetroactive(JournalTemplateRetroactiveMirrorRequest(
+                startDate: date,
+                template: template,
+                image: MirrorCameraView.preparedImportedImage(image),
+                latitude: metadata.latitude,
+                longitude: metadata.longitude
+            ))
+            dismiss()
+        } catch {
+            errorMessage = "Photo import failed."
+        }
+    }
+}
+
+private struct JournalActivityTemplateActionPopover: View {
+    let isLoadingRetroactivePhoto: Bool
+    @Binding var retroactivePhotoItem: PhotosPickerItem?
+    let onNow: () -> Void
+    let onCountdown: (TimeInterval, SarosCountdownSelection) -> Void
+    let onTimer: () -> Void
+
+    @State private var isCountdownExpanded = false
+    @State private var selectedCountdownDuration: TimeInterval = 0
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if isCountdownExpanded {
+                JournalCompactCountdownPeriodSelector(
+                    duration: selectedCountdownDuration,
+                    onAdd: { duration in
+                        selectedCountdownDuration += duration
+                    },
+                    onReset: {
+                        selectedCountdownDuration = 0
+                    },
+                    onStart: {
+                        guard selectedCountdownDuration > 0 else { return }
+                        onCountdown(selectedCountdownDuration, countdownSelection)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(48), spacing: 8), count: 2), spacing: 8) {
+                    JournalActivityCompactActionButton(
+                        title: "Instant",
+                        systemName: "bolt.circle",
+                        action: onNow
+                    )
+
+                    JournalActivityCompactActionButton(
+                        title: "Countdown",
+                        systemName: "timer"
+                    ) {
+                        withAnimation(.snappy) {
+                            isCountdownExpanded = true
+                        }
+                    }
+
+                    JournalActivityCompactActionButton(
+                        title: "Timer",
+                        systemName: "stopwatch",
+                        action: onTimer
+                    )
+
+                    PhotosPicker(selection: $retroactivePhotoItem, matching: .images) {
+                        JournalActivityCompactActionIcon(systemName: "clock.arrow.circlepath")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isLoadingRetroactivePhoto)
+                    .accessibilityLabel("Retroactive")
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(alignment: .top) {
+            JournalTooltipTriangle()
+                .fill(Color(.secondarySystemGroupedBackground))
+                .frame(width: 14, height: 8)
+                .offset(y: -7)
+        }
+        .frame(width: 124)
+    }
+
+    private var countdownSelection: SarosCountdownSelection {
+        SarosCountdownScale.normalized(forDuration: selectedCountdownDuration)
+    }
+}
+
+private struct JournalActivityCompactActionButton: View {
+    let title: String
+    let systemName: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            JournalActivityCompactActionIcon(systemName: systemName)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}
+
+private struct JournalCompactCountdownPeriodSelector: View {
+    let duration: TimeInterval
+    let onAdd: (TimeInterval) -> Void
+    let onReset: () -> Void
+    let onStart: () -> Void
+
+    private let options: [JournalCountdownQuickDuration] = [
+        JournalCountdownQuickDuration(title: "Ms", accessibilityTitle: "1 Megasaros", unit: .mega),
+        JournalCountdownQuickDuration(title: "S", accessibilityTitle: "1 Saros", unit: .saros),
+        JournalCountdownQuickDuration(title: "Ks", accessibilityTitle: "1 Kilosaros", unit: .kilo),
+        JournalCountdownQuickDuration(title: "ms", accessibilityTitle: "1 Milisaros", unit: .mili)
+    ]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(48), spacing: 8), count: 2), spacing: 8) {
+                ForEach(options) { option in
+                    Button {
+                        onAdd(option.duration)
+                    } label: {
+                        Text(option.title)
+                            .font(.callout.monospacedDigit().weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                            .frame(width: 48, height: 48)
+                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add \(option.accessibilityTitle)")
+                }
+            }
+
+            Text(durationText)
+                .font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(duration > 0 ? .primary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, minHeight: 18)
+
+            HStack(spacing: 8) {
+                Button(action: onReset) {
+                    Text("Reset")
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(width: 48, height: 36)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(duration <= 0)
+                .opacity(duration <= 0 ? 0.45 : 1)
+
+                Button(action: onStart) {
+                    Text("Start")
+                        .font(.caption2.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(width: 48, height: 36)
+                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .disabled(duration <= 0)
+                .opacity(duration <= 0 ? 0.45 : 1)
+                .accessibilityLabel("Start countdown")
+            }
+        }
+        .padding(8)
+        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var durationText: String {
+        guard duration > 0 else {
+            return "Choose duration"
+        }
+        return SarosDurationUnitFormatter.verboseDuration(duration, maxUnits: 3)
+    }
+}
+
+private struct JournalCountdownQuickDuration: Identifiable {
+    let title: String
+    let accessibilityTitle: String
+    let unit: SarosPulseUnit
+
+    var id: String { title }
+    var duration: TimeInterval { SarosPulseCalculator.averageDuration(for: unit) }
+}
+
+private struct JournalActivityCompactActionIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.title2.weight(.semibold))
+            .frame(width: 48, height: 48)
+            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+    }
+}
+
+private struct JournalTooltipTriangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
 struct JournalTemplatesView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
@@ -1513,21 +2310,37 @@ struct JournalTemplatesView: View {
 
     @AppStorage(ContinuousActivityLogger.sessionKey) private var activitySessionData = Data()
 
-    @State private var selectedTemplateAction: JournalTemplateSeed?
+    @StateObject private var audioRecorder = AudioRecorder()
     @State private var captureRequest: JournalTemplateCaptureRequest?
     @State private var retroactiveMirrorRequest: JournalTemplateRetroactiveMirrorRequest?
     @State private var selectedEntryDraft: JournalEntryDraft?
-    @State private var pendingTemplate: JournalTemplateSeed?
-    @State private var isReplacingDraft = false
     @State private var draft: JournalTemplateDraft?
+    @State private var selectedActivityID: UUID?
+    @State private var recordingActivityID: UUID?
+    @State private var selectedInlineTemplate: JournalTemplateSeed?
+    @State private var inlineRandomEmoji = JournalRecordMarkers.random()
+    @State private var inlineRetroactivePhotoItem: PhotosPickerItem?
+    @State private var isLoadingInlineRetroactivePhoto = false
+    @State private var inlineGridErrorMessage: String?
+    @State private var isTemplatePickerPresented = false
+    @State private var isActivityCameraPresented = false
     @State private var errorMessage: String?
 
     private var activeDraft: JournalEntryDraft? {
         entryDrafts.first
     }
 
-    private var activitySession: ContinuousActivitySession? {
-        ContinuousActivityLogger.session(from: activitySessionData)
+    private var activitySessions: [ContinuousActivitySession] {
+        ContinuousActivityLogger.sessions(from: activitySessionData)
+    }
+
+    private var selectedActivitySession: ContinuousActivitySession? {
+        guard !activitySessions.isEmpty else { return nil }
+        if let selectedActivityID,
+           let selected = activitySessions.first(where: { $0.id == selectedActivityID }) {
+            return selected
+        }
+        return activitySessions.first
     }
 
     private var templateGridColumns: [GridItem] {
@@ -1535,62 +2348,52 @@ struct JournalTemplatesView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                JournalRecordSectionCard {
-                    ContinuousActivityLoggingPanel(
-                        session: activitySession,
-                        onBegin: { beginActivityLogging(template: .random) },
-                        onStop: stopActivityLogging
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                Color(.systemGroupedBackground)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        dismissKeyboard()
+                    }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    JournalRecordTopActionBar(
+                        hasDraft: activeDraft != nil,
+                        onStart: { isTemplatePickerPresented = true },
+                        onResume: { activeDraft.map { selectedEntryDraft = $0 } }
                     )
-                }
 
-                if let activeDraft {
-                    JournalRecordSectionCard {
-                        Button {
-                            selectedEntryDraft = activeDraft
-                        } label: {
-                            Label("Resume draft", systemImage: "arrow.uturn.forward.circle")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
+                    if !activitySessions.isEmpty {
+                        ActiveActivityDraftPager(
+                            sessions: activitySessions,
+                            selectedID: selectedActivityBinding,
+                            height: activityPagerHeight(in: proxy.size.height),
+                            recordingActivityID: recordingActivityID,
+                            isRecordingAudio: audioRecorder.isRecording,
+                            onLibrary: { items in
+                                Task {
+                                    await loadActivityPhotos(from: items)
+                                }
+                            },
+                            onCamera: { isActivityCameraPresented = true },
+                            onToggleAudio: toggleActivityAudio,
+                            onStop: { session in stopActivityLogging(sessionID: session.id) },
+                            onUpdateText: { session, text in
+                                ContinuousActivityLogger.updateDraft(sessionID: session.id, text: text)
+                            },
+                            onRemoveMedia: { session, item in
+                                ContinuousActivityLogger.removeMedia(item, from: session.id)
+                                MediaStorage.delete(item)
+                            }
+                        )
+                    } else {
+                        inactiveTemplateGrid
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Templates")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 2)
-
-                    LazyVGrid(columns: templateGridColumns, spacing: 12) {
-                        Button {
-                            openTemplate(.random)
-                        } label: {
-                            JournalTemplateGridTile(
-                                title: "Random",
-                                emoji: JournalRecordMarkers.fallback
-                            )
-                        }
-                        .buttonStyle(.plain)
-
-                        ForEach(templates) { template in
-                            JournalTemplateGridButton(
-                                template: template,
-                                onOpen: { openTemplate(JournalTemplateSeed(template: template)) },
-                                onEdit: { draft = JournalTemplateDraft(template: template) },
-                                onDelete: { deleteTemplate(template) }
-                            )
-                        }
-                    }
-                    .padding(14)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Record")
@@ -1604,13 +2407,13 @@ struct JournalTemplatesView: View {
                 .accessibilityLabel("Add template")
             }
         }
-        .sheet(item: $selectedTemplateAction) { template in
+        .sheet(isPresented: $isTemplatePickerPresented) {
             NavigationStack {
-                JournalTemplateActionView(
-                    template: template,
+                JournalActivityTemplatePickerView(
+                    templates: templates,
                     onNow: { request in
                         captureRequest = request
-                        selectedTemplateAction = nil
+                        isTemplatePickerPresented = false
                     },
                     onCountdown: { template, duration, selection in
                         beginCountdown(
@@ -1618,15 +2421,15 @@ struct JournalTemplatesView: View {
                             duration: duration,
                             selection: selection
                         )
-                        selectedTemplateAction = nil
+                        isTemplatePickerPresented = false
                     },
                     onTimer: { template, selection in
                         beginActivityLogging(template: template, selection: selection)
-                        selectedTemplateAction = nil
+                        isTemplatePickerPresented = false
                     },
                     onRetroactive: { request in
                         retroactiveMirrorRequest = request
-                        selectedTemplateAction = nil
+                        isTemplatePickerPresented = false
                     }
                 )
             }
@@ -1639,6 +2442,7 @@ struct JournalTemplatesView: View {
                     recordStartedAt: request.startDate,
                     eventEndDate: request.endDate,
                     template: request.template,
+                    initialText: request.text,
                     initialMediaItems: request.mediaItems,
                     initialLatitude: request.latitude,
                     initialLongitude: request.longitude
@@ -1648,6 +2452,11 @@ struct JournalTemplatesView: View {
         .fullScreenCover(item: $retroactiveMirrorRequest) { request in
             MirrorCameraView(initialReviewImage: request.image) { media in
                 completeRetroactiveMirror(request: request, media: media)
+            }
+        }
+        .fullScreenCover(isPresented: $isActivityCameraPresented) {
+            MirrorCameraView { media in
+                addActivityCameraMedia(media)
             }
         }
         .sheet(item: $selectedEntryDraft) { draft in
@@ -1662,34 +2471,173 @@ struct JournalTemplatesView: View {
                 }
             }
         }
-        .confirmationDialog("Replace current draft?", isPresented: $isReplacingDraft, titleVisibility: .visible) {
-            Button("Delete Draft", role: .destructive) {
-                if let activeDraft {
-                    discardDraft(activeDraft)
-                }
-                selectedTemplateAction = pendingTemplate
-                pendingTemplate = nil
+        .onChange(of: activitySessionData) { _, _ in
+            normalizeSelectedActivity()
+            syncActivityWidget()
+        }
+        .onChange(of: selectedActivityID) { _, _ in
+            syncActivityWidget()
+        }
+        .onChange(of: inlineRetroactivePhotoItem) { _, item in
+            guard let item, let selectedInlineTemplate else { return }
+            Task {
+                await importInlineRetroactivePhoto(item, template: selectedInlineTemplate)
             }
-            Button("Cancel", role: .cancel) {
-                pendingTemplate = nil
-            }
-        } message: {
-            Text("Opening a template starts a new entry and deletes the unsaved draft.")
+        }
+        .onChange(of: audioRecorder.lastItem) { _, item in
+            guard let item else { return }
+            let targetID = recordingActivityID ?? selectedActivitySession?.id
+            guard let targetID else { return }
+            ContinuousActivityLogger.appendMedia(item, to: targetID)
+            recordingActivityID = nil
+            _ = audioRecorder.consumeLastItem()
         }
         .alert("Record failed", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
+        .task(id: activitySessions.isEmpty) {
+            guard activitySessions.isEmpty else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 539_000_000)
+                guard selectedInlineTemplate?.id != JournalTemplateSeed.randomID else { continue }
+                inlineRandomEmoji = JournalRecordMarkers.random()
+            }
+        }
     }
 
-    private func openTemplate(_ template: JournalTemplateSeed) {
-        if activeDraft != nil {
-            pendingTemplate = template
-            isReplacingDraft = true
-        } else {
-            selectedTemplateAction = template
+    private var inactiveTemplateGrid: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                LazyVGrid(columns: templateGridColumns, spacing: 12) {
+                    inlineRandomActivityTemplateCell()
+
+                    ForEach(templates) { template in
+                        inlineActivityTemplateCell(JournalTemplateSeed(template: template))
+                    }
+                }
+                .padding(.horizontal, 26)
+
+                if isLoadingInlineRetroactivePhoto {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Loading photo")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                if let inlineGridErrorMessage {
+                    Text(inlineGridErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.top, 2)
+            .padding(.bottom, 18)
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func inlineRandomActivityTemplateCell() -> some View {
+        let isSelected = selectedInlineTemplate?.id == JournalTemplateSeed.randomID
+        let frozenTemplate = isSelected ? selectedInlineTemplate : nil
+        let displayEmoji = frozenTemplate?.resolvedStaticEmoji ?? inlineRandomEmoji
+
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.snappy) {
+                    selectedInlineTemplate = isSelected ? nil : JournalTemplateSeed.random(emoji: inlineRandomEmoji)
+                }
+            } label: {
+                JournalTemplateGridTile(
+                    title: "Random",
+                    emoji: displayEmoji
+                )
+            }
+            .buttonStyle(.plain)
+
+            if let frozenTemplate, isSelected {
+                inlineActivityActionPopover(for: frozenTemplate)
+                    .zIndex(1)
+                    .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .zIndex(isSelected ? 20 : 0)
+    }
+
+    @ViewBuilder
+    private func inlineActivityTemplateCell(_ template: JournalTemplateSeed) -> some View {
+        let isSelected = selectedInlineTemplate?.id == template.id
+
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.snappy) {
+                    selectedInlineTemplate = isSelected ? nil : template
+                }
+            } label: {
+                JournalTemplateGridTile(
+                    title: template.previewTitle,
+                    emoji: template.resolvedStaticEmoji
+                )
+            }
+            .buttonStyle(.plain)
+
+            if isSelected {
+                inlineActivityActionPopover(for: template)
+                    .zIndex(1)
+                    .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .zIndex(isSelected ? 20 : 0)
+    }
+
+    private func inlineActivityActionPopover(for template: JournalTemplateSeed) -> some View {
+        JournalActivityTemplateActionPopover(
+            isLoadingRetroactivePhoto: isLoadingInlineRetroactivePhoto,
+            retroactivePhotoItem: $inlineRetroactivePhotoItem,
+            onNow: {
+                let now = Date()
+                captureRequest = JournalTemplateCaptureRequest(
+                    startDate: now,
+                    endDate: now,
+                    template: template
+                )
+                selectedInlineTemplate = nil
+            },
+            onCountdown: { duration, selection in
+                beginCountdown(
+                    template: template,
+                    duration: duration,
+                    selection: selection
+                )
+                selectedInlineTemplate = nil
+            },
+            onTimer: {
+                beginActivityLogging(template: template, selection: .timerDefault)
+                selectedInlineTemplate = nil
+            }
+        )
+    }
+
+    private var selectedActivityBinding: Binding<UUID?> {
+        Binding(
+            get: { selectedActivitySession?.id },
+            set: { selectedActivityID = $0 }
+        )
+    }
+
+    private func activityPagerHeight(in availableHeight: CGFloat) -> CGFloat {
+        max(474, availableHeight - 118)
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     @MainActor
@@ -1701,29 +2649,33 @@ struct JournalTemplatesView: View {
             template: template,
             sarosCountdownSelection: selection
         )
+        selectedActivityID = session.id
         Task {
             try? await ThreadLiveActivityService.start(
-                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(
-                    startDate: session.startDate,
-                    endDate: session.endDate
-                )
+                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(session: session)
             )
         }
     }
 
     @MainActor
-    private func stopActivityLogging() {
-        guard let window = ContinuousActivityLogger.finish() else {
+    private func stopActivityLogging(sessionID: UUID?) {
+        guard let window = ContinuousActivityLogger.finish(sessionID: sessionID) else {
             return
         }
         captureRequest = JournalTemplateCaptureRequest(
             startDate: window.startDate,
             endDate: window.endDate,
-            template: window.template
+            template: window.template,
+            text: window.text,
+            mediaItems: window.mediaItems
         )
         Task {
-            await ThreadLiveActivityService.stopActivityLogging()
-            await NotificationScheduler.shared.cancelActivityCountdown()
+            await ThreadLiveActivityService.stopActivityLogging(sessionID: window.sessionID)
+            await ThreadLiveActivityService.syncActivityLogging(
+                sessions: ContinuousActivityLogger.sessions,
+                preferredSessionID: selectedActivityID
+            )
+            await NotificationScheduler.shared.cancelActivityCountdown(sessionID: window.sessionID)
         }
     }
 
@@ -1738,13 +2690,11 @@ struct JournalTemplatesView: View {
             duration: duration,
             sarosCountdownSelection: selection
         )
+        selectedActivityID = session.id
         Task {
             await NotificationScheduler.shared.scheduleActivityCountdownCompletion(for: session)
             try? await ThreadLiveActivityService.start(
-                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(
-                    startDate: session.startDate,
-                    endDate: session.endDate
-                )
+                snapshot: ThreadLiveActivityService.activityLoggingSnapshot(session: session)
             )
         }
     }
@@ -1778,6 +2728,104 @@ struct JournalTemplatesView: View {
         draft.mediaItems.forEach(MediaStorage.delete)
         modelContext.delete(draft)
         try? modelContext.save()
+    }
+
+    private func normalizeSelectedActivity() {
+        let ids = Set(activitySessions.map(\.id))
+        if let selectedActivityID, ids.contains(selectedActivityID) {
+            return
+        }
+        selectedActivityID = activitySessions.first?.id
+    }
+
+    private func syncActivityWidget() {
+        let sessions = activitySessions
+        let preferredID = selectedActivityID
+        Task {
+            await ThreadLiveActivityService.syncActivityLogging(
+                sessions: sessions,
+                preferredSessionID: preferredID
+            )
+        }
+    }
+
+    private func toggleActivityAudio() {
+        do {
+            if !audioRecorder.isRecording {
+                recordingActivityID = selectedActivitySession?.id
+            }
+            try audioRecorder.toggleRecording(mode: .reflected)
+            if !audioRecorder.isRecording, audioRecorder.lastItem == nil {
+                recordingActivityID = nil
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func addActivityCameraMedia(_ media: MirrorCameraCapturedMedia) {
+        guard let session = selectedActivitySession else { return }
+        do {
+            let item = try JournalPendingMediaAttachment(media: media).save()
+            ContinuousActivityLogger.appendMedia(item, to: session.id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func loadActivityPhotos(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty, let session = selectedActivitySession else { return }
+        do {
+            for item in items {
+                guard let pickedPhoto = try await item.loadTransferable(type: JournalPickedPhotoTransfer.self) else {
+                    continue
+                }
+                let mediaItem = try MediaStorage.saveData(
+                    pickedPhoto.data,
+                    fileExtension: preferredActivityPhotoFileExtension(for: item),
+                    type: .photo
+                )
+                ContinuousActivityLogger.appendMedia(mediaItem, to: session.id)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func preferredActivityPhotoFileExtension(for item: PhotosPickerItem) -> String {
+        item.supportedContentTypes
+            .first(where: { $0.conforms(to: .image) })?
+            .preferredFilenameExtension ?? "jpg"
+    }
+
+    @MainActor
+    private func importInlineRetroactivePhoto(_ item: PhotosPickerItem, template: JournalTemplateSeed) async {
+        isLoadingInlineRetroactivePhoto = true
+        inlineGridErrorMessage = nil
+        defer {
+            isLoadingInlineRetroactivePhoto = false
+            inlineRetroactivePhotoItem = nil
+        }
+
+        do {
+            guard let pickedPhoto = try await item.loadTransferable(type: JournalPickedPhotoTransfer.self),
+                  let image = UIImage(data: pickedPhoto.data) else {
+                inlineGridErrorMessage = "Photo unavailable."
+                return
+            }
+            let metadata = JournalImportedPhotoMetadataReader.read(from: pickedPhoto.data)
+            retroactiveMirrorRequest = JournalTemplateRetroactiveMirrorRequest(
+                startDate: metadata.date ?? Date(),
+                template: template,
+                image: MirrorCameraView.preparedImportedImage(image),
+                latitude: metadata.latitude,
+                longitude: metadata.longitude
+            )
+            selectedInlineTemplate = nil
+        } catch {
+            inlineGridErrorMessage = "Photo import failed."
+        }
     }
 
     private func completeRetroactiveMirror(
@@ -2144,13 +3192,26 @@ struct JournalTemplateSeed: Identifiable, Hashable, Codable {
     let usesRandomEmoji: Bool
     let tagIDs: [String]?
 
+    static let randomID = "random"
+
     static var random: JournalTemplateSeed {
         JournalTemplateSeed(
-            id: "random",
+            id: randomID,
             name: "Random",
             emoji: nil,
             text: "",
             usesRandomEmoji: true,
+            tagIDs: nil
+        )
+    }
+
+    static func random(emoji: String) -> JournalTemplateSeed {
+        JournalTemplateSeed(
+            id: randomID,
+            name: "Random",
+            emoji: emoji,
+            text: "",
+            usesRandomEmoji: false,
             tagIDs: nil
         )
     }

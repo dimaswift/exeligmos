@@ -189,9 +189,10 @@ extension ThreadTrackingSnapshot {
     private func activityLoggingPayload(startDate: Date, at now: Date) -> TrackingDisplayPayload {
         let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: now)
         let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
+        let title = eventName?.nilIfBlank ?? ActivityLoggingGlyph.title(for: glyph)
         return TrackingDisplayPayload(
             saros: nil,
-            eventName: ActivityLoggingGlyph.title(for: glyph),
+            eventName: title,
             energyPercent: nil,
             momentum: nil,
             waveDirectionRawValue: nil,
@@ -318,9 +319,10 @@ extension ThreadTrackingAttributes.ContentState {
     private func activityLoggingPayload(startDate: Date, at now: Date) -> TrackingDisplayPayload {
         let glyph = ActivityLoggingGlyph.glyph(startDate: startDate, at: now)
         let colorHex = ActivityLoggingGlyph.colorHex(for: glyph)
+        let title = eventName?.nilIfBlank ?? ActivityLoggingGlyph.title(for: glyph)
         return TrackingDisplayPayload(
             saros: nil,
-            eventName: ActivityLoggingGlyph.title(for: glyph),
+            eventName: title,
             energyPercent: nil,
             momentum: nil,
             waveDirectionRawValue: nil,
