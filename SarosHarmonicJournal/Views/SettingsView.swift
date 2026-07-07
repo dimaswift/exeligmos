@@ -103,7 +103,7 @@ struct SettingsView: View {
                             eclipseService: services.eclipseService,
                             moonPhaseService: services.moonPhaseService,
                             harmonicDepth: harmonicDepth,
-                            recentEntries: Array(entries.prefix(10))
+                            recentEntries: entries
                         )
                         diagnosticMessage = "Notification schedule refreshed."
                     }
@@ -195,7 +195,7 @@ struct SettingsView: View {
                     eclipseService: services.eclipseService,
                     moonPhaseService: services.moonPhaseService,
                     harmonicDepth: newDepth,
-                    recentEntries: Array(entries.prefix(10))
+                    recentEntries: entries
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
             }

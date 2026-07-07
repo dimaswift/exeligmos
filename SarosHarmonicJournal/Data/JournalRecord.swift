@@ -6,12 +6,13 @@ enum MediaType: String, Codable, CaseIterable {
     case symbolicPhoto
     case video
     case audio
+    case document
 
     var isImage: Bool {
         switch self {
         case .photo, .symbolicPhoto:
             true
-        case .video, .audio:
+        case .video, .audio, .document:
             false
         }
     }

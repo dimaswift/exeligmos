@@ -9,6 +9,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     private let identifierPrefix = "saros-journal."
     private static let waveformNotificationLeadTime = SarosPulseCalculator.averageDuration(for: .mili)
     private static let waveformNotificationLeadLabel = "1 milisaros"
+    private static let futureEntryNotificationLeadTime = SarosPulseCalculator.averageDuration(for: .saros)
+    private static let futureEntryNotificationLeadLabel = "1 Saros"
 
     private override init() {
         super.init()
@@ -65,6 +67,40 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
+    func scheduleFutureEntryNotification(for entry: JournalEntry, now: Date = Date()) async {
+        let center = UNUserNotificationCenter.current()
+        let pending = await pendingRequests()
+        let entryPrefix = "\(identifierPrefix)entry.future.\(entry.id.uuidString)."
+        center.removePendingNotificationRequests(
+            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(entryPrefix) }
+        )
+
+        guard let notifyDate = futureEntryNotifyDate(for: entry, now: now),
+              await requestAuthorization() else {
+            return
+        }
+
+        await scheduleFutureEntryNotification(
+            entry: entry,
+            notifyDate: notifyDate
+        )
+    }
+
+    func refreshFutureEntryNotifications(for entries: [JournalEntry], now: Date = Date()) async {
+        guard await requestAuthorization() else { return }
+
+        let center = UNUserNotificationCenter.current()
+        let pending = await pendingRequests()
+        center.removePendingNotificationRequests(
+            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix("\(identifierPrefix)entry.future.") }
+        )
+
+        await scheduleFutureEntryNotifications(
+            entries: entries,
+            now: now
+        )
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
@@ -81,15 +117,27 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         defer { completionHandler() }
 
         let userInfo = response.notification.request.content.userInfo
-        guard userInfo["trigger"] as? String == "liveTrackingFlip",
-              let entityIDString = userInfo["entityID"] as? String,
-              let entityID = UUID(uuidString: entityIDString) else {
+        guard let trigger = userInfo["trigger"] as? String else {
             return
         }
 
-        AppDeepLinkStore.storePendingRecordCapture(entityID: entityID)
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .recordCaptureRequested, object: entityID)
+        switch trigger {
+        case "liveTrackingFlip":
+            guard let entityIDString = userInfo["entityID"] as? String,
+                  let entityID = UUID(uuidString: entityIDString) else {
+                return
+            }
+            AppDeepLinkStore.storePendingRecordCapture(entityID: entityID)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .recordCaptureRequested, object: entityID)
+            }
+        case "journalFutureEntry":
+            AppDeepLinkStore.storePendingFutureFeed()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .futureFeedRequested, object: nil)
+            }
+        default:
+            return
         }
     }
 
@@ -213,6 +261,11 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
+        await scheduleFutureEntryNotifications(
+            entries: recentEntries,
+            now: now
+        )
+
         let events = Self.globalEvents(
             in: interval,
             summaries: summaries,
@@ -281,6 +334,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             entries: Array(recentEntries.prefix(10)),
             now: now
         )
+
     }
 
     private func scheduleEntryEndNotifications(
@@ -311,6 +365,73 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             try? await UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
             )
+        }
+    }
+
+    private func scheduleFutureEntryNotifications(
+        entries: [JournalEntry],
+        now: Date,
+        limit: Int = 32
+    ) async {
+        let futureEntries = entries
+            .compactMap { entry -> (entry: JournalEntry, notifyDate: Date)? in
+                guard let notifyDate = futureEntryNotifyDate(for: entry, now: now) else {
+                    return nil
+                }
+                return (entry, notifyDate)
+            }
+            .sorted { $0.notifyDate < $1.notifyDate }
+            .prefix(limit)
+
+        for (entry, notifyDate) in futureEntries {
+            await scheduleFutureEntryNotification(
+                entry: entry,
+                notifyDate: notifyDate
+            )
+        }
+    }
+
+    private func futureEntryNotifyDate(for entry: JournalEntry, now: Date) -> Date? {
+        guard entry.eventDate > now else { return nil }
+        let leadDate = entry.eventDate.addingTimeInterval(-Self.futureEntryNotificationLeadTime)
+        if leadDate > now {
+            return leadDate
+        }
+
+        let nearTermDate = now.addingTimeInterval(5)
+        guard nearTermDate < entry.eventDate else { return nil }
+        return nearTermDate
+    }
+
+    private func scheduleFutureEntryNotification(
+        entry: JournalEntry,
+        notifyDate: Date
+    ) async {
+        let content = UNMutableNotificationContent()
+        content.title = "Future record soon"
+        content.subtitle = "T-minus \(Self.futureEntryNotificationLeadLabel)"
+        content.body = "\(JournalRecordMarkers.marker(from: entry.emoji)) \(entry.firstTextLine) begins at \(JournalFormatters.dateTime.string(from: entry.eventDate))."
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.threadIdentifier = "journal-future-entry"
+        content.relevanceScore = 0.82
+        content.userInfo = [
+            "trigger": "journalFutureEntry",
+            "entryID": entry.id.uuidString,
+            "eventDate": entry.eventDate.timeIntervalSince1970
+        ]
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: notifyDate),
+            repeats: false
+        )
+        let identifier = "\(identifierPrefix)entry.future.\(entry.id.uuidString).\(Int(entry.eventDate.timeIntervalSince1970))"
+        do {
+            try await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            )
+        } catch {
+            print("Failed to schedule future entry notification \(identifier): \(error.localizedDescription)")
         }
     }
 

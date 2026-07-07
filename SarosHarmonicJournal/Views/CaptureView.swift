@@ -30,7 +30,9 @@ struct CaptureView: View {
     @State private var activeDraft: RecordDraft?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var isLoadingPhoto = false
+    @State private var isImportingDocument = false
     @State private var isCameraPresented = false
+    @State private var isDocumentImporterPresented = false
     @State private var isDraftPrepared = false
     @State private var errorMessage: String?
     @State private var phaseEditError: String?
@@ -147,6 +149,15 @@ struct CaptureView: View {
                     .buttonStyle(.plain)
                     .disabled(audioRecorder.isRecording && audioRecorder.recordingMode != .reflected)
                     .accessibilityLabel(audioRecorder.isRecording && audioRecorder.recordingMode == .reflected ? "Stop audio" : "Record audio")
+
+                    Button {
+                        isDocumentImporterPresented = true
+                    } label: {
+                        RecordActionIcon(systemName: "doc.badge.plus")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isImportingDocument)
+                    .accessibilityLabel("Attach document")
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             }
@@ -212,14 +223,14 @@ struct CaptureView: View {
                         Label("Save record", systemImage: "tray.and.arrow.down")
                     }
                 }
-                .disabled(isSaving || isLoadingPhoto)
+                .disabled(isSaving || isLoadingPhoto || isImportingDocument)
             }
         }
         .navigationTitle("Record")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") {
-                    commitNoteText()
+                    closeWithoutBlockingDraftPersistence()
                     dismiss()
                 }
             }
@@ -257,6 +268,13 @@ struct CaptureView: View {
                 addCameraMedia(media)
             }
         }
+        .fileImporter(
+            isPresented: $isDocumentImporterPresented,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            Task { await importDocuments(from: result) }
+        }
     }
 
     @MainActor
@@ -275,11 +293,14 @@ struct CaptureView: View {
                     continue
                 }
 
-                let mediaItem = try MediaStorage.saveData(
-                    pickedPhoto.data,
-                    fileExtension: preferredFileExtension(for: item),
-                    type: .photo
-                )
+                let fileExtension = preferredFileExtension(for: item)
+                let mediaItem = try await Task.detached(priority: .utility) {
+                    try MediaStorage.saveData(
+                        pickedPhoto.data,
+                        fileExtension: fileExtension,
+                        type: .photo
+                    )
+                }.value
                 draftMediaItems.append(mediaItem)
             }
         } catch {
@@ -291,6 +312,38 @@ struct CaptureView: View {
         item.supportedContentTypes
             .first(where: { $0.conforms(to: .image) })?
             .preferredFilenameExtension ?? "jpg"
+    }
+
+    @MainActor
+    private func importDocuments(from result: Result<[URL], Error>) async {
+        do {
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
+
+            isImportingDocument = true
+            defer { isImportingDocument = false }
+
+            for url in urls {
+                let didStartAccessing = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didStartAccessing {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let fileExtension = url.pathExtension.isEmpty ? "bin" : url.pathExtension
+                let item = try await Task.detached(priority: .utility) {
+                    try MediaStorage.saveFile(
+                        at: url,
+                        fileExtension: fileExtension,
+                        type: .document
+                    )
+                }.value
+                draftMediaItems.append(item)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -349,6 +402,15 @@ struct CaptureView: View {
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func closeWithoutBlockingDraftPersistence() {
+        noteText = noteBuffer.text
+        draftPersistenceTask?.cancel()
+        Task { @MainActor in
+            persistDraft(updateReading: false)
         }
     }
 
@@ -850,6 +912,8 @@ private extension MediaType {
             "video"
         case .audio:
             "waveform"
+        case .document:
+            "doc"
         }
     }
 
@@ -861,6 +925,8 @@ private extension MediaType {
             "Camera capture"
         case .audio:
             "Audio"
+        case .document:
+            "Document"
         }
     }
 }

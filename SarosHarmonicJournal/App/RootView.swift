@@ -40,6 +40,7 @@ struct RootView: View {
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     @State private var selectedTab: AppTab = .feed
+    @State private var feedMode: FeedMode = .past
     @State private var captureRequest: RecordCaptureRequest?
     @State private var activityCaptureRequest: ActivityEntryCaptureRequest?
     private let activityCompletionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -87,7 +88,11 @@ struct RootView: View {
                 openRecordCapture(for: entityID)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .futureFeedRequested)) { _ in
+            openFutureFeed()
+        }
         .task {
+            consumePendingFutureFeed()
             consumePendingRecordCapture()
             consumeCompletedCountdownIfNeeded()
             prewarmSarosFlipDistribution()
@@ -103,11 +108,15 @@ struct RootView: View {
         .onChange(of: pulseSaros) { _, _ in
             refreshSarosEventNotifications()
         }
+        .onChange(of: entries.map(\.notificationFingerprint)) { _, _ in
+            refreshFutureEntryNotifications()
+        }
         .onChange(of: entities.map(\.id)) { _, _ in
             consumePendingRecordCapture()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
+            consumePendingFutureFeed()
             consumeCompletedCountdownIfNeeded()
         }
     }
@@ -116,7 +125,7 @@ struct RootView: View {
     private func screen(for tab: AppTab) -> some View {
         switch tab {
         case .feed:
-            FeedView()
+            FeedView(feedMode: $feedMode)
         case .timeline:
             SarosCurrentWaveTimelineView()
         case .saros:
@@ -166,6 +175,16 @@ struct RootView: View {
 
         selectedTab = .record
         captureRequest = RecordCaptureRequest(entity: entity, startedAt: Date())
+    }
+
+    private func openFutureFeed() {
+        feedMode = .future
+        selectedTab = .feed
+    }
+
+    private func consumePendingFutureFeed() {
+        guard AppDeepLinkStore.consumePendingFutureFeed() else { return }
+        openFutureFeed()
     }
 
     private func consumePendingRecordCapture() {
@@ -221,8 +240,14 @@ struct RootView: View {
                 eclipseService: services.eclipseService,
                 moonPhaseService: services.moonPhaseService,
                 harmonicDepth: harmonicDepth,
-                recentEntries: Array(entries.prefix(10))
+                recentEntries: entries
             )
+        }
+    }
+
+    private func refreshFutureEntryNotifications() {
+        Task {
+            await services.notificationScheduler.refreshFutureEntryNotifications(for: entries)
         }
     }
 }
@@ -375,7 +400,7 @@ enum ContinuousActivityLogger {
         var current = sessions
         guard let index = current.firstIndex(where: { $0.id == sessionID }) else { return }
         if let text {
-            current[index].draftText = text.nilIfBlank
+            current[index].draftText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
         }
         if let mediaItems {
             current[index].mediaItems = mediaItems
@@ -505,9 +530,29 @@ private struct FeedView: View {
     @State private var selectedEntry: JournalEntry?
     @State private var captureRequest: FeedCaptureRequest?
     @State private var isFilterPresented = false
+    @State private var now = Date()
+    @Binding var feedMode: FeedMode
 
-    private var filteredEntries: [JournalEntry] {
-        entries.filter { entry in
+    private let feedClock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    private var filteredModeEntries: [JournalEntry] {
+        let modeEntries = switch feedMode {
+        case .past:
+            entries
+                .filter { $0.eventDate <= now.addingTimeInterval(JournalFeedTiming.nowThreshold) }
+                .sorted { $0.eventDate > $1.eventDate }
+        case .future:
+            entries
+                .filter { $0.eventDate > now.addingTimeInterval(JournalFeedTiming.nowThreshold) }
+                .sorted { $0.eventDate < $1.eventDate }
+        case .solarEchoes, .duplexEchoes, .simplexEchoes, .nihilEchoes:
+            [JournalEntry]()
+        }
+
+        return modeEntries.filter(entryMatchesFilters)
+    }
+
+    private func entryMatchesFilters(_ entry: JournalEntry) -> Bool {
             let context = entry.context
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
             let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
@@ -522,21 +567,172 @@ private struct FeedView: View {
                 Calendar.current.isDate(entry.eventDate, inSameDayAs: selectedDate)
             }
             return matchesRarity && matchesDirection && matchesExtremum && matchesSaros && matchesMoon && matchesDate
+    }
+
+    private var entryGroups: [FeedEntryGroup] {
+        switch feedMode {
+        case .past, .future:
+            dayGroups(for: filteredModeEntries)
+        case .solarEchoes:
+            solarEchoGroups()
+        case .duplexEchoes:
+            lunarEchoGroups(for: .duplex)
+        case .simplexEchoes:
+            lunarEchoGroups(for: .simplex)
+        case .nihilEchoes:
+            lunarEchoGroups(for: .nihil)
         }
     }
 
-    private var entryGroups: [FeedEntryDayGroup] {
+    private func dayGroups(for entries: [JournalEntry]) -> [FeedEntryGroup] {
         let calendar = Calendar.current
-        return Dictionary(grouping: filteredEntries) { entry in
+        return Dictionary(grouping: entries) { entry in
             calendar.startOfDay(for: entry.eventDate)
         }
         .map { day, entries in
-            FeedEntryDayGroup(
-                day: day,
-                entries: entries.sorted { $0.eventDate > $1.eventDate }
+            let sortedEntries = entries.sorted {
+                    feedMode == .future ? $0.eventDate < $1.eventDate : $0.eventDate > $1.eventDate
+                }
+            return FeedEntryGroup(
+                id: "day-\(day.timeIntervalSince1970)",
+                title: dayTitle(for: day),
+                items: sortedEntries.map { FeedEntryGroupItem(entry: $0) },
+                sortDate: day
             )
         }
-        .sorted { $0.day > $1.day }
+        .sorted { lhs, rhs in
+            feedMode == .future ? lhs.sortDate < rhs.sortDate : lhs.sortDate > rhs.sortDate
+        }
+    }
+
+    private func solarEchoGroups() -> [FeedEntryGroup] {
+        guard let oldestDate = entries.map(\.eventDate).min() else { return [] }
+
+        var groups: [FeedEntryGroup] = []
+        let calendar = Calendar.current
+        let halfWindow = 12 * 60 * 60.0
+        var harmonic = 0
+        var targetDate = now
+
+        while true {
+            harmonic += 1
+            guard let nextTarget = calendar.date(byAdding: .year, value: -1, to: targetDate) else {
+                break
+            }
+            targetDate = nextTarget
+
+            if targetDate.addingTimeInterval(-halfWindow) < oldestDate,
+               entries.allSatisfy({ $0.eventDate > targetDate.addingTimeInterval(halfWindow) }) {
+                break
+            }
+
+            let items = echoItems(
+                targetDate: targetDate,
+                halfWindow: halfWindow,
+                matchKind: "solar"
+            )
+
+            if !items.isEmpty {
+                groups.append(
+                    FeedEntryGroup(
+                        id: "solar-\(harmonic)",
+                        title: harmonicTitle(harmonic),
+                        items: items,
+                        sortDate: targetDate
+                    )
+                )
+            }
+
+            if targetDate.addingTimeInterval(-halfWindow) <= oldestDate {
+                break
+            }
+        }
+
+        return groups
+    }
+
+    private func lunarEchoGroups(for series: LunarEchoSeries) -> [FeedEntryGroup] {
+        let candidateEntries = entries.filter { $0.eventDate < now && entryMatchesFilters($0) }
+        guard let oldestDate = candidateEntries.map(\.eventDate).min() else { return [] }
+
+        var groups: [FeedEntryGroup] = []
+        let calendar = Calendar.current
+
+        var harmonic = 0
+        var targetDate = now
+
+        while true {
+            harmonic += 1
+            guard let nextTarget = calendar.date(byAdding: series.negativeStep, to: targetDate) else {
+                break
+            }
+            targetDate = nextTarget
+
+            let lowerBound = targetDate.addingTimeInterval(-series.halfWindow)
+            let upperBound = targetDate.addingTimeInterval(series.halfWindow)
+            if lowerBound < oldestDate,
+               candidateEntries.allSatisfy({ $0.eventDate > upperBound }) {
+                break
+            }
+
+            let items = echoItems(
+                in: candidateEntries,
+                targetDate: targetDate,
+                halfWindow: series.halfWindow,
+                matchKind: series.rawValue
+            )
+
+            if !items.isEmpty {
+                groups.append(
+                    FeedEntryGroup(
+                        id: "\(series.rawValue)-\(harmonic)",
+                        title: harmonicTitle(harmonic),
+                        items: items,
+                        sortDate: targetDate,
+                        sortIndex: harmonic
+                    )
+                )
+            }
+
+            if lowerBound <= oldestDate {
+                break
+            }
+        }
+
+        return groups.sorted {
+            if $0.sortIndex != $1.sortIndex { return $0.sortIndex < $1.sortIndex }
+            return $0.sortDate > $1.sortDate
+        }
+    }
+
+    private func echoItems(
+        in candidateEntries: [JournalEntry]? = nil,
+        targetDate: Date,
+        halfWindow: TimeInterval,
+        matchKind: String
+    ) -> [FeedEntryGroupItem] {
+        (candidateEntries ?? entries)
+            .filter { entry in
+                entry.eventDate < now
+                    && abs(entry.eventDate.timeIntervalSince(targetDate)) <= halfWindow
+                    && (candidateEntries != nil || entryMatchesFilters(entry))
+            }
+            .sorted {
+                let lhsDistance = abs($0.eventDate.timeIntervalSince(targetDate))
+                let rhsDistance = abs($1.eventDate.timeIntervalSince(targetDate))
+                if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                return $0.eventDate > $1.eventDate
+            }
+            .map {
+                FeedEntryGroupItem(
+                    id: "\($0.id.uuidString)-\(matchKind)-\(Int(targetDate.timeIntervalSince1970))",
+                    entry: $0
+                )
+            }
+    }
+
+    private func harmonicTitle(_ harmonic: Int) -> String {
+        "\(harmonic) \(harmonic == 1 ? "Harmonic" : "Harmonics")"
     }
 
     private var primeColorsBySaros: [Int: Color] {
@@ -551,33 +747,35 @@ private struct FeedView: View {
                 Section {
                     ContentUnavailableView("No entries yet", systemImage: "rectangle.stack")
                 }
-            } else if filteredEntries.isEmpty {
+            } else if entryGroups.isEmpty {
                 Section {
                     ContentUnavailableView("No matching entries", systemImage: "line.3.horizontal.decrease.circle")
                 }
             } else {
                 ForEach(entryGroups) { group in
                     Section {
-                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
-                            Button {
-                                selectedEntry = entry
-                            } label: {
-                                JournalEntryRow(entry: entry, tags: tags)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
+                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                            TimelineView(.periodic(from: now, by: 60)) { timeline in
                                 Button {
-                                    finishEntry(entry)
+                                    selectedEntry = item.entry
                                 } label: {
-                                    Label("Finish", systemImage: "checkmark.circle")
+                                    JournalEntryRow(entry: item.entry, tags: tags, now: timeline.date)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button {
+                                        finishEntry(item.entry)
+                                    } label: {
+                                        Label("Finish", systemImage: "checkmark.circle")
+                                    }
                                 }
                             }
-                            .listRowSeparator(index == group.entries.count - 1 ? .hidden : .visible, edges: .bottom)
+                            .listRowSeparator(index == group.items.count - 1 ? .hidden : .visible, edges: .bottom)
                             .listRowSeparator(.hidden, edges: .top)
                             .listRowSeparatorTint(.white.opacity(0.28))
                         }
                     } header: {
-                        Text(dayTitle(for: group.day))
+                        Text(group.title)
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .textCase(nil)
@@ -590,7 +788,21 @@ private struct FeedView: View {
         .refreshable {
             await refreshFromRelay()
         }
+        .onReceive(feedClock) { date in
+            now = date
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Picker("Feed mode", selection: $feedMode) {
+                    ForEach(FeedMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.systemImage)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityLabel("Feed mode")
+            }
+
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     isFilterPresented = true
@@ -695,6 +907,39 @@ private struct FeedView: View {
             modelContext: modelContext
         )
         try? modelContext.save()
+    }
+}
+
+private enum FeedMode: String, CaseIterable, Identifiable {
+    case past
+    case future
+    case solarEchoes
+    case duplexEchoes
+    case simplexEchoes
+    case nihilEchoes
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .past: "Past"
+        case .future: "Future"
+        case .solarEchoes: "Solar Echoes"
+        case .duplexEchoes: "Duplex Echoes"
+        case .simplexEchoes: "Simplex Echoes"
+        case .nihilEchoes: "Nihil Echoes"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .past: "clock.arrow.circlepath"
+        case .future: "clock.badge"
+        case .solarEchoes: "sun.max"
+        case .duplexEchoes: "moonphase.first.quarter"
+        case .simplexEchoes: "moonphase.full.moon"
+        case .nihilEchoes: "moonphase.waning.crescent"
+        }
     }
 }
 
@@ -850,11 +1095,69 @@ private enum FeedDateFilterMode: String, CaseIterable, Identifiable {
     }
 }
 
-private struct FeedEntryDayGroup: Identifiable {
-    let day: Date
-    let entries: [JournalEntry]
+private struct FeedEntryGroup: Identifiable {
+    let id: String
+    let title: String
+    let items: [FeedEntryGroupItem]
+    var sortDate = Date.distantPast
+    var sortIndex = 0
+}
 
-    var id: Date { day }
+private struct FeedEntryGroupItem: Identifiable {
+    let id: String
+    let entry: JournalEntry
+
+    init(id: String? = nil, entry: JournalEntry) {
+        self.id = id ?? entry.id.uuidString
+        self.entry = entry
+    }
+}
+
+private enum LunarEchoSeries: String, CaseIterable {
+    case duplex
+    case simplex
+    case nihil
+
+    var title: String {
+        switch self {
+        case .duplex: "Duplex"
+        case .simplex: "Simplex"
+        case .nihil: "Nihil"
+        }
+    }
+
+    var sortIndex: Int {
+        switch self {
+        case .duplex: 0
+        case .simplex: 1
+        case .nihil: 2
+        }
+    }
+
+    var negativeStep: DateComponents {
+        switch self {
+        case .duplex:
+            DateComponents(day: -14, hour: -16, minute: -46)
+        case .simplex:
+            DateComponents(month: -3, day: -27, hour: -15)
+        case .nihil:
+            DateComponents(year: -2, month: -6, day: -30)
+        }
+    }
+
+    var halfWindow: TimeInterval {
+        SarosPulseCalculator.averageDuration(for: .mega) * 2
+    }
+}
+
+private extension JournalEntry {
+    var notificationFingerprint: String {
+        [
+            id.uuidString,
+            String(Int(eventDate.timeIntervalSince1970)),
+            String(Int(updatedAt.timeIntervalSince1970))
+        ].joined(separator: "-")
+    }
 }
 
 private struct MoonPhaseClockCard: View {
@@ -1427,10 +1730,12 @@ private enum MoonTimelineModelBuilder {
 
 extension Notification.Name {
     static let recordCaptureRequested = Notification.Name("recordCaptureRequested")
+    static let futureFeedRequested = Notification.Name("futureFeedRequested")
 }
 
 enum AppDeepLinkStore {
     private static let pendingRecordCaptureKey = "pendingRecordCaptureEntityID"
+    private static let pendingFutureFeedKey = "pendingFutureFeed"
 
     static func storePendingRecordCapture(entityID: UUID) {
         UserDefaults.standard.set(entityID.uuidString, forKey: pendingRecordCaptureKey)
@@ -1443,6 +1748,16 @@ enum AppDeepLinkStore {
 
         UserDefaults.standard.removeObject(forKey: pendingRecordCaptureKey)
         return UUID(uuidString: idString)
+    }
+
+    static func storePendingFutureFeed() {
+        UserDefaults.standard.set(true, forKey: pendingFutureFeedKey)
+    }
+
+    static func consumePendingFutureFeed() -> Bool {
+        let isPending = UserDefaults.standard.bool(forKey: pendingFutureFeedKey)
+        UserDefaults.standard.removeObject(forKey: pendingFutureFeedKey)
+        return isPending
     }
 }
 

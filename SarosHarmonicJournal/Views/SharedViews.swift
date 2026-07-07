@@ -1523,6 +1523,50 @@ enum SolarYearRuler {
         return durations.reduce(0, +) / Double(durations.count)
     }
 
+    static func tropicalSolarDayIndex(for date: Date) -> Int? {
+        let solstices = TropicalSolarEventStore.shared.juneSolstices
+        guard solstices.count >= 2 else { return nil }
+
+        if date < solstices[0].date || date >= solstices[solstices.count - 1].date {
+            return fallbackSolarDayIndex(for: date)
+        }
+
+        let insertionIndex = insertionIndex(for: date, in: solstices)
+        let previousIndex: Int
+        let nextIndex: Int
+        if insertionIndex < solstices.count,
+           abs(solstices[insertionIndex].date.timeIntervalSince(date)) < 1 {
+            previousIndex = insertionIndex
+            nextIndex = min(insertionIndex + 1, solstices.count - 1)
+        } else {
+            previousIndex = max(insertionIndex - 1, 0)
+            nextIndex = min(max(insertionIndex, 1), solstices.count - 1)
+        }
+
+        let start = solstices[previousIndex].date
+        let end = solstices[nextIndex].date
+        let duration = max(end.timeIntervalSince(start), 1)
+        let solarDayCount = max(Int(round(duration / 86_400)), 1)
+        let phase = min(max(date.timeIntervalSince(start) / duration, 0), 1)
+        return min(max(Int(floor(phase * Double(solarDayCount))), 0), solarDayCount - 1)
+    }
+
+    static func tropicalSolarYearIndex(for date: Date) -> Int? {
+        let solstices = TropicalSolarEventStore.shared.juneSolstices
+        guard solstices.count >= 2 else { return fallbackSolarYearIndex(for: date) }
+
+        if date < solstices[0].date || date >= solstices[solstices.count - 1].date {
+            return fallbackSolarYearIndex(for: date)
+        }
+
+        let insertionIndex = insertionIndex(for: date, in: solstices)
+        if insertionIndex < solstices.count,
+           abs(solstices[insertionIndex].date.timeIntervalSince(date)) < 1 {
+            return insertionIndex
+        }
+        return max(insertionIndex - 1, 0)
+    }
+
     private static func solsticeTicks(in interval: DateInterval) -> [SolarYearRulerTick] {
         let store = TropicalSolarEventStore.shared
         let events = store.solstices
@@ -1664,6 +1708,31 @@ enum SolarYearRuler {
             }
         }
         return low
+    }
+
+    private static func fallbackSolarDayIndex(for date: Date) -> Int? {
+        let calendar = utcCalendar
+        guard
+            let year = calendar.dateComponents([.year], from: date).year,
+            let juneSolstice = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: year, month: 6, day: 21)),
+            let previousJuneSolstice = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: year - 1, month: 6, day: 21))
+        else {
+            return nil
+        }
+
+        let start = date >= juneSolstice ? juneSolstice : previousJuneSolstice
+        return max(Int(floor(date.timeIntervalSince(start) / 86_400)), 0)
+    }
+
+    private static func fallbackSolarYearIndex(for date: Date) -> Int? {
+        let calendar = utcCalendar
+        guard
+            let year = calendar.dateComponents([.year], from: date).year,
+            let juneSolstice = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: year, month: 6, day: 21))
+        else {
+            return nil
+        }
+        return date >= juneSolstice ? year : year - 1
     }
 }
 struct SolarYearRulerCanvas: View {

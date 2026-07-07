@@ -3119,10 +3119,12 @@ struct MirrorCameraView: View {
     @State private var captureHoldWorkItem: DispatchWorkItem?
     @State private var isCapturePressActive = false
     @State private var didStartVideoDuringPress = false
+    @State private var isTimedVideoRecording = false
     @State private var timedCaptureCountdownStart: Date?
     @State private var timedCaptureCountdownTask: Task<Void, Never>?
     @State private var timedCaptureStopTask: Task<Void, Never>?
     @State private var reviewCapture: MirrorCameraReviewCapture?
+    @State private var reviewVideoTemporalMode: MediaTemporalMode?
     @State private var reviewCaptureID = UUID()
     @State private var reviewPreviewImage: UIImage?
     @State private var isProcessingReview = false
@@ -3256,6 +3258,7 @@ struct MirrorCameraView: View {
                 mode: mode,
                 reflectionSelection: reflectionSelection
             )
+            isBinaryFilterEnabled = false
             camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: thresholdLevel)
             if isFocusManual {
                 camera.setLensPosition(lensPosition)
@@ -3430,20 +3433,17 @@ struct MirrorCameraView: View {
                 camera.setLensPosition(newValue)
             }
 
-            binaryFilterToggle
+            flashToggle
 
             RadialTickSlider(
-                value: isBinaryFilterEnabled ? $thresholdLevel : $exposureLevel,
-                systemImage: isBinaryFilterEnabled ? "circle.lefthalf.filled" : "sun.max",
-                tint: isBinaryFilterEnabled ? .cyan : .yellow,
+                value: $exposureLevel,
+                systemImage: "sun.max",
+                tint: .yellow,
                 orientation: .inwardFromRight,
-                accessibilityLabel: isBinaryFilterEnabled ? "Threshold" : "Exposure"
+                accessibilityLabel: "Exposure"
             )
             .frame(maxWidth: .infinity)
             .frame(height: 112)
-            .onChange(of: thresholdLevel) { _, newValue in
-                camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: newValue)
-            }
             .onChange(of: exposureLevel) { _, newValue in
                 isExposureManual = true
                 camera.setExposureLevel(newValue)
@@ -3701,19 +3701,20 @@ struct MirrorCameraView: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private var binaryFilterToggle: some View {
+    private var flashToggle: some View {
         Button {
-            isBinaryFilterEnabled.toggle()
-            camera.setFilter(isBinaryEnabled: isBinaryFilterEnabled, threshold: thresholdLevel)
+            camera.setTorchEnabled(!camera.isTorchEnabled)
         } label: {
-            Image(systemName: isBinaryFilterEnabled ? "circle.lefthalf.filled" : "sun.max")
+            Image(systemName: camera.isTorchEnabled ? "bolt.fill" : "bolt.slash")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: 46, height: 46)
-                .background(isBinaryFilterEnabled ? .cyan.opacity(0.75) : .black.opacity(0.38), in: Circle())
+                .background(camera.isTorchEnabled ? .yellow.opacity(0.75) : .black.opacity(0.38), in: Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Toggle binary filter")
+        .disabled(!camera.isTorchAvailable)
+        .opacity(camera.isTorchAvailable ? 1 : 0.45)
+        .accessibilityLabel(camera.isTorchEnabled ? "Turn flash off" : "Turn flash on")
     }
 
     private var cameraControls: some View {
@@ -3961,9 +3962,13 @@ struct MirrorCameraView: View {
         if camera.isRecordingVideo {
             if didStartVideoDuringPress {
                 didStartVideoDuringPress = false
-            } else {
-                stopVideoCapture()
+                return
             }
+            didStartVideoDuringPress = false
+            stopVideoCapture(
+                temporalMode: isTimedVideoRecording ? temporalMode : .forward,
+                showsReview: isTimedVideoRecording
+            )
             return
         }
 
@@ -4042,13 +4047,14 @@ struct MirrorCameraView: View {
             return
         }
 
+        isTimedVideoRecording = true
         camera.startVideoRecording()
         let duration = Self.clampedTimedVideoDuration(timedVideoDuration)
         timedCaptureStopTask?.cancel()
         timedCaptureStopTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
             guard !Task.isCancelled, camera.isRecordingVideo else { return }
-            stopVideoCapture(cancelTimedTask: false)
+            stopVideoCapture(cancelTimedTask: false, temporalMode: temporalMode)
         }
     }
 
@@ -4131,17 +4137,27 @@ struct MirrorCameraView: View {
         }
     }
 
-    private func stopVideoCapture(cancelTimedTask: Bool = true) {
+    private func stopVideoCapture(
+        cancelTimedTask: Bool = true,
+        temporalMode: MediaTemporalMode = .forward,
+        showsReview: Bool = true
+    ) {
         if cancelTimedTask {
             timedCaptureStopTask?.cancel()
         }
         timedCaptureStopTask = nil
         camera.stopVideoRecording { result in
+            isTimedVideoRecording = false
             switch result {
             case .success(let url):
+                guard showsReview else {
+                    saveRawVideoCapture(at: url)
+                    return
+                }
                 let thumbnail = MirrorVideoPostProcessor.thumbnail(from: url)
                     ?? camera.captureImage()
                     ?? UIImage()
+                reviewVideoTemporalMode = temporalMode
                 beginReview(.video(url, thumbnail: thumbnail))
             case .failure(let error):
                 saver.showFailure(error.localizedDescription)
@@ -4149,8 +4165,25 @@ struct MirrorCameraView: View {
         }
     }
 
+    private func saveRawVideoCapture(at url: URL) {
+        if let onCapturedMedia {
+            onCapturedMedia(MirrorCameraCapturedMedia(
+                type: .video,
+                data: nil,
+                sourceURL: url,
+                fileExtension: url.pathExtension.isEmpty ? "mov" : url.pathExtension
+            ))
+            saver.showStatus("Saved video")
+        } else {
+            saver.saveVideo(at: url)
+        }
+    }
+
     private func beginReview(_ capture: MirrorCameraReviewCapture) {
         cancelTimedCapture()
+        if !capture.isVideo {
+            reviewVideoTemporalMode = nil
+        }
         reviewCapture = capture
         reviewCaptureID = UUID()
         reviewPreviewImage = nil
@@ -4164,6 +4197,7 @@ struct MirrorCameraView: View {
             try? FileManager.default.removeItem(at: url)
         }
         reviewCapture = nil
+        reviewVideoTemporalMode = nil
         reviewCaptureID = UUID()
         reviewPreviewImage = nil
         sonificationSession = nil
@@ -4222,7 +4256,8 @@ struct MirrorCameraView: View {
             }
 
         case .video(let url, _):
-            let configuration = outputConfiguration
+            var configuration = outputConfiguration
+            configuration.temporalMode = reviewVideoTemporalMode ?? .forward
             saver.showStatus("Processing video")
             Task {
                 do {
@@ -5224,6 +5259,8 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     @Published private(set) var cameraPosition: AVCaptureDevice.Position = .back
     @Published private(set) var backLens: MirrorCameraBackLens = .wide
     @Published private(set) var isRecordingVideo = false
+    @Published private(set) var isTorchAvailable = false
+    @Published private(set) var isTorchEnabled = false
 
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "exeligmos.thread-mirror-camera.session")
@@ -5245,6 +5282,7 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     private var isExposureManual = false
     private var isBinaryFilterEnabled = false
     private var thresholdLevel: Double = 0.5
+    private var requestedTorchEnabled = false
     private var lastFrameTime: CFTimeInterval = 0
     private var lastAnimacyFrameTime: CFTimeInterval = 0
     private var isAnimacyScoreInFlight = false
@@ -5418,6 +5456,15 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         }
     }
 
+    @MainActor
+    func setTorchEnabled(_ isEnabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.requestedTorchEnabled = isEnabled
+            self.applyTorch(to: self.currentDevice)
+        }
+    }
+
     func setFilter(isBinaryEnabled: Bool, threshold: Double) {
         videoQueue.async { [weak self] in
             guard let self else { return }
@@ -5585,8 +5632,51 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         self.output = output
         currentDevice = device
         latestFrame = nil
+        updateTorchAvailability(for: device)
+        applyTorch(to: device)
         configurePreferredFrameRate(on: device)
         applyFocusAndExposureDefaults(to: device)
+    }
+
+    private func updateTorchAvailability(for device: AVCaptureDevice?) {
+        let isAvailable = device?.hasTorch == true && device?.isTorchModeSupported(.on) == true
+        if !isAvailable {
+            requestedTorchEnabled = false
+        }
+        Task { @MainActor in
+            self.isTorchAvailable = isAvailable
+            if !isAvailable {
+                self.isTorchEnabled = false
+            }
+        }
+    }
+
+    private func applyTorch(to device: AVCaptureDevice?) {
+        guard let device, device.hasTorch, device.isTorchModeSupported(.on) else {
+            updateTorchAvailability(for: device)
+            return
+        }
+
+        do {
+            try device.lockForConfiguration()
+            if requestedTorchEnabled, device.isTorchModeSupported(.on) {
+                try? device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+            } else {
+                device.torchMode = .off
+            }
+            let isEnabled = device.torchMode == .on
+            device.unlockForConfiguration()
+
+            Task { @MainActor in
+                self.isTorchAvailable = true
+                self.isTorchEnabled = isEnabled
+            }
+        } catch {
+            Task { @MainActor in
+                self.errorMessage = error.localizedDescription
+                self.isTorchEnabled = false
+            }
+        }
     }
 
     private func configureAudioCaptureForRecordingIfNeeded() {
