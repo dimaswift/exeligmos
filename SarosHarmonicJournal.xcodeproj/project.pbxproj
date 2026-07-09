@@ -55,6 +55,9 @@
 		A1B2C3D4E5F607182930A101 /* JournalEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A104 /* JournalEntry.swift */; };
 		A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */; };
 		A1B2C3D4E5F607182930A107 /* JournalEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */; };
+		B30000000000000000000001 /* SharedMediaImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000002 /* SharedMediaImportService.swift */; };
+		B30000000000000000000003 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000004 /* ShareViewController.swift */; };
+		B30000000000000000000005 /* SarosHarmonicJournalShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
 		B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageSonificationEngine.swift */; };
 		B10000000000000000000002 /* ImageSonificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ImageSonificationView.swift */; };
@@ -89,6 +92,13 @@
 			remoteGlobalIDString = A50000000000000000000001;
 			remoteInfo = SarosHarmonicJournalWidgets;
 		};
+		B3000000000000000000000D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A6395EBE5491A03D0CF3CC7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B30000000000000000000009;
+			remoteInfo = SarosHarmonicJournalShare;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -99,6 +109,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				A10000000000000000000008 /* SarosHarmonicJournalWidgets.appex in Embed App Extensions */,
+				B30000000000000000000005 /* SarosHarmonicJournalShare.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -159,6 +170,11 @@
 		A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000011 /* LiveTrackingFlip.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; name = LiveTrackingFlip.wav; path = SarosHarmonicJournal/Resources/LiveTrackingFlip.wav; sourceTree = "<group>"; };
 		ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosHarmonicJournalApp.swift; path = SarosHarmonicJournal/App/SarosHarmonicJournalApp.swift; sourceTree = "<group>"; };
+		B30000000000000000000002 /* SharedMediaImportService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedMediaImportService.swift; path = SarosHarmonicJournal/Services/SharedMediaImportService.swift; sourceTree = "<group>"; };
+		B30000000000000000000004 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		B30000000000000000000006 /* SarosHarmonicJournalShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B30000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B30000000000000000000008 /* SarosHarmonicJournalShare.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = SarosHarmonicJournalShare.entitlements; sourceTree = "<group>"; };
 		B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
 		B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalTemporalEngine.swift; path = SarosHarmonicJournal/Domain/JournalTemporalEngine.swift; sourceTree = "<group>"; };
@@ -179,6 +195,13 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		1C0A962DD34F88F7558044BC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3000000000000000000000B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -208,6 +231,7 @@
 				51B47D3B5A3E80817B4CAA8B /* SarosHarmonicJournal.app */,
 				6E74732CDAEDECE4CC6A34B5 /* SarosHarmonicJournalTests.xctest */,
 				A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */,
+				B30000000000000000000006 /* SarosHarmonicJournalShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -272,6 +296,7 @@
 				C391FB837FAA81EF9A1D423F /* ExportService.swift */,
 				C5C497E31EC5CD2F6F6B3772 /* LocalExportServer.swift */,
 				0CAA43CDBE170A3FF1C2F6B3 /* MediaStorage.swift */,
+				B30000000000000000000002 /* SharedMediaImportService.swift */,
 				0C3B8821A71E4A6CB0F60124 /* MirrorReflectionProcessor.swift */,
 				7B90B947169FA6FCE5DF7B28 /* NotificationScheduler.swift */,
 				A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */,
@@ -307,6 +332,16 @@
 			path = SarosHarmonicJournalWidgets;
 			sourceTree = "<group>";
 		};
+		B30000000000000000000012 /* SarosHarmonicJournalShare */ = {
+			isa = PBXGroup;
+			children = (
+				B30000000000000000000007 /* Info.plist */,
+				B30000000000000000000008 /* SarosHarmonicJournalShare.entitlements */,
+				B30000000000000000000004 /* ShareViewController.swift */,
+			);
+			path = SarosHarmonicJournalShare;
+			sourceTree = "<group>";
+		};
 		A6FAFA372ECA40B56820B7D1 = {
 			isa = PBXGroup;
 			children = (
@@ -314,6 +349,7 @@
 				CBCFDD27257B252E345A21CB /* Frameworks */,
 				86AB1C569345615094E42E77 /* SarosHarmonicJournal */,
 				A30000000000000000000001 /* SarosHarmonicJournalWidgets */,
+				B30000000000000000000012 /* SarosHarmonicJournalShare */,
 				35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */,
 			);
 			sourceTree = "<group>";
@@ -349,6 +385,7 @@
 			);
 			dependencies = (
 				A60000000000000000000001 /* PBXTargetDependency */,
+				B3000000000000000000000E /* PBXTargetDependency */,
 			);
 			name = SarosHarmonicJournal;
 			productName = SarosHarmonicJournal;
@@ -370,6 +407,23 @@
 			name = SarosHarmonicJournalWidgets;
 			productName = SarosHarmonicJournalWidgets;
 			productReference = A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B30000000000000000000009 /* SarosHarmonicJournalShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */;
+			buildPhases = (
+				B3000000000000000000000A /* Sources */,
+				B3000000000000000000000B /* Frameworks */,
+				B3000000000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SarosHarmonicJournalShare;
+			productName = SarosHarmonicJournalShare;
+			productReference = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 		B1D227DBDE348C208CD4A1E5 /* SarosHarmonicJournalTests */ = {
@@ -409,6 +463,11 @@
 						DevelopmentTeam = 3477AQKK6R;
 						ProvisioningStyle = Automatic;
 					};
+					B30000000000000000000009 = {
+						CreatedOnToolsVersion = 26.5;
+						DevelopmentTeam = 3477AQKK6R;
+						ProvisioningStyle = Automatic;
+					};
 					B1D227DBDE348C208CD4A1E5 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = 4589DE551739F91922B242AB;
@@ -430,6 +489,7 @@
 			targets = (
 				4589DE551739F91922B242AB /* SarosHarmonicJournal */,
 				A50000000000000000000001 /* SarosHarmonicJournalWidgets */,
+				B30000000000000000000009 /* SarosHarmonicJournalShare */,
 				B1D227DBDE348C208CD4A1E5 /* SarosHarmonicJournalTests */,
 			);
 		};
@@ -444,6 +504,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A40000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3000000000000000000000C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -489,6 +556,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B3000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B30000000000000000000003 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E2BCB4B66D7FE5AA54071563 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -524,6 +599,7 @@
 				72B907EA1B9D614611951BE9 /* ExportService.swift in Sources */,
 				5A6D58421E75F58CB38EC48D /* LocalExportServer.swift in Sources */,
 				D931AE0271736D1F1208198B /* MediaStorage.swift in Sources */,
+				B30000000000000000000001 /* SharedMediaImportService.swift in Sources */,
 				0C3B8821A71E4A6CB0F60123 /* MirrorReflectionProcessor.swift in Sources */,
 				5DB2419448F0945916D97208 /* NotificationScheduler.swift in Sources */,
 				A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */,
@@ -559,6 +635,12 @@
 			name = SarosHarmonicJournalWidgets;
 			target = A50000000000000000000001 /* SarosHarmonicJournalWidgets */;
 			targetProxy = A60000000000000000000002 /* PBXContainerItemProxy */;
+		};
+		B3000000000000000000000E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = SarosHarmonicJournalShare;
+			target = B30000000000000000000009 /* SarosHarmonicJournalShare */;
+			targetProxy = B3000000000000000000000D /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -832,6 +914,58 @@
 			};
 			name = Release;
 		};
+		B3000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalShare/SarosHarmonicJournalShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SarosHarmonicJournalShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B30000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalShare/SarosHarmonicJournalShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3477AQKK6R;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SarosHarmonicJournalShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -849,6 +983,15 @@
 			buildConfigurations = (
 				A70000000000000000000002 /* Release */,
 				A70000000000000000000001 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B30000000000000000000010 /* Release */,
+				B3000000000000000000000F /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

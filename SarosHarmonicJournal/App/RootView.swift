@@ -43,6 +43,8 @@ struct RootView: View {
     @State private var feedMode: FeedMode = .past
     @State private var captureRequest: RecordCaptureRequest?
     @State private var activityCaptureRequest: ActivityEntryCaptureRequest?
+    @State private var sharedMediaCaptureRequest: SharedMediaCaptureRequest?
+    @State private var isConsumingSharedMediaImport = false
     private let activityCompletionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -79,6 +81,16 @@ struct RootView: View {
                 )
             }
         }
+        .sheet(item: $sharedMediaCaptureRequest) { request in
+            NavigationStack {
+                JournalEntryCaptureView(
+                    recordStartedAt: request.eventDate,
+                    eventEndDate: request.eventDate,
+                    template: .random,
+                    initialMediaItems: request.mediaItems
+                )
+            }
+        }
         .onOpenURL(perform: handleDeepLink)
         .onReceive(NotificationCenter.default.publisher(for: .recordCaptureRequested)) { notification in
             if let entityID = notification.object as? UUID {
@@ -94,6 +106,7 @@ struct RootView: View {
         .task {
             consumePendingFutureFeed()
             consumePendingRecordCapture()
+            consumePendingSharedMediaImport()
             consumeCompletedCountdownIfNeeded()
             prewarmSarosFlipDistribution()
             refreshSarosEventNotifications()
@@ -117,6 +130,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             consumePendingFutureFeed()
+            consumePendingSharedMediaImport()
             consumeCompletedCountdownIfNeeded()
         }
     }
@@ -138,6 +152,11 @@ struct RootView: View {
     }
 
     private func handleDeepLink(_ url: URL) {
+        if url.isFileURL {
+            importSharedMedia(from: [url])
+            return
+        }
+
         guard url.scheme == "exeligmos" else { return }
 
         switch url.host {
@@ -153,6 +172,8 @@ struct RootView: View {
             } else {
                 selectedTab = .record
             }
+        case "import":
+            consumePendingSharedMediaImport()
         case "thread":
             selectedTab = .settings
         case "saros":
@@ -213,6 +234,39 @@ struct RootView: View {
         }
     }
 
+    private func consumePendingSharedMediaImport() {
+        guard !isConsumingSharedMediaImport else { return }
+        isConsumingSharedMediaImport = true
+        Task {
+            let result = try? await SharedMediaImportService.consumePendingImports()
+            await MainActor.run {
+                isConsumingSharedMediaImport = false
+                if let result {
+                    openSharedMediaCapture(result)
+                }
+            }
+        }
+    }
+
+    private func importSharedMedia(from urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        Task {
+            guard let result = try? await SharedMediaImportService.importExternalURLs(urls) else { return }
+            await MainActor.run {
+                openSharedMediaCapture(result)
+            }
+        }
+    }
+
+    @MainActor
+    private func openSharedMediaCapture(_ result: SharedMediaImportResult) {
+        selectedTab = .record
+        sharedMediaCaptureRequest = SharedMediaCaptureRequest(
+            eventDate: result.eventDate,
+            mediaItems: result.mediaItems
+        )
+    }
+
     private func consumeCompletedCountdownIfNeeded() {
         let completedIDs = ContinuousActivityLogger.markCompletedCountdownsIfNeeded()
         guard !completedIDs.isEmpty else { return }
@@ -264,6 +318,12 @@ private struct ActivityEntryCaptureRequest: Identifiable {
     let endDate: Date
     let template: JournalTemplateSeed
     let text: String?
+    let mediaItems: [JournalMediaItem]
+}
+
+private struct SharedMediaCaptureRequest: Identifiable {
+    let id = UUID()
+    let eventDate: Date
     let mediaItems: [JournalMediaItem]
 }
 
