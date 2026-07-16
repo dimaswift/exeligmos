@@ -1,0 +1,16 @@
+{
+  "name": "@exeligmos/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@exeligmos/glyph-core": "*",
+    "react": "^19.2.7"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  }
+}

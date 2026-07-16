@@ -1,0 +1,27 @@
+.profilePage {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.profileActions,
+.routeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.profileActions a,
+.routeActions a {
+  padding: 0.52rem 0.72rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.76rem;
+  text-decoration: none;
+}
+
+.profileActions a:hover,
+.routeActions a:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}

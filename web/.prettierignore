@@ -1,0 +1,6 @@
+build/
+.react-router/
+node_modules/
+packages/api-client/src/schema.ts
+packages/domain-catalog/src/catalog.generated.ts
+package-lock.json

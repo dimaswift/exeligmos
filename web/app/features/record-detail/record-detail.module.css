@@ -1,0 +1,215 @@
+.page {
+  width: min(72rem, 100%);
+  margin: 0 auto;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.record {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-5);
+  align-items: center;
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--color-border);
+  background: radial-gradient(circle at 90% 0%, rgb(139 215 193 / 12%), transparent 22rem);
+}
+
+.emoji {
+  font-size: clamp(2.8rem, 7vw, 5rem);
+  line-height: 1;
+}
+
+.identity h1 {
+  margin: 0;
+  color: var(--color-accent-strong);
+  font-size: clamp(1.7rem, 4vw, 3rem);
+}
+
+.identity > p:not(:global(.eyebrow)) {
+  margin: 0.3rem 0 0;
+  color: var(--color-text-muted);
+}
+
+.duration {
+  display: inline-block;
+  margin-top: 0.35rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.heroGlyph {
+  color: var(--color-text);
+}
+
+.sarosSection,
+.media {
+  padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem) 0;
+}
+
+.sarosSection h2,
+.media h2 {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.sarosSection ul {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding: 0 0 var(--space-2);
+  margin: 0;
+  list-style: none;
+}
+
+.sarosSection li {
+  display: grid;
+  min-width: 6rem;
+  justify-items: center;
+  gap: 0.25rem;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: 0.8rem;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.sarosSection li strong {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.sarosSection .closest {
+  border-color: color-mix(in srgb, var(--color-accent), transparent 48%);
+  background: color-mix(in srgb, var(--color-accent), transparent 91%);
+}
+
+.text,
+.encrypted {
+  max-width: 54rem;
+  padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem) 0;
+  margin: 0;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.encrypted {
+  color: #d8c1f0;
+}
+
+.imageRail {
+  display: grid;
+  grid-auto-columns: minmax(16rem, 72%);
+  grid-auto-flow: column;
+  gap: var(--space-3);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: var(--space-3);
+}
+
+.imageRail a {
+  height: min(62vh, 36rem);
+  scroll-snap-align: start;
+}
+
+.imageRail img {
+  width: 100%;
+  height: 100%;
+  border-radius: 0.75rem;
+  background: var(--color-canvas);
+  object-fit: contain;
+}
+
+.player,
+.audioPlayer {
+  margin: var(--space-4) 0 0;
+}
+
+.player video {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: 0.75rem;
+  background: #000;
+}
+
+.player figcaption,
+.audioPlayer figcaption {
+  margin-bottom: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.audioPlayer audio {
+  width: min(100%, 38rem);
+}
+
+.document {
+  display: block;
+  width: fit-content;
+  margin-top: var(--space-3);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem) 0;
+  margin: 0;
+  list-style: none;
+}
+
+.tags li {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  justify-content: space-between;
+  padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem);
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 42rem) {
+  .hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .heroGlyph {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .imageRail {
+    grid-auto-columns: 92%;
+  }
+}

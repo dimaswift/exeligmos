@@ -1,0 +1,9 @@
+node_modules/
+.react-router/
+build/
+coverage/
+.env
+.env.*
+!.env.example
+packages/api-client/src/schema.ts.tmp
+

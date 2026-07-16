@@ -1,0 +1,970 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:exeligmos:domain-catalog:schema:1",
+  "title": "Exeligmos domain catalog",
+  "description": "Language-neutral contract for harmonic time, rarity, glyph geometry, and numeric event types.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "catalogVersion",
+    "status",
+    "provenance",
+    "radix",
+    "harmonics",
+    "semanticTokens",
+    "time",
+    "rarities",
+    "glyph",
+    "events"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./catalog.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "catalogVersion": {
+      "$ref": "#/$defs/semver"
+    },
+    "status": {
+      "enum": ["foundation", "stable", "deprecated"]
+    },
+    "provenance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/provenance"
+      }
+    },
+    "radix": {
+      "type": "object",
+      "required": ["value", "digits"],
+      "properties": {
+        "value": {
+          "const": 8
+        },
+        "digits": {
+          "const": "01234567"
+        }
+      },
+      "additionalProperties": false
+    },
+    "harmonics": {
+      "$ref": "#/$defs/harmonics"
+    },
+    "semanticTokens": {
+      "$ref": "#/$defs/semanticTokens"
+    },
+    "time": {
+      "$ref": "#/$defs/time"
+    },
+    "rarities": {
+      "$ref": "#/$defs/rarities"
+    },
+    "glyph": {
+      "$ref": "#/$defs/glyph"
+    },
+    "events": {
+      "$ref": "#/$defs/events"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
+    },
+    "tokenReference": {
+      "type": "string",
+      "pattern": "^color\\.[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["path", "symbols"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbols": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "integerRange": {
+      "type": "object",
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "presentationDepth": {
+      "type": "object",
+      "required": ["minimum", "maximum", "default", "canonical"],
+      "properties": {
+        "minimum": {
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "integer"
+        },
+        "default": {
+          "type": "integer"
+        },
+        "canonical": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "addressRule": {
+      "type": "object",
+      "required": ["inputFiltering", "overflow", "underflow", "pad"],
+      "properties": {
+        "inputFiltering": {
+          "const": "retain-radix-digits"
+        },
+        "overflow": {
+          "enum": ["keep-leftmost", "keep-rightmost"]
+        },
+        "underflow": {
+          "enum": ["left-pad", "right-pad"]
+        },
+        "pad": {
+          "enum": ["zero", "rarity-repeated-digit"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "harmonics": {
+      "type": "object",
+      "required": [
+        "calculationDepth",
+        "presentationDepth",
+        "binCountFormula",
+        "addressing"
+      ],
+      "properties": {
+        "calculationDepth": {
+          "$ref": "#/$defs/integerRange"
+        },
+        "presentationDepth": {
+          "$ref": "#/$defs/presentationDepth"
+        },
+        "binCountFormula": {
+          "const": "radix^depth"
+        },
+        "addressing": {
+          "type": "object",
+          "required": ["canonicalStorage", "rarityStorage", "glyphInput", "binAddress"],
+          "properties": {
+            "canonicalStorage": {
+              "$ref": "#/$defs/addressRule"
+            },
+            "rarityStorage": {
+              "$ref": "#/$defs/addressRule"
+            },
+            "glyphInput": {
+              "$ref": "#/$defs/addressRule"
+            },
+            "binAddress": {
+              "type": "object",
+              "required": ["encoding", "width", "underflow"],
+              "properties": {
+                "encoding": {
+                  "const": "base-8"
+                },
+                "width": {
+                  "const": "depth"
+                },
+                "underflow": {
+                  "const": "left-pad-zero"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "colorToken": {
+      "type": "object",
+      "required": ["id", "fallbackSrgb", "sourceKind"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/tokenReference"
+        },
+        "fallbackSrgb": {
+          "type": "string",
+          "pattern": "^#[0-9A-F]{6}$"
+        },
+        "sourceKind": {
+          "enum": ["swift-system", "explicit-srgb", "catalog"]
+        },
+        "legacySwiftColor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "semanticTokens": {
+      "type": "object",
+      "required": ["colors"],
+      "properties": {
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/colorToken"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeUnitRoles": {
+      "type": "object",
+      "required": ["glyph", "ruler", "reference", "timelineOverlay", "showTickLabel"],
+      "properties": {
+        "glyph": {
+          "type": "boolean"
+        },
+        "ruler": {
+          "type": "boolean"
+        },
+        "reference": {
+          "type": "boolean"
+        },
+        "timelineOverlay": {
+          "type": "boolean"
+        },
+        "showTickLabel": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeUnit": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "exponent",
+        "pattern",
+        "semanticColorToken",
+        "tickHeight",
+        "roles"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shortLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "exponent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "pattern": {
+          "type": "string",
+          "pattern": "^[X0]+$"
+        },
+        "semanticColorToken": {
+          "$ref": "#/$defs/tokenReference"
+        },
+        "tickHeight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "roles": {
+          "$ref": "#/$defs/timeUnitRoles"
+        }
+      },
+      "additionalProperties": false
+    },
+    "unitOrders": {
+      "type": "object",
+      "required": ["glyph", "ruler", "reference", "durationFormatting"],
+      "properties": {
+        "glyph": {
+          "$ref": "#/$defs/identifierList"
+        },
+        "ruler": {
+          "$ref": "#/$defs/identifierList"
+        },
+        "reference": {
+          "$ref": "#/$defs/identifierList"
+        },
+        "durationFormatting": {
+          "$ref": "#/$defs/identifierList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "identifierList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/identifier"
+      }
+    },
+    "time": {
+      "type": "object",
+      "required": ["basePeriod", "durationFormula", "units", "unitOrders", "pulse"],
+      "properties": {
+        "basePeriod": {
+          "type": "object",
+          "required": ["id", "title", "days", "seconds"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "days": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "durationFormula": {
+          "const": "basePeriod.seconds / radix^unit.exponent"
+        },
+        "units": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/timeUnit"
+          }
+        },
+        "unitOrders": {
+          "$ref": "#/$defs/unitOrders"
+        },
+        "pulse": {
+          "type": "object",
+          "required": ["glyphDepth", "parentExponent"],
+          "properties": {
+            "glyphDepth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "parentExponent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rarityFamily": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "order",
+        "wildcardPrefixCount",
+        "symbol",
+        "semanticColorToken",
+        "notificationEligible"
+      ],
+      "properties": {
+        "id": {
+          "enum": ["common", "rare", "epic", "legendary", "mythic"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "wildcardPrefixCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semanticColorToken": {
+          "$ref": "#/$defs/tokenReference"
+        },
+        "notificationEligible": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rarityDigit": {
+      "type": "object",
+      "required": ["digit", "prefix", "semanticColorToken"],
+      "properties": {
+        "digit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "semanticColorToken": {
+          "$ref": "#/$defs/tokenReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rarityAlias": {
+      "type": "object",
+      "required": ["alias", "target"],
+      "properties": {
+        "alias": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^(common|rare|epic|legendary|mythic)(?:-[1-7])?$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rarityColorOverride": {
+      "type": "object",
+      "required": ["rarityId", "semanticColorToken"],
+      "properties": {
+        "rarityId": {
+          "type": "string",
+          "pattern": "^(rare|epic|legendary|mythic)-[1-7]$"
+        },
+        "semanticColorToken": {
+          "$ref": "#/$defs/tokenReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rarities": {
+      "type": "object",
+      "required": [
+        "rawIdentifierFormat",
+        "headerGlyphDigit",
+        "rankFormula",
+        "families",
+        "digits",
+        "aliases",
+        "colorOverrides",
+        "classification"
+      ],
+      "properties": {
+        "rawIdentifierFormat": {
+          "const": "family or family-digit"
+        },
+        "headerGlyphDigit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "rankFormula": {
+          "const": "common ? 0 : family.order * radix + repeatedDigit"
+        },
+        "families": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/rarityFamily"
+          }
+        },
+        "digits": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/rarityDigit"
+          }
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rarityAlias"
+          }
+        },
+        "colorOverrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rarityColorOverride"
+          }
+        },
+        "classification": {
+          "type": "object",
+          "required": [
+            "inputFiltering",
+            "overflow",
+            "underflow",
+            "zeroBoundary",
+            "allZeroRarity",
+            "maximumRecognizedWildcardPrefixCount"
+          ],
+          "properties": {
+            "inputFiltering": {
+              "const": "retain-radix-digits"
+            },
+            "overflow": {
+              "const": "keep-leftmost"
+            },
+            "underflow": {
+              "const": "left-pad-zero"
+            },
+            "zeroBoundary": {
+              "const": "positive address ending in zero classifies previous address"
+            },
+            "allZeroRarity": {
+              "const": "mythic-7"
+            },
+            "maximumRecognizedWildcardPrefixCount": {
+              "const": 3
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "point": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "arm": {
+      "type": "object",
+      "required": ["digit", "points"],
+      "properties": {
+        "digit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/point"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "glyph": {
+      "type": "object",
+      "required": [
+        "geometryVersion",
+        "supportedDepth",
+        "coordinateSystem",
+        "normalization",
+        "socketDigitMapping",
+        "fillRule",
+        "constants",
+        "coreHole",
+        "arms",
+        "style",
+        "accessibility"
+      ],
+      "properties": {
+        "geometryVersion": {
+          "$ref": "#/$defs/semver"
+        },
+        "supportedDepth": {
+          "$ref": "#/$defs/integerRange"
+        },
+        "coordinateSystem": {
+          "type": "object",
+          "required": ["origin", "xAxis", "yAxis", "angleUnit", "positiveRotation"],
+          "properties": {
+            "origin": {
+              "const": "center"
+            },
+            "xAxis": {
+              "const": "right"
+            },
+            "yAxis": {
+              "const": "down"
+            },
+            "angleUnit": {
+              "const": "degrees"
+            },
+            "positiveRotation": {
+              "const": "clockwise"
+            }
+          },
+          "additionalProperties": false
+        },
+        "normalization": {
+          "$ref": "#/$defs/addressRule"
+        },
+        "socketDigitMapping": {
+          "type": "object",
+          "required": ["socketZero", "otherSockets", "rotationStepFormula"],
+          "properties": {
+            "socketZero": {
+              "const": "digitIndex 0"
+            },
+            "otherSockets": {
+              "const": "digitIndex = depth - socketIndex"
+            },
+            "rotationStepFormula": {
+              "const": "360 / depth"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fillRule": {
+          "const": "even-odd"
+        },
+        "constants": {
+          "type": "object",
+          "required": ["socketWidth", "coreRadius", "gridSize", "paddingCells", "insetThickness"],
+          "properties": {
+            "socketWidth": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "coreRadius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "gridSize": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "paddingCells": {
+              "type": "number",
+              "minimum": 0
+            },
+            "insetThickness": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "coreHole": {
+          "type": "object",
+          "required": ["legacyExactDepth", "legacyExactPoints", "otherDepths"],
+          "properties": {
+            "legacyExactDepth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "legacyExactPoints": {
+              "type": "array",
+              "minItems": 3,
+              "items": {
+                "$ref": "#/$defs/point"
+              }
+            },
+            "otherDepths": {
+              "const": "inset-convex-core-polygon"
+            }
+          },
+          "additionalProperties": false
+        },
+        "arms": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/arm"
+          }
+        },
+        "style": {
+          "type": "object",
+          "required": ["defaultMode", "splitRule"],
+          "properties": {
+            "defaultMode": {
+              "const": "single-color"
+            },
+            "splitRule": {
+              "const": "digitIndex < splitAfterDigitCount uses primary; remaining digits use secondary"
+            }
+          },
+          "additionalProperties": false
+        },
+        "accessibility": {
+          "type": "object",
+          "required": ["label", "value"],
+          "properties": {
+            "label": {
+              "const": "Octal glyph"
+            },
+            "value": {
+              "const": "normalized octal address"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventNamespace": {
+      "type": "object",
+      "required": ["id", "minimum", "maximum", "authority", "registration", "scope"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "minimum": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "maximum": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "authority": {
+          "enum": ["exeligmos", "catalog-allocation", "provider"]
+        },
+        "registration": {
+          "enum": ["catalog-entry-required", "catalog-block-allocation-required", "provider-metadata-required"]
+        },
+        "scope": {
+          "enum": ["global", "provider-qualified"]
+        },
+        "blockSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventEntry": {
+      "type": "object",
+      "required": ["type", "key", "namespace", "status", "label", "semanticColorToken"],
+      "properties": {
+        "type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "namespace": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "enum": ["experimental", "stable", "deprecated"]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "semanticColorToken": {
+          "$ref": "#/$defs/tokenReference"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "producerAllocation": {
+      "type": "object",
+      "required": ["namespace", "minimum", "maximum", "status"],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
+        },
+        "minimum": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "maximum": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "ownerUserId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F-]{36}$"
+        },
+        "ownerHandle": {
+          "type": "string",
+          "pattern": "^@[A-Za-z0-9_.-]+$"
+        },
+        "status": {
+          "enum": ["active", "retired"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "typeRange",
+        "identityRule",
+        "unknownTypePolicy",
+        "unknownDisplay",
+        "namespaces",
+        "producerAllocations",
+        "providerMetadata",
+        "entries"
+      ],
+      "properties": {
+        "typeRange": {
+          "type": "object",
+          "required": ["minimum", "maximum", "storage"],
+          "properties": {
+            "minimum": {
+              "const": 0
+            },
+            "maximum": {
+              "const": 2147483647
+            },
+            "storage": {
+              "const": "signed-int32-nonnegative"
+            }
+          },
+          "additionalProperties": false
+        },
+        "identityRule": {
+          "const": "assigned numeric meanings are immutable and never reused"
+        },
+        "unknownTypePolicy": {
+          "const": "preserve-and-render-generic"
+        },
+        "unknownDisplay": {
+          "type": "object",
+          "required": ["labelTemplate", "semanticColorToken"],
+          "properties": {
+            "labelTemplate": {
+              "const": "Unknown event type {type}"
+            },
+            "semanticColorToken": {
+              "$ref": "#/$defs/tokenReference"
+            }
+          },
+          "additionalProperties": false
+        },
+        "namespaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/eventNamespace"
+          }
+        },
+        "producerAllocations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/producerAllocation"
+          }
+        },
+        "providerMetadata": {
+          "type": "object",
+          "required": ["containerProperty", "required", "optional", "namespaceFormat"],
+          "properties": {
+            "containerProperty": {
+              "const": "eventType"
+            },
+            "required": {
+              "type": "array",
+              "const": ["namespace", "name", "version"]
+            },
+            "optional": {
+              "type": "array",
+              "const": ["label", "semanticToken"]
+            },
+            "namespaceFormat": {
+              "const": "reverse-dns"
+            }
+          },
+          "additionalProperties": false
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/eventEntry"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

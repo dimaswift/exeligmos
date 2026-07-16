@@ -1,3 +1,13 @@
 sync-server/data
 .derivedData
 dnand/data
+sync-server/node_modules
+sync-server/dist
+sync-server/.env
+sync-server/coverage
+sync-server/var
+sync-server/migration-reports
+sync-server/legacy-import-mapping.json
+sync-server/.playwright-cli
+.playwright-cli
+output

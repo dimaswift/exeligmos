@@ -1838,7 +1838,7 @@ private struct AutoSyncObserver: View {
 
     private var commandFingerprint: String {
         syncCommands
-            .filter(\.isPending)
+            .filter(\.isEligibleForAutomaticSync)
             .map { "\($0.id.uuidString):\($0.updatedAt.timeIntervalSince1970):\($0.typeRawValue):\($0.subjectID)" }
             .joined(separator: ",")
     }
@@ -1856,7 +1856,7 @@ private struct AutoSyncObserver: View {
         guard syncServerURL.nilIfBlank != nil else { return }
         try? await Task.sleep(nanoseconds: 850_000_000)
         guard !Task.isCancelled else { return }
-        let hasPendingCommands = syncCommands.contains(where: \.isPending)
+        let hasPendingCommands = syncCommands.contains(where: \.isEligibleForAutomaticSync)
         guard hasPendingCommands else { return }
         let fingerprint = syncFingerprint
         guard lastCheckedFingerprint != fingerprint else { return }

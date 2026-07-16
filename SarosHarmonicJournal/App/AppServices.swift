@@ -9,7 +9,6 @@ final class AppServices: ObservableObject {
     let exportService: ExportService
     let syncService: SyncService
     let weatherService: any WeatherService
-    let animacyDatasetQueue: AnimacyDatasetQueueStore
     let sarosFlipDistributionStore: SarosFlipDistributionStore
     let sarosEventContextService: SarosEventContextService
 
@@ -24,7 +23,6 @@ final class AppServices: ObservableObject {
         self.exportService = ExportService()
         self.syncService = SyncService()
         self.weatherService = OpenMeteoWeatherService()
-        self.animacyDatasetQueue = AnimacyDatasetQueueStore()
         self.sarosFlipDistributionStore = SarosFlipDistributionStore()
         self.sarosEventContextService = SarosEventContextService(eclipseService: eclipseService)
     }

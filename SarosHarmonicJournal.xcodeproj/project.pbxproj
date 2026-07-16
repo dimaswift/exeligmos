@@ -20,10 +20,6 @@
 		12345ABCDE12345ABCDE1236 /* JournalEntryDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1237 /* JournalEntryDraft.swift */; };
 		12345ABCDE12345ABCDE1238 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12345ABCDE12345ABCDE1239 /* WeatherService.swift */; };
 		1380F0B02FCDC22E00A8E22E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1130915A1EB1D483B261DA9 /* Assets.xcassets */; };
-		1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */; };
-		1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */; };
-		1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */; };
-		1F2A3B4C5D6E7F8011223308 /* AnimacyDatasetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */; };
 		22B59A7ECB7D02D5CEEE2B41 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A7C096DCD9F7577546E63A /* SettingsView.swift */; };
 		2D677C67E266F28C51633DE8 /* SarosHarmonicJournalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */; };
 		31104DDCE8F9C39E21714603 /* TrackedEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AE6766EF10DFD8FB027CAB /* TrackedEntity.swift */; };
@@ -131,10 +127,6 @@
 		12345ABCDE12345ABCDE1239 /* WeatherService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WeatherService.swift; path = SarosHarmonicJournal/Services/WeatherService.swift; sourceTree = "<group>"; };
 		1AA405BE7C14E8DB1A80D2CF /* saros.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = saros.db; path = SarosHarmonicJournal/Resources/SolarData/saros.db; sourceTree = "<group>"; };
 		1BCEE1F54899D79E29687187 /* CaptureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptureView.swift; path = SarosHarmonicJournal/Views/CaptureView.swift; sourceTree = "<group>"; };
-		1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyResult.swift; path = SarosHarmonicJournal/Services/AnimacyResult.swift; sourceTree = "<group>"; };
-		1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScorer.swift; path = SarosHarmonicJournal/Services/AnimacyScorer.swift; sourceTree = "<group>"; };
-		1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyScoreView.swift; path = SarosHarmonicJournal/Views/AnimacyScoreView.swift; sourceTree = "<group>"; };
-		1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AnimacyDatasetService.swift; path = SarosHarmonicJournal/Services/AnimacyDatasetService.swift; sourceTree = "<group>"; };
 		246FCF65FF5518283A599C02 /* EntityEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntityEditorView.swift; path = SarosHarmonicJournal/Views/EntityEditorView.swift; sourceTree = "<group>"; };
 		3CCD8A5E9BFE2A4C804100BC /* CPlusPlusEclipseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CPlusPlusEclipseService.swift; path = SarosHarmonicJournal/Services/CPlusPlusEclipseService.swift; sourceTree = "<group>"; };
 		41A7C096DCD9F7577546E63A /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = SarosHarmonicJournal/Views/SettingsView.swift; sourceTree = "<group>"; };
@@ -282,9 +274,6 @@
 				C16E33843D12AFBD6A69B9FA /* Resonance.swift */,
 				7CC8DE5A5348DA3482B81A88 /* SarosClock.swift */,
 				82933AAA17A83A117C5B92E6 /* AudioRecorder.swift */,
-				1F2A3B4C5D6E7F8011223307 /* AnimacyDatasetService.swift */,
-				1F2A3B4C5D6E7F8011223301 /* AnimacyResult.swift */,
-				1F2A3B4C5D6E7F8011223303 /* AnimacyScorer.swift */,
 				B20000000000000000000001 /* ImageSonificationEngine.swift */,
 				12345ABCDE12345ABCDE1239 /* WeatherService.swift */,
 				DAD000000000000000000002 /* MoonPhaseService.swift */,
@@ -302,7 +291,6 @@
 				A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */,
 				61B3CF17BDAE4D88A9C15C71 /* SyncService.swift */,
 				F8072651E8AE5C7C39EC512D /* ArchiveView.swift */,
-				1F2A3B4C5D6E7F8011223305 /* AnimacyScoreView.swift */,
 				1BCEE1F54899D79E29687187 /* CaptureView.swift */,
 				80CA9D5E1A334E9D93B1C002 /* CatalogCardsView.swift */,
 				810C0A3E37210050EA9773EA /* CatalogView.swift */,
@@ -585,9 +573,6 @@
 				EF3054358820F684AD5D315E /* Resonance.swift in Sources */,
 				EECF3B46E1C7D16EEC306A4B /* SarosClock.swift in Sources */,
 				89F0E657EDF6F436788C6F1F /* AudioRecorder.swift in Sources */,
-				1F2A3B4C5D6E7F8011223308 /* AnimacyDatasetService.swift in Sources */,
-				1F2A3B4C5D6E7F8011223302 /* AnimacyResult.swift in Sources */,
-				1F2A3B4C5D6E7F8011223304 /* AnimacyScorer.swift in Sources */,
 				B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */,
 				12345ABCDE12345ABCDE1238 /* WeatherService.swift in Sources */,
 				DAD000000000000000000001 /* MoonPhaseService.swift in Sources */,
@@ -605,7 +590,6 @@
 				A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */,
 				61B3CF17BDAE4D88A9C15C70 /* SyncService.swift in Sources */,
 				C4F7F6C4DDA3AEA4F55AA774 /* ArchiveView.swift in Sources */,
-				1F2A3B4C5D6E7F8011223306 /* AnimacyScoreView.swift in Sources */,
 				3A352A24CA6539B5AA096F11 /* CaptureView.swift in Sources */,
 				80CA9D5E1A334E9D93B1C001 /* CatalogCardsView.swift in Sources */,
 				7F5F66E7409450CBB08507DB /* CatalogView.swift in Sources */,

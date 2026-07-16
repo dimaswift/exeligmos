@@ -22,6 +22,13 @@ struct SettingsView: View {
     @State private var deviceUpdateTask: Task<Void, Never>?
     @State private var isStartingLiveTracking = false
     @State private var liveTrackingMessage = ""
+    @State private var syncLogin = ""
+    @State private var syncPassword = ""
+    @State private var syncDisplayName = ""
+    @State private var syncInviteCode = ""
+    @State private var syncAuthMode = SyncAuthMode.signIn
+    @State private var authenticatedUser: SyncAuthenticatedUser?
+    @State private var serverConnectionState = SyncServerConnectionState.idle
 
     var body: some View {
         Form {
@@ -124,9 +131,9 @@ struct SettingsView: View {
                 }
             }
 
-            Section("LAN Sync") {
+            Section("Exeligmos Server") {
                 HStack {
-                    Text("Channel")
+                    Text("Device")
                     Spacer()
                     Text(deviceID)
                         .font(.system(.body, design: .monospaced).weight(.semibold))
@@ -139,15 +146,82 @@ struct SettingsView: View {
                 TextField("Emoji", text: $deviceEmoji)
                     .frame(maxWidth: 90)
 
-                TextField("http://192.168.1.10:8787", text: $syncServerURL)
+                TextField("https://journal.example.com", text: $syncServerURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
 
+                Label(serverConnectionState.title, systemImage: serverConnectionState.icon)
+                    .foregroundStyle(serverConnectionState.color)
+
+                if let authenticatedUser {
+                    HStack {
+                        Label("Signed in", systemImage: "person.crop.circle.badge.checkmark")
+                            .foregroundStyle(.green)
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(authenticatedUser.displayName)
+                            Text("@\(authenticatedUser.login)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button("Sign out", role: .destructive) {
+                        Task { await signOut() }
+                    }
+                    .disabled(isSyncing)
+                } else {
+                    Picker("Account action", selection: $syncAuthMode) {
+                        ForEach(SyncAuthMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    TextField("Login", text: $syncLogin)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    SecureField("Password", text: $syncPassword)
+                        .textContentType(syncAuthMode == .signIn ? .password : .newPassword)
+
+                    if syncAuthMode == .register {
+                        TextField("Display name (optional)", text: $syncDisplayName)
+                            .textContentType(.name)
+                        TextField("Invite code (if required)", text: $syncInviteCode)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+
+                        Text(
+                            "Login: 3–64 characters using letters, numbers, periods, underscores, or hyphens. " +
+                                "Password: at least 12 characters."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        Task { await authenticate() }
+                    } label: {
+                        if isSyncing {
+                            ProgressView()
+                        } else {
+                            Label(syncAuthMode.buttonTitle, systemImage: syncAuthMode.icon)
+                        }
+                    }
+                    .disabled(
+                        isSyncing
+                            || syncServerURL.nilIfBlank == nil
+                            || syncLogin.nilIfBlank == nil
+                            || syncPassword.isEmpty
+                    )
+                }
+
                 Button {
                     Task { await testSyncServer() }
                 } label: {
-                    Label("Test relay connection", systemImage: "network.badge.shield.half.filled")
+                    Label("Test server", systemImage: "network.badge.shield.half.filled")
                 }
                 .disabled(isSyncing)
 
@@ -157,10 +231,10 @@ struct SettingsView: View {
                     if isSyncing {
                         ProgressView()
                     } else {
-                        Label("Sync with relay", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
-                .disabled(isSyncing)
+                .disabled(isSyncing || authenticatedUser == nil)
 
                 if !syncMessage.isEmpty {
                     Text(syncMessage)
@@ -173,14 +247,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Data") {
-                NavigationLink {
-                    AnimacyDatasetSettingsView()
-                } label: {
-                    Label("Animacy dataset", systemImage: "target")
-                }
-            }
-
         }
         .navigationTitle("Settings")
         .task {
@@ -188,6 +254,11 @@ struct SettingsView: View {
             deviceID = device.id
             deviceName = device.name
             deviceEmoji = device.emoji
+        }
+        .task(id: syncServerURL) {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            await refreshAuthenticationState()
         }
         .onChange(of: harmonicDepth) { _, newDepth in
             Task {
@@ -219,14 +290,83 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            let status = try await services.syncService.checkStatus(from: syncServerURL)
-            if let exportTimestamp = status.exportTimestamp, status.hasBackup {
-                syncMessage = "Server OK. Folder state \(exportTimestamp.formatted(date: .abbreviated, time: .shortened)): \(status.entityCount) tags, \(status.recordCount) records, \(status.mediaCount) media files."
-            } else {
-                syncMessage = "Server OK. No records have been uploaded yet."
+            _ = try await services.syncService.checkStatus(from: syncServerURL)
+            serverConnectionState = .ready
+            await refreshAuthenticationState()
+            syncMessage = authenticatedUser == nil
+                ? "Server is ready. Sign in before syncing."
+                : "Server is ready and this device is authenticated."
+        } catch {
+            setServerFailure(error)
+        }
+    }
+
+    @MainActor
+    private func authenticate() async {
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            let user: SyncAuthenticatedUser
+            switch syncAuthMode {
+            case .signIn:
+                user = try await services.syncService.login(
+                    to: syncServerURL,
+                    login: syncLogin,
+                    password: syncPassword
+                )
+            case .register:
+                user = try await services.syncService.register(
+                    on: syncServerURL,
+                    login: syncLogin,
+                    password: syncPassword,
+                    displayName: syncDisplayName,
+                    inviteCode: syncInviteCode
+                )
+            }
+            authenticatedUser = user
+            syncPassword = ""
+            serverConnectionState = .ready
+            syncMessage = "Signed in as @\(user.login). The session is securely bound to this device."
+        } catch {
+            setServerFailure(error)
+        }
+    }
+
+    @MainActor
+    private func signOut() async {
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            try await services.syncService.logout(from: syncServerURL)
+            authenticatedUser = nil
+            serverConnectionState = .ready
+            syncMessage = "Signed out. Local journal data remains on this device."
+        } catch {
+            authenticatedUser = nil
+            setServerFailure(error)
+        }
+    }
+
+    @MainActor
+    private func refreshAuthenticationState() async {
+        guard syncServerURL.nilIfBlank != nil else {
+            authenticatedUser = nil
+            serverConnectionState = .idle
+            return
+        }
+        do {
+            switch try await services.syncService.authenticationState(for: syncServerURL) {
+            case .signedOut:
+                authenticatedUser = nil
+            case .signedIn(let user):
+                authenticatedUser = user
+                syncLogin = user.login
             }
         } catch {
-            syncMessage = "Offline. Sync will retry when the relay is reachable."
+            authenticatedUser = nil
+            serverConnectionState = .error(error.localizedDescription)
         }
     }
 
@@ -243,9 +383,25 @@ struct SettingsView: View {
                 entries: entries,
                 commands: syncCommands
             )
-            syncMessage = "Relayed \(summary.uploadedRecordCount + summary.restoredRecordCount) record commands, \(summary.restoredEntityCount) tag commands, \(summary.uploadedMediaCount + summary.restoredMediaCount) media files."
+            serverConnectionState = .ready
+            syncMessage = "Synced \(summary.uploadedRecordCount) local and \(summary.restoredRecordCount) server records, \(summary.restoredEntityCount) tags, and \(summary.uploadedMediaCount + summary.restoredMediaCount) media files."
         } catch {
-            syncMessage = "Offline. Local changes are safe on this device."
+            setServerFailure(error)
+        }
+    }
+
+    @MainActor
+    private func setServerFailure(_ error: Error) {
+        if error is URLError {
+            serverConnectionState = .offline(error.localizedDescription)
+            syncMessage = "Server is offline. Local changes remain queued safely on this device."
+        } else if case SyncService.SyncError.authenticationRequired = error {
+            authenticatedUser = nil
+            serverConnectionState = .ready
+            syncMessage = "The server is reachable, but this device is not signed in."
+        } else {
+            serverConnectionState = .error(error.localizedDescription)
+            syncMessage = error.localizedDescription
         }
     }
 
@@ -261,7 +417,9 @@ struct SettingsView: View {
         deviceUpdateTask?.cancel()
         deviceUpdateTask = Task {
             try? await Task.sleep(nanoseconds: 650_000_000)
-            guard !Task.isCancelled, syncServerURL.nilIfBlank != nil else { return }
+            guard !Task.isCancelled,
+                  syncServerURL.nilIfBlank != nil,
+                  authenticatedUser != nil else { return }
             try? await services.syncService.registerChannel(to: syncServerURL)
         }
     }
@@ -293,6 +451,68 @@ struct SettingsView: View {
         }
     }
 
+}
+
+private enum SyncAuthMode: String, CaseIterable, Identifiable {
+    case signIn
+    case register
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .signIn: "Sign In"
+        case .register: "Create Account"
+        }
+    }
+
+    var buttonTitle: String {
+        switch self {
+        case .signIn: "Sign in"
+        case .register: "Create account"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .signIn: "person.crop.circle.badge.checkmark"
+        case .register: "person.crop.circle.badge.plus"
+        }
+    }
+}
+
+private enum SyncServerConnectionState {
+    case idle
+    case ready
+    case offline(String)
+    case error(String)
+
+    var title: String {
+        switch self {
+        case .idle: "Server not checked"
+        case .ready: "Server ready"
+        case .offline: "Server offline"
+        case .error(let message): message
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .idle: "network"
+        case .ready: "checkmark.circle.fill"
+        case .offline: "wifi.slash"
+        case .error: "exclamationmark.triangle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .idle: .secondary
+        case .ready: .green
+        case .offline: .orange
+        case .error: .red
+        }
+    }
 }
 
 private struct WaveformSettingsView: View {
@@ -568,97 +788,6 @@ private struct PulseSettingsView: View {
         formatter.maximumUnitCount = 3
         return formatter
     }()
-}
-
-private struct AnimacyDatasetSettingsView: View {
-    @EnvironmentObject private var services: AppServices
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
-
-    @State private var datasetSummary = AnimacyDatasetQueueSummary.empty
-    @State private var datasetMessage = ""
-    @State private var isUploadingDataset = false
-
-    var body: some View {
-        List {
-            Section {
-                MetadataRow(title: "Pending captures", value: "\(datasetSummary.pendingCaptureCount)")
-                MetadataRow(title: "Failed captures", value: "\(datasetSummary.failedCaptureCount)")
-                MetadataRow(title: "Completed captures", value: "\(datasetSummary.completedCaptureCount)")
-                MetadataRow(title: "Queued samples", value: "\(datasetSummary.pendingTransformationCount)")
-                MetadataRow(title: "Uploaded samples", value: "\(datasetSummary.completedTransformationCount)")
-            }
-
-            Section {
-                Button {
-                    Task { await uploadPendingDatasetCaptures() }
-                } label: {
-                    if isUploadingDataset {
-                        ProgressView()
-                    } else {
-                        Label("Upload pending captures", systemImage: "arrow.up.circle")
-                    }
-                }
-                .disabled(isUploadingDataset || !datasetSummary.hasPendingUploads)
-
-                Button(role: .destructive) {
-                    clearCompletedDatasetCaptures()
-                } label: {
-                    Label("Clear completed uploads", systemImage: "trash")
-                }
-                .disabled(datasetSummary.completedCaptureCount == 0)
-
-                if !datasetMessage.isEmpty {
-                    Text(datasetMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .navigationTitle("Animacy Dataset")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            refreshDatasetSummary()
-        }
-    }
-
-    private func refreshDatasetSummary() {
-        do {
-            datasetSummary = try services.animacyDatasetQueue.summary()
-        } catch {
-            datasetMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func uploadPendingDatasetCaptures() async {
-        isUploadingDataset = true
-        defer {
-            isUploadingDataset = false
-            refreshDatasetSummary()
-        }
-
-        do {
-            let summary = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)
-            if summary.attemptedCount == 0 {
-                datasetMessage = "No pending animacy captures."
-            } else if summary.failedCount > 0 {
-                datasetMessage = "Uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(summary.lastError ?? "")"
-            } else {
-                datasetMessage = "Uploaded \(summary.uploadedCount) animacy captures."
-            }
-        } catch {
-            datasetMessage = error.localizedDescription
-        }
-    }
-
-    private func clearCompletedDatasetCaptures() {
-        do {
-            datasetSummary = try services.animacyDatasetQueue.clearCompleted()
-            datasetMessage = "Cleared completed animacy uploads."
-        } catch {
-            datasetMessage = error.localizedDescription
-        }
-    }
 }
 
 private struct RarityPeriodsSettingsView: View {

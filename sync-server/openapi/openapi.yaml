@@ -1,0 +1,5155 @@
+openapi: 3.1.0
+info:
+  title: Exeligmos API
+  version: 2.0.0
+  summary: Server-authoritative journal, event, and synchronization API.
+  description: |
+    The Exeligmos v2 API is the only supported server contract after migration.
+    It is multi-user, cursor-synchronized, and intended for the first-party iOS
+    client as well as user-authorized automation agents.
+
+    Authentication uses either a short-lived JWT access token (`JwtBearer`) or
+    a user-issued API key (`ApiKeyBearer`) in the `Authorization: Bearer ...`
+    header. API keys are bound to one user and one logical device. Operations
+    carrying `x-required-scopes` enforce those scopes for API-key callers; JWT
+    sessions act with the authenticated user's full authority.
+
+    Production deployments must expose the API only over HTTPS/TLS and reject
+    plain HTTP at the edge. Passwords and bearer credentials are otherwise
+    observable in transit. Plain HTTP is for loopback development only.
+
+    Records are public by default. Public record payloads are readable and may
+    be rendered from a versioned template. Private record payloads and private
+    media are encrypted by the client before upload; the server stores only an
+    authenticated ciphertext envelope and intentionally cannot render, index,
+    or embed their plaintext.
+
+    All timestamps are RFC 3339 instants. All user-owned identifiers are UUIDs.
+    Collection order is stable and cursor based. Cursors are opaque and must
+    never be parsed or constructed by clients.
+
+    Resource requests use shared PostgreSQL fixed-window limits across all
+    server replicas. Anonymous public-record reads are limited per source IP
+    and by a cluster-wide aggregate. Authenticated owner, security, record, and
+    event, tag, template, media, and synchronization operations use both
+    aggregate-user and individual-principal buckets.
+    A `429` response includes `Retry-After`; clients must delay rather than
+    immediately retrying.
+
+    Implementation status (Phase 3): every operation in this document has a
+    running handler. The server includes the complete v2 resource surface,
+    streamed media storage, and ordered synchronization APIs.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+externalDocs:
+  description: Exeligmos private-record cryptographic profile v1
+  url: ../docs/crypto-v1.md
+servers:
+  - url: /
+    description: Same origin as the served API document
+tags:
+  - name: Health
+    description: Process liveness and dependency readiness.
+  - name: Authentication
+    description: Password login and rotating JWT-backed sessions.
+  - name: API keys
+    description: Scoped, device-bound automation credentials.
+  - name: Devices
+    description: User-owned client and agent identities.
+  - name: Records
+    description: Public journal documents and private ciphertext envelopes.
+  - name: Events
+    description: Lightweight time intervals without media or embeddings.
+  - name: Tags
+    description: User-owned record classification labels.
+  - name: Templates
+    description: Versioned server-rendered public record templates.
+  - name: Media
+    description: Streaming upload sessions and immutable media bytes.
+  - name: Synchronization
+    description: Ordered changes and bounded idempotent mutation batches.
+  - name: Social
+    description: Public profiles and private owner subscriptions.
+  - name: Public activity
+    description: Durable cursor feed of public user lifecycle controls and record/event revisions.
+security:
+  - JwtBearer: []
+  - ApiKeyBearer: []
+x-exeligmos-implementation:
+  phase: 3
+  implementedTags: [Health, Authentication, API keys, Devices, Records, Events, Tags, Templates, Media, Synchronization, Social, Public activity]
+  plannedTags: []
+x-exeligmos-resource-rate-limits:
+  windowSeconds: 60
+  publicRecordReads:
+    cluster: 3000
+    perIp: 120
+  authenticatedReads:
+    perUser: 1200
+    perPrincipal: 600
+  authenticatedWrites:
+    perUser: 240
+    perPrincipal: 120
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [Health]
+      summary: Check that the process is alive
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+              example:
+                status: ok
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      summary: Check database and extension readiness
+      security: []
+      responses:
+        '200':
+          description: The service, PostgreSQL, and pgvector are ready.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                status: ready
+                checks:
+                  database: up
+                  pgvector: up
+        '503':
+          description: At least one required dependency is unavailable.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ReadinessProblem'
+  /v1/auth/register:
+    post:
+      operationId: registerUser
+      tags: [Authentication]
+      summary: Register a user and start a session
+      description: |
+        Availability depends on the deployment registration mode (`open`,
+        `invite`, or `closed`). Passwords are never used directly as private
+        record encryption keys.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              login: aurora
+              password: correct-horse-battery-staple
+              displayName: Aurora Observer
+              inviteCode: EXELIGMOS-2026
+      responses:
+        '201':
+          description: User and initial session created.
+          headers:
+            Location:
+              description: URL of the new user resource.
+              schema:
+                type: string
+                format: uri-reference
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/auth/login:
+    post:
+      operationId: loginUser
+      tags: [Authentication]
+      summary: Exchange login and password for a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              login: aurora
+              password: correct-horse-battery-staple
+      responses:
+        '200':
+          description: Login succeeded.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [Authentication]
+      summary: Rotate a refresh token and issue a new access token
+      description: |
+        Refresh tokens are opaque, single-use rotation credentials. Reuse of a
+        previously rotated token revokes its token family.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token rotation succeeded.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/auth/logout:
+    post:
+      operationId: logoutUser
+      tags: [Authentication]
+      summary: Revoke the current refresh-token family
+      security:
+        - JwtBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '204':
+          description: Session revoked. The operation is idempotent.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Authentication]
+      summary: Get the authenticated user
+      security:
+        - JwtBearer: []
+        - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Current user profile.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/me/encryption-profile:
+    get:
+      operationId: getEncryptionProfile
+      tags: [Authentication]
+      summary: Read the user's client-encryption profile
+      description: |
+        JWT-only. The response contains a non-secret verification value, never
+        the mnemonic, BIP-39 seed, or any derived encryption key. A 404 means
+        the client should offer first-time 12-word recovery setup.
+      security:
+        - JwtBearer: []
+      responses:
+        '200':
+          description: The user's encryption profile.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncryptionProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: initializeEncryptionProfile
+      tags: [Authentication]
+      summary: Initialize mnemonic recovery for this user
+      description: |
+        JWT-only and create-once in crypto profile v1. The client generates the
+        mnemonic locally and sends only its derived key-check value. The same
+        idempotency key and body return the original response; a different
+        initialization after setup returns 409.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEncryptionProfileRequest'
+      responses:
+        '201':
+          description: Encryption profile initialized.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncryptionProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/api-keys:
+    get:
+      operationId: listApiKeys
+      tags: [API keys]
+      summary: List API-key metadata
+      description: Secret values are never returned by list operations.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: API keys ordered by creation time and ID.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createApiKey
+      tags: [API keys]
+      summary: Issue an API key and return its secret once
+      description: |
+        The plaintext secret is returned exactly once. The key is bound to the
+        selected active device. Requests authenticated with the key may only
+        assert that device ID and may only use granted scopes.
+
+        If the 201 response is lost, replay the identical request with the same
+        `Idempotency-Key`. The server does not repeat the secret: it returns 409
+        `api_key_secret_already_returned` with the created `apiKeyId`. Use that ID
+        with a JWT-authenticated API-key inspection or revocation request. Reuse
+        of the idempotency key with a different body returns
+        `idempotency_conflict`.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+            example:
+              name: Solar flare watcher
+              deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+              scopes:
+                - records:read
+                - records:write
+                - events:read
+                - events:write
+              expiresAt: '2027-07-14T00:00:00Z'
+      responses:
+        '201':
+          description: API key issued.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedApiKey'
+              example:
+                key:
+                  id: a8ec5fdc-e6cf-4bc6-b00b-3db4ca240f12
+                  userId: e42b4fde-8baf-4b95-8bc8-5395b68d0dd2
+                  deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+                  name: Solar flare watcher
+                  prefix: exk_9f4c2a1b
+                  scopes: [records:read, records:write, events:read, events:write]
+                  createdAt: '2026-07-14T18:00:00Z'
+                  expiresAt: '2027-07-14T00:00:00Z'
+                  revokedAt: null
+                  lastUsedAt: null
+                secret: exk_9f4c2a1b8e7d6c5b4a3928170615f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            The same API key was created already and its one-time secret cannot
+            be returned again, or the idempotency key was reused with a different
+            request. A same-body replay includes the created `apiKeyId`.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreationConflictProblem'
+              examples:
+                secretAlreadyReturned:
+                  summary: Same request replayed after the secret was returned
+                  value:
+                    type: https://api.exeligmos.app/problems/api-key-secret-already-returned
+                    title: Conflict
+                    status: 409
+                    detail: The key exists, but its plaintext secret cannot be returned again.
+                    code: api_key_secret_already_returned
+                    requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
+                    apiKeyId: a8ec5fdc-e6cf-4bc6-b00b-3db4ca240f12
+                differentRequest:
+                  summary: Idempotency key reused with a different body
+                  value:
+                    type: https://api.exeligmos.app/problems/idempotency-conflict
+                    title: Conflict
+                    status: 409
+                    detail: This idempotency key was already used with a different request.
+                    code: idempotency_conflict
+                    requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/api-keys/{apiKeyId}:
+    parameters:
+      - $ref: '#/components/parameters/ApiKeyId'
+    get:
+      operationId: getApiKey
+      tags: [API keys]
+      summary: Get API-key metadata
+      security:
+        - JwtBearer: []
+      responses:
+        '200':
+          description: API-key metadata without its secret.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: revokeApiKey
+      tags: [API keys]
+      summary: Revoke an API key
+      description: Revocation is immediate and idempotent.
+      security:
+        - JwtBearer: []
+      responses:
+        '204':
+          description: Key revoked or already revoked.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/devices:
+    get:
+      operationId: listDevices
+      tags: [Devices]
+      summary: List the user's logical devices
+      x-required-scopes: [devices:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Devices ordered by registration time and ID.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevicePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: registerDevice
+      tags: [Devices]
+      summary: Register a client or automation device
+      description: |
+        API keys are issued only after their logical device exists. Registration
+        does not bind the caller's login session. A first-party client binds its
+        own current session with `PUT /v1/devices/{deviceId}/current-session`;
+        creating an automation device must not rebind the human operator.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeviceRequest'
+            example:
+              name: Solar flare agent
+              kind: agent
+              platform: python
+              appVersion: 1.0.0
+      responses:
+        '201':
+          description: Device registered.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      operationId: getDevice
+      tags: [Devices]
+      summary: Get a logical device
+      x-required-scopes: [devices:read]
+      responses:
+        '200':
+          description: Device metadata.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateDevice
+      tags: [Devices]
+      summary: Update device metadata
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeviceRequest'
+      responses:
+        '200':
+          description: Device updated.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: revokeDevice
+      tags: [Devices]
+      summary: Revoke a device and every credential bound to it
+      description: |
+        Revokes the device, its active API keys, and all active JWT access and
+        refresh-token families explicitly bound to it. Login sessions that were
+        never bound, or that are bound to another device, are not affected.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: |
+            Device, active API keys, and bound sessions revoked; a device sync
+            tombstone was emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/devices/{deviceId}/current-session:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    put:
+      operationId: bindCurrentSessionToDevice
+      tags: [Devices]
+      summary: Bind the current refresh-token family to a logical device
+      description: |
+        JWT-only and idempotent. This sets or replaces the device binding for the
+        session identified by the access JWT and its rotating refresh-token
+        family. First-party clients call it after their device is registered so
+        revoking that device also invalidates the bound access and refresh-token
+        family. Automation-device creation does not implicitly rebind the human
+        user's current session.
+      security:
+        - JwtBearer: []
+      responses:
+        '204':
+          description: The current session is bound to the active device.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/tags:
+    get:
+      operationId: listTags
+      tags: [Tags]
+      summary: List the user's tags
+      x-required-scopes: [tags:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/UpdatedAfter'
+      responses:
+        '200':
+          description: Tags ordered by sort order, name, and ID.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createTag
+      tags: [Tags]
+      summary: Create a tag
+      x-required-scopes: [tags:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTagRequest'
+            example:
+              id: 61092377-f4d8-4678-b2fc-aa8892011880
+              name: Space weather
+              color: '#6E56CF'
+              emoji: ☀️
+              sortOrder: 20
+              metadata: {}
+      responses:
+        '201':
+          description: Tag created.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/tags/{tagId}:
+    parameters:
+      - $ref: '#/components/parameters/TagId'
+    get:
+      operationId: getTag
+      tags: [Tags]
+      summary: Get a tag
+      x-required-scopes: [tags:read]
+      responses:
+        '200':
+          description: Current tag revision.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateTag
+      tags: [Tags]
+      summary: Patch a tag
+      x-required-scopes: [tags:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateTagRequest'
+      responses:
+        '200':
+          description: Tag updated and revision incremented.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteTag
+      tags: [Tags]
+      summary: Soft-delete a tag
+      description: Fails with `409` while active records still reference the tag.
+      x-required-scopes: [tags:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Tag deleted and tombstone emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/templates:
+    get:
+      operationId: listTemplates
+      tags: [Templates]
+      summary: List current template versions
+      x-required-scopes: [templates:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/UpdatedAfter'
+      responses:
+        '200':
+          description: Current template versions ordered by name and ID.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplatePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createTemplate
+      tags: [Templates]
+      summary: Create a versioned public-record template
+      description: Templates render only public payloads; private callers render locally before encryption.
+      x-required-scopes: [templates:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+            example:
+              id: 156bb03e-dd0b-48bb-a5c1-808948de59f0
+              name: Solar flare
+              description: Journal entry for a detected solar flare.
+              engine: mustache
+              body:
+                text: 'Solar flare {{class}} peaked at {{peakAt}}.'
+                emoji: ☀️
+              variableSchema:
+                type: object
+                required: [class, peakAt]
+                properties:
+                  class:
+                    type: string
+                  peakAt:
+                    type: string
+                    format: date-time
+                additionalProperties: false
+              metadata: {}
+      responses:
+        '201':
+          description: Template version 1 created.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateId'
+    get:
+      operationId: getTemplate
+      tags: [Templates]
+      summary: Get a template version
+      x-required-scopes: [templates:read]
+      parameters:
+        - name: version
+          in: query
+          description: Omit for the current version.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Requested or current template version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: createTemplateVersion
+      tags: [Templates]
+      summary: Create the next immutable template version
+      description: Prior versions remain addressable for reproducible record attribution.
+      x-required-scopes: [templates:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: New current template version created.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteTemplate
+      tags: [Templates]
+      summary: Retire a template
+      description: Historical versions and record attribution remain available.
+      x-required-scopes: [templates:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Template retired and tombstone emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media-upload-sessions:
+    post:
+      operationId: createMediaUpload
+      tags: [Media]
+      summary: Start a streaming media upload
+      description: |
+        The returned upload is temporary until completed. Upload raw bytes with
+        PUT; never base64-encode media. For private media, the declared length
+        and SHA-256 cover ciphertext and `encryption` is required. Completed,
+        unattached media expires according to server policy.
+      x-required-scopes: [media:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMediaUploadRequest'
+            examples:
+              publicPhoto:
+                value:
+                  deviceId: 8f7bb69e-a087-4338-bcf2-03dbefd03b74
+                  fileName: aurora.jpg
+                  contentType: image/jpeg
+                  byteLength: 834234
+                  sha256: 847b668fdcbf5fbe1b47ae5d01cf3f45eb9cd57475e030bff559b9d576c3fda2
+              privatePhoto:
+                value:
+                  mediaId: 6ec0ed9e-32eb-4e70-8ac3-082b1dc240da
+                  deviceId: 8f7bb69e-a087-4338-bcf2-03dbefd03b74
+                  fileName: encrypted-photo.bin
+                  contentType: application/octet-stream
+                  byteLength: 834262
+                  sha256: 3e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc0f
+                  encryption:
+                    algorithm: A256GCM
+                    cryptoVersion: 1
+                    keyVersion: 1
+                    nonce: AAECAwQFBgcICQoL
+                    plaintextContentType: image/jpeg
+      responses:
+        '201':
+          description: Upload reservation created.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUpload'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media-upload-sessions/{uploadId}:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    get:
+      operationId: getMediaUpload
+      tags: [Media]
+      summary: Get upload status
+      x-required-scopes: [media:write]
+      responses:
+        '200':
+          description: Upload reservation and byte-receipt status.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUpload'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: abortMediaUpload
+      tags: [Media]
+      summary: Abort an incomplete upload
+      x-required-scopes: [media:write]
+      responses:
+        '204':
+          description: Temporary upload data removed. The operation is idempotent.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media-upload-sessions/{uploadId}/content:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    put:
+      operationId: uploadMediaContent
+      tags: [Media]
+      summary: Stream bytes into an upload reservation
+      description: |
+        The body length and SHA-256 must exactly match the reservation. A retry
+        may resend the identical byte stream; a different stream returns `409`.
+      x-required-scopes: [media:write]
+      parameters:
+        - name: Content-Length
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: X-Content-SHA256
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/Sha256'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '204':
+          description: All bytes received and verified; call the completion endpoint.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media-upload-sessions/{uploadId}/complete:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    post:
+      operationId: completeMediaUpload
+      tags: [Media]
+      summary: Commit verified uploaded bytes as a media object
+      description: Attach the returned media ID to a record using PUT or PATCH on that record.
+      x-required-scopes: [media:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Upload completed, or the already-completed media object returned.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaObject'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media/{mediaId}:
+    parameters:
+      - $ref: '#/components/parameters/MediaId'
+    get:
+      operationId: getMedia
+      tags: [Media]
+      summary: Get owned media metadata
+      x-required-scopes: [media:read]
+      responses:
+        '200':
+          description: Media metadata, including encryption metadata when applicable.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaObject'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteMedia
+      tags: [Media]
+      summary: Delete unreferenced media
+      description: |
+        Fails with `409` while any retained record links the media object,
+        including a soft-deleted record that has not reached purge eligibility.
+      x-required-scopes: [media:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Media deleted and tombstone emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/media/{mediaId}/content:
+    parameters:
+      - $ref: '#/components/parameters/MediaId'
+    get:
+      operationId: downloadMedia
+      tags: [Media]
+      summary: Stream owned media bytes
+      description: Encrypted media is returned as ciphertext without transformation.
+      x-required-scopes: [media:read]
+      responses:
+        '200':
+          description: Raw plaintext or ciphertext bytes described by the media metadata.
+          headers:
+            Content-Length:
+              schema:
+                type: integer
+                format: int64
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Content-SHA256:
+              schema:
+                $ref: '#/components/schemas/Sha256'
+            Content-Security-Policy:
+              schema:
+                type: string
+              example: sandbox; default-src 'none'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/media/{mediaId}/content:
+    parameters:
+      - $ref: '#/components/parameters/MediaId'
+    get:
+      operationId: downloadPublicMedia
+      tags: [Media]
+      summary: Stream media attached to a public record
+      description: Private or unattached media is indistinguishable from missing media.
+      security: []
+      responses:
+        '200':
+          description: Raw public media bytes.
+          headers:
+            Content-Length:
+              schema:
+                type: integer
+                format: int64
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Content-SHA256:
+              schema:
+                $ref: '#/components/schemas/Sha256'
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=31536000, immutable
+            Content-Security-Policy:
+              schema:
+                type: string
+              example: sandbox; default-src 'none'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/sync/changes:
+    get:
+      operationId: getSyncChanges
+      tags: [Synchronization]
+      summary: Read the authenticated user's ordered change feed
+      description: |
+        Before the first request, fully reconcile the authoritative owner
+        collections the client stores; a request without `cursor` is a feed
+        anchor, not a replacement for that snapshot after change retention has
+        pruned older rows. Then omit `cursor`, apply changes in returned order,
+        and persist `nextCursor` only after the entire page commits locally.
+        Upserts contain the complete current resource. Deletes contain
+        tombstones. Cursors are user- and query-bound; using one with another
+        user or a different resource filter returns `400`.
+      x-required-scopes: [sync:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: resourceType
+          in: query
+          description: Repeat to include selected resource types; omit for all.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 8
+            uniqueItems: true
+            items:
+              $ref: '#/components/schemas/SyncResourceType'
+      responses:
+        '200':
+          description: Ordered changes and the cursor after the last returned sequence.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePage'
+              example:
+                data:
+                  - sequence: 4812
+                    changedAt: '2026-07-14T18:04:12Z'
+                    resourceType: event
+                    operation: upsert
+                    resourceId: 20a78723-c33e-4794-a036-5da69a15e8bf
+                    revision: 1
+                    etag: '"event-20a78723-c33e-4794-a036-5da69a15e8bf-r1"'
+                    resource:
+                      id: 20a78723-c33e-4794-a036-5da69a15e8bf
+                      userId: e42b4fde-8baf-4b95-8bc8-5395b68d0dd2
+                      author:
+                        id: e42b4fde-8baf-4b95-8bc8-5395b68d0dd2
+                        login: sun
+                        displayName: Sun
+                      deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+                      visibility: public
+                      startsAt: '2026-07-14T16:42:00Z'
+                      endsAt: '2026-07-14T16:55:00Z'
+                      label: X1.7 solar flare
+                      type: 1001
+                      metadata: {source: noaa-swpc}
+                      references: []
+                      revision: 1
+                      createdAt: '2026-07-14T18:04:12Z'
+                      updatedAt: '2026-07-14T18:04:12Z'
+                nextCursor: eyJzZXEiOjQ4MTJ9
+                hasMore: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/sync/batches:
+    post:
+      operationId: applySyncBatch
+      tags: [Synchronization]
+      summary: Apply a bounded batch of idempotent client mutations
+      description: |
+        Mutations are evaluated in array order. Each carries a stable
+        `clientMutationId`. With `atomic: false` (the default), failures are
+        reported per item and do not roll back successful siblings. With
+        `atomic: true`, any failure rolls back the full batch and returns `409`.
+        Successful writes enter the same change feed as direct API writes.
+      x-required-scopes: [sync:write]
+      x-body-limit-bytes: 16777216
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncBatchRequest'
+      responses:
+        '200':
+          description: Per-mutation outcomes for a non-atomic batch.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/records:
+    get:
+      operationId: listRecords
+      tags: [Records]
+      summary: List the authenticated user's records
+      description: |
+        Results are ordered by server `updatedAt` descending and then by ID so
+        public and private records share one stable order. Private records are
+        returned as ciphertext envelopes; this endpoint never decrypts them.
+        Occurrence-time and tag filters apply only to public records and exclude
+        private records because those fields remain inside private ciphertext.
+      x-required-scopes: [records:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/RecordLimit'
+        - $ref: '#/components/parameters/VisibilityFilter'
+        - $ref: '#/components/parameters/DeviceIdFilter'
+        - $ref: '#/components/parameters/TagIdFilter'
+        - $ref: '#/components/parameters/OccurredAfter'
+        - $ref: '#/components/parameters/OccurredBefore'
+        - $ref: '#/components/parameters/UpdatedAfter'
+        - name: sourceProvider
+          in: query
+          description: Match `source.provider` exactly.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: sourceExternalId
+          in: query
+          description: Match `source.externalId` exactly.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        '200':
+          description: A stable cursor page of records.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createRecord
+      tags: [Records]
+      summary: Create a public or private record
+      description: |
+        `visibility` defaults to `public` when omitted. Client-generated UUIDs
+        are accepted for offline creation. Reusing the same Idempotency-Key with
+        an identical body returns the original result; reuse with a different
+        body returns `409`. If `source.provider` and `source.externalId` are
+        present, their pair is unique for the authenticated user, providing a
+        second durable deduplication key for periodic agents.
+
+        A JWT caller may use any active device it owns. An API-key caller must
+        use the device to which that key is bound.
+      x-required-scopes: [records:write]
+      x-body-limit-bytes: 1048576
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRecordRequest'
+            examples:
+              publicSolarFlare:
+                summary: Public agent-created record using a template
+                value:
+                  id: 2ea5377d-6251-459d-9f6e-3f48e07763a1
+                  deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+                  occurredAt: '2026-07-14T16:42:00Z'
+                  visibility: public
+                  render:
+                    templateId: 156bb03e-dd0b-48bb-a5c1-808948de59f0
+                    version: 3
+                    variables:
+                      class: X1.7
+                      peakAt: '2026-07-14T16:42:00Z'
+                  source:
+                    kind: agent
+                    provider: noaa-swpc
+                    externalId: flare-2026-07-14T1642-X1.7
+                    url: https://services.swpc.noaa.gov/
+                  metadata:
+                    eventKind: solar-flare
+              privateCiphertext:
+                summary: End-to-end encrypted private record
+                value:
+                  id: 2e49357d-6251-459d-9f6e-3f48e07763a2
+                  deviceId: 8f7bb69e-a087-4338-bcf2-03dbefd03b74
+                  visibility: private
+                  encryption:
+                    algorithm: A256GCM
+                    cryptoVersion: 1
+                    keyVersion: 1
+                    nonce: AAECAwQFBgcICQoL
+                    ciphertext: VGhpcyBpcyBhbiBleGFtcGxlIGNpcGhlcnRleHQtd2l0aC10YWc=
+                    contentType: application/vnd.exeligmos.record+json
+      responses:
+        '201':
+          description: Record created.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/records/{recordId}:
+    parameters:
+      - $ref: '#/components/parameters/RecordId'
+    get:
+      operationId: getRecord
+      tags: [Records]
+      summary: Get one of the authenticated user's records
+      x-required-scopes: [records:read]
+      responses:
+        '200':
+          description: Current record revision.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: replaceRecord
+      tags: [Records]
+      summary: Replace a record without changing its visibility
+      description: |
+        Visibility is immutable after creation so a private record can never
+        retain server-visible state from an earlier public revision. The body
+        visibility must match the current record. Replacing a private record
+        requires a fresh complete ciphertext envelope bound to the new revision.
+      x-required-scopes: [records:write]
+      x-body-limit-bytes: 1048576
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceRecordRequest'
+      responses:
+        '200':
+          description: Record replaced and revision incremented.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateRecord
+      tags: [Records]
+      summary: Patch a record without changing visibility
+      description: |
+        For public records, `payload` and `metadata` use RFC 7396 merge-patch
+        semantics; `source`, when present, replaces the whole value instead of
+        merging nested members. The required `visibility` discriminator must
+        match the current record; `userId`, `revision`, and lifecycle timestamps
+        are rejected. Every private patch includes a fresh envelope because the
+        authenticated ciphertext is bound to the resulting revision.
+      x-required-scopes: [records:write]
+      x-body-limit-bytes: 1048576
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateRecordRequest'
+      responses:
+        '200':
+          description: Record updated and revision incremented.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteRecord
+      tags: [Records]
+      summary: Soft-delete a record
+      description: |
+        A durable tombstone remains in the change feed. Deleting a private
+        record increments its revision and clears the current encryption
+        envelope; the prior live revision retains the ciphertext authenticated
+        for that prior revision. A public record's stored public content is not
+        cleared, although deleted records are no longer returned by record read
+        or list operations.
+      x-required-scopes: [records:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Record deleted and tombstone emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/records:
+    get:
+      operationId: listPublicRecords
+      tags: [Records]
+      summary: List public records across users
+      description: Private records can never appear in this endpoint.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/RecordLimit'
+        - $ref: '#/components/parameters/OccurredAfter'
+        - $ref: '#/components/parameters/OccurredBefore'
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: tagId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public records ordered by occurrence time and ID.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=30
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicRecordProjectionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/records/{recordId}:
+    parameters:
+      - $ref: '#/components/parameters/RecordId'
+    get:
+      operationId: getPublicRecord
+      tags: [Records]
+      summary: Get a public record
+      security: []
+      responses:
+        '200':
+          description: Current public record revision.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=30
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicRecordProjection'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/events:
+    get:
+      operationId: listEvents
+      tags: [Events]
+      summary: List lightweight user events
+      description: |
+        Events are owner-scoped and ordered by `startsAt` descending and ID.
+        When `from` or `to` is supplied, events are selected by interval overlap.
+      x-required-scopes: [events:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/DeviceIdFilter'
+        - name: visibility
+          in: query
+          schema:
+            type: string
+            enum: [public, private]
+        - name: type
+          in: query
+          description: Repeat to include more than one numeric event type.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 50
+            items:
+              type: integer
+              format: int32
+              minimum: 0
+        - name: from
+          in: query
+          description: Inclusive lower bound for interval overlap.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Exclusive upper bound for interval overlap.
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/UpdatedAfter'
+      responses:
+        '200':
+          description: A stable cursor page of events.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createEvent
+      tags: [Events]
+      summary: Create a lightweight event
+      description: |
+        Events have no media, templates, encryption envelope, or embeddings.
+        They are public by default; visibility is immutable after creation.
+        `userId` is always derived from the credential. API-key callers must use
+        the key's bound device ID. Omitted `endsAt` means ongoing; an `endsAt`
+        equal to `startsAt` represents an instantaneous event.
+      x-required-scopes: [events:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+            example:
+              id: 20a78723-c33e-4794-a036-5da69a15e8bf
+              deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+              startsAt: '2026-07-14T16:42:00Z'
+              endsAt: '2026-07-14T16:55:00Z'
+              label: X1.7 solar flare
+              type: 1001
+              metadata:
+                source: noaa-swpc
+                activeRegion: 4136
+      responses:
+        '201':
+          description: Event created.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/events/{eventId}:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    get:
+      operationId: getEvent
+      tags: [Events]
+      summary: Get a lightweight event
+      x-required-scopes: [events:read]
+      responses:
+        '200':
+          description: Current event revision.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateEvent
+      tags: [Events]
+      summary: Patch a lightweight event
+      x-required-scopes: [events:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventRequest'
+      responses:
+        '200':
+          description: Event updated and revision incremented.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteEvent
+      tags: [Events]
+      summary: Soft-delete a lightweight event
+      x-required-scopes: [events:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Event deleted and tombstone emitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/events:
+    get:
+      operationId: listPublicEvents
+      tags: [Events]
+      summary: List public events
+      description: Public events are ordered by occurrence time and never expose a device ID.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 50
+            items:
+              type: integer
+              format: int32
+              minimum: 0
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Public event page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicEventPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/events/{eventId}:
+    get:
+      operationId: getPublicEvent
+      tags: [Events]
+      summary: Get one public event
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: Public event projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicEventProjection'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/users/{login}:
+    get:
+      operationId: getPublicUser
+      tags: [Social]
+      summary: Resolve a public profile by stable login
+      description: |
+        Returns 404 while the user is disabled. A `user` lifecycle item in the
+        public activity stream uses this URL: `delete` removes the public
+        projection and `upsert` makes it fetchable again.
+      security: []
+      parameters:
+        - name: login
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/LoginName'
+      responses:
+        '200':
+          description: Public user profile and public-resource counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUserProfile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/subscriptions:
+    get:
+      operationId: listSubscriptions
+      tags: [Social]
+      summary: List the authenticated user's subscriptions
+      x-required-scopes: [subscriptions:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Private owner subscription page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/subscriptions/{targetUserId}:
+    parameters:
+      - name: targetUserId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      operationId: putSubscription
+      tags: [Social]
+      summary: Subscribe to a public user or update feed kinds
+      x-required-scopes: [subscriptions:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionInput'
+      responses:
+        '200':
+          description: Existing subscription updated or retained.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '201':
+          description: Subscription created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteSubscription
+      tags: [Social]
+      summary: Stop following a public user
+      x-required-scopes: [subscriptions:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Subscription removed and owner tombstone emitted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/public/activity:
+    get:
+      operationId: listPublicActivity
+      tags: [Public activity]
+      summary: Read the global public activity cursor
+      description: |
+        Returns append-only user lifecycle controls and record/event revision
+        notifications in commit-safe sequence order. Payloads are fetched from
+        each `resourceUrl`; activity items never embed resource payloads.
+
+        For `resourceType: user`, `delete` means the profile is no longer
+        public and clients must hide or purge every cached public resource from
+        that actor. `upsert` means the profile is public again and clients must
+        refetch the profile plus the actor-filtered public record/event lists.
+        User lifecycle controls are automatically included when records or
+        events are selected so a filtered cursor cannot skip an invalidation.
+
+        User lifecycle is status-based and this API does not hard-delete
+        users. Administrative hard deletion is a destructive feed-reset
+        operation: consumers must discard cursors and rebuild afterward.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PublicActivitySnapshot'
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PublicActivityResourceTypeFilter'
+      responses:
+        '200':
+          description: Global public activity page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicActivityPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/activity:
+    get:
+      operationId: listFollowingActivity
+      tags: [Public activity]
+      summary: Read public activity from subscribed users
+      x-required-scopes: [subscriptions:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PublicActivitySnapshot'
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PublicActivityResourceTypeFilter'
+      responses:
+        '200':
+          description: Subscription-filtered public activity page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicActivityPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    JwtBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Short-lived Ed25519-signed access JWT issued by login or refresh. The
+        token includes `iss`, `aud`, `sub`, `exp`, and `kid` claims.
+    ApiKeyBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Exeligmos API key
+      description: |
+        User-issued secret beginning with `exk_`. Keys are stored hashed,
+        device-bound, scoped, independently expirable, and revocable. The
+        plaintext secret appears only in the initial creation response; a replay
+        returns the created `apiKeyId`, never the secret.
+  parameters:
+    ApiKeyId:
+      name: apiKeyId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RecordId:
+      name: recordId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MediaId:
+      name: mediaId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned by the immediately preceding page.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    RecordLimit:
+      name: limit
+      in: query
+      description: |
+        Maximum records to return. Record pages are deliberately smaller than
+        lightweight resource pages because each item may contain a large
+        public payload or private ciphertext envelope.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 25
+        default: 10
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Caller-generated identifier for one logical mutation. It must be reused
+        for retries of the same body and must not be reused for another body.
+        Most operations replay their original response. API-key creation is the
+        deliberate exception: replay returns a 409 problem containing the
+        created `apiKeyId` because its plaintext secret is returned only once.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+        pattern: '^[\x21-\x7E]+$'
+      example: 01J2V7YCB9Q3WZ2P6AQ03M6DN8
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Strong ETag of the revision being mutated.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 200
+      example: '"record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"'
+    VisibilityFilter:
+      name: visibility
+      in: query
+      schema:
+        $ref: '#/components/schemas/RecordVisibility'
+    DeviceIdFilter:
+      name: deviceId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    TagIdFilter:
+      name: tagId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    OccurredAfter:
+      name: occurredAfter
+      in: query
+      description: Inclusive lower bound on public record occurrence time.
+      schema:
+        type: string
+        format: date-time
+    OccurredBefore:
+      name: occurredBefore
+      in: query
+      description: Exclusive upper bound on public record occurrence time.
+      schema:
+        type: string
+        format: date-time
+    UpdatedAfter:
+      name: updatedAfter
+      in: query
+      description: Inclusive lower bound on server update time.
+      schema:
+        type: string
+        format: date-time
+    PublicActivityResourceTypeFilter:
+      name: resourceType
+      in: query
+      description: |
+        Repeat to select users, records, and/or events. Selecting records or
+        events automatically includes user lifecycle controls required to
+        invalidate cached resources safely.
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 3
+        uniqueItems: true
+        items:
+          $ref: '#/components/schemas/PublicActivityResourceType'
+    PublicActivitySnapshot:
+      name: snapshot
+      in: query
+      description: |
+        Set to `latest` only when `cursor` is omitted to receive at most the
+        newest `limit` matching notifications, returned in canonical ascending
+        sequence order. The page intentionally omits older history, reports
+        `hasMore: false`, and returns a normal cursor anchored at the
+        repeatable-read high-water mark. Resume live changes by sending that
+        cursor on a subsequent request without `snapshot`.
+      schema:
+        type: string
+        enum: [latest]
+  headers:
+    ETag:
+      description: Strong opaque validator for the returned resource revision.
+      schema:
+        type: string
+      example: '"record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"'
+    RequestId:
+      description: Server-assigned request correlation identifier.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  responses:
+    BadRequest:
+      description: The request syntax, parameter combination, or cursor is invalid.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://api.exeligmos.app/problems/invalid-request
+            title: Invalid request
+            status: 400
+            detail: The occurredAfter timestamp must precede occurredBefore.
+            code: invalid_request
+            requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
+    Unauthorized:
+      description: Authentication is missing, expired, revoked, or invalid.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer realm="exeligmos"
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: The credential lacks the scope or ownership required for this operation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The resource is absent or is not visible to this caller.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: The mutation conflicts with current state or idempotency history.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    CursorExpired:
+      description: The cursor predates retained change history; perform a full reconciliation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://api.exeligmos.app/problems/cursor-expired
+            title: Synchronization cursor expired
+            status: 410
+            detail: Perform a full collection reconciliation before restarting the change feed.
+            code: cursor_expired
+            requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
+    PreconditionFailed:
+      description: "`If-Match` does not match the current resource revision."
+      headers:
+        ETag:
+          $ref: '#/components/headers/ETag'
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: The request or declared media object exceeds configured bounds.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnprocessableContent:
+      description: The request is syntactically valid but violates domain constraints.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+    ServiceUnavailable:
+      description: A database statement or lock exceeded its safety deadline; the operation may be retried.
+      headers:
+        Retry-After:
+          description: Minimum number of seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:exeligmos:problem:database-timeout
+            title: Service Unavailable
+            status: 503
+            detail: The database could not complete the request within its safety deadline.
+            code: database_timeout
+            requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
+    TooManyRequests:
+      description: Rate or concurrency limit exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Liveness:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+      additionalProperties: false
+    DependencyStatus:
+      type: string
+      enum: [up, down, unknown]
+    ReadinessChecks:
+      type: object
+      required: [database, pgvector]
+      properties:
+        database:
+          $ref: '#/components/schemas/DependencyStatus'
+        pgvector:
+          $ref: '#/components/schemas/DependencyStatus'
+      additionalProperties: false
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          const: ready
+        checks:
+          $ref: '#/components/schemas/ReadinessChecks'
+      additionalProperties: false
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details with stable Exeligmos extensions.
+      required: [type, title, status, code, requestId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Stable problem type URI.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          maxLength: 4000
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{1,63}$'
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      additionalProperties: true
+    FieldError:
+      type: object
+      required: [path, code, message]
+      properties:
+        path:
+          type: string
+          description: JSON Pointer to the invalid value.
+          maxLength: 500
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{1,63}$'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      additionalProperties: false
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: array
+              minItems: 1
+              maxItems: 100
+              items:
+                $ref: '#/components/schemas/FieldError'
+    ApiKeyCreationConflictProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 409
+            apiKeyId:
+              type: string
+              format: uuid
+              description: |
+                Present when `code` is `api_key_secret_already_returned`; use it
+                to inspect or revoke the key with a JWT-authenticated request.
+    ReadinessProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [checks]
+          properties:
+            checks:
+              $ref: '#/components/schemas/ReadinessChecks'
+    JsonObject:
+      type: object
+      additionalProperties: true
+      default: {}
+    ResourceMetadata:
+      type: object
+      description: |
+        Must serialize to at most 32768 UTF-8 bytes. Object keys and string
+        values must be PostgreSQL-compatible Unicode text; U+0000 and unpaired
+        UTF-16 surrogates are rejected.
+      x-max-serialized-bytes: 32768
+      additionalProperties: true
+      default: {}
+    Sha256:
+      type: string
+      description: Lowercase hexadecimal SHA-256 digest.
+      pattern: '^[a-f0-9]{64}$'
+    MediaContentType:
+      type: string
+      minLength: 3
+      maxLength: 255
+      pattern: '^[A-Za-z0-9][A-Za-z0-9.+_-]{0,126}/[A-Za-z0-9][A-Za-z0-9.+_-]{0,126}$'
+      description: Concrete type/subtype media type without parameters.
+    CursorPageMeta:
+      type: object
+      required: [hasMore]
+      properties:
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        hasMore:
+          type: boolean
+    RegisterRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          $ref: '#/components/schemas/LoginName'
+        password:
+          $ref: '#/components/schemas/Password'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        inviteCode:
+          type: string
+          minLength: 1
+          maxLength: 200
+      additionalProperties: false
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          $ref: '#/components/schemas/LoginName'
+        password:
+          $ref: '#/components/schemas/Password'
+      additionalProperties: false
+    LoginName:
+      type: string
+      description: Case-insensitive account login stored in normalized form.
+      minLength: 3
+      maxLength: 64
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+    CreateEncryptionProfileRequest:
+      type: object
+      required: [cryptoVersion, keyVersion, keyCheck]
+      properties:
+        cryptoVersion:
+          type: integer
+          const: 1
+        keyVersion:
+          type: integer
+          const: 1
+        keyCheck:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+          pattern: '^[A-Za-z0-9+/]{43}=$'
+          description: 32-byte value defined by crypto profile v1.
+      additionalProperties: false
+    EncryptionProfile:
+      type: object
+      required: [userId, cryptoVersion, keyVersion, keyCheck, createdAt]
+      properties:
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        cryptoVersion:
+          type: integer
+          const: 1
+        keyVersion:
+          type: integer
+          const: 1
+        keyCheck:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+          pattern: '^[A-Za-z0-9+/]{43}=$'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    Password:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
+      writeOnly: true
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 32
+          maxLength: 2048
+          writeOnly: true
+      additionalProperties: false
+    LogoutRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 32
+          maxLength: 2048
+          writeOnly: true
+      additionalProperties: false
+    AuthSession:
+      type: object
+      required:
+        - tokenType
+        - accessToken
+        - expiresIn
+        - refreshToken
+        - refreshExpiresIn
+        - user
+      properties:
+        tokenType:
+          type: string
+          const: Bearer
+        accessToken:
+          type: string
+          minLength: 32
+          readOnly: true
+        expiresIn:
+          type: integer
+          description: Access-token lifetime in seconds.
+          minimum: 1
+        refreshToken:
+          type: string
+          minLength: 32
+          readOnly: true
+        refreshExpiresIn:
+          type: integer
+          description: Refresh-token lifetime in seconds.
+          minimum: 1
+        user:
+          $ref: '#/components/schemas/User'
+      additionalProperties: false
+    User:
+      type: object
+      required: [id, login, displayName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        login:
+          $ref: '#/components/schemas/LoginName'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    PublicUserSummary:
+      type: object
+      required: [id, login, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        login:
+          $ref: '#/components/schemas/LoginName'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+      additionalProperties: false
+    PublicUserProfile:
+      allOf:
+        - $ref: '#/components/schemas/PublicUserSummary'
+        - type: object
+          required: [createdAt, publicRecordCount, publicEventCount, followerCount]
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            publicRecordCount:
+              type: integer
+              minimum: 0
+            publicEventCount:
+              type: integer
+              minimum: 0
+            followerCount:
+              type: integer
+              minimum: 0
+      unevaluatedProperties: false
+    PublicTagSummary:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        emoji:
+          type: string
+          maxLength: 32
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'
+      additionalProperties: false
+    SubscriptionInput:
+      type: object
+      properties:
+        includeRecords:
+          type: boolean
+          default: true
+        includeEvents:
+          type: boolean
+          default: true
+      additionalProperties: false
+    Subscription:
+      type: object
+      required:
+        [id, userId, targetUser, includeRecords, includeEvents, revision, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        targetUser:
+          $ref: '#/components/schemas/SubscriptionTargetUserSummary'
+        includeRecords:
+          type: boolean
+        includeEvents:
+          type: boolean
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    SubscriptionTargetUserSummary:
+      type: object
+      required: [id, login, displayName, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        login:
+          $ref: '#/components/schemas/LoginName'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        status:
+          type: string
+          enum: [active, disabled]
+          description: Current account availability for this existing subscription target.
+      additionalProperties: false
+    SubscriptionPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Subscription'
+    ApiKeyScope:
+      type: string
+      description: Stable, additive API-key permission identifier.
+      enum:
+        - records:read
+        - records:write
+        - events:read
+        - events:write
+        - tags:read
+        - tags:write
+        - templates:read
+        - templates:write
+        - media:read
+        - media:write
+        - devices:read
+        - subscriptions:read
+        - subscriptions:write
+        - sync:read
+        - sync:write
+    CreateApiKeyRequest:
+      type: object
+      required: [name, deviceId, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        deviceId:
+          type: string
+          format: uuid
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ApiKeyScope'
+        expiresAt:
+          type: string
+          format: date-time
+          description: Omit for no scheduled expiration.
+      additionalProperties: false
+    ApiKey:
+      type: object
+      required:
+        - id
+        - userId
+        - deviceId
+        - name
+        - prefix
+        - scopes
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        deviceId:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        prefix:
+          type: string
+          description: Non-secret display prefix.
+          pattern: '^exk_[A-Za-z0-9]{4,16}$'
+          readOnly: true
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ApiKeyScope'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+        lastUsedAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    CreatedApiKey:
+      type: object
+      required: [key, secret]
+      properties:
+        key:
+          $ref: '#/components/schemas/ApiKey'
+        secret:
+          type: string
+          pattern: '^exk_[A-Za-z0-9_-]{24,}$'
+          readOnly: true
+          description: Returned once and never retrievable again.
+      additionalProperties: false
+    ApiKeyPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApiKey'
+    DeviceKind:
+      type: string
+      enum: [ios, macos, web, agent, server, other]
+    CreateDeviceRequest:
+      type: object
+      required: [name, kind]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional stable client-generated ID.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        kind:
+          $ref: '#/components/schemas/DeviceKind'
+        platform:
+          type: string
+          minLength: 1
+          maxLength: 80
+        appVersion:
+          type: string
+          minLength: 1
+          maxLength: 80
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    UpdateDeviceRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        platform:
+          type: string
+          minLength: 1
+          maxLength: 80
+        appVersion:
+          type: string
+          minLength: 1
+          maxLength: 80
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    Device:
+      type: object
+      required:
+        - id
+        - userId
+        - name
+        - kind
+        - metadata
+        - revision
+        - registeredAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        kind:
+          $ref: '#/components/schemas/DeviceKind'
+        platform:
+          type: string
+          maxLength: 80
+        appVersion:
+          type: string
+          maxLength: 80
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        registeredAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        lastSeenAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    DevicePage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Device'
+    RecordVisibility:
+      type: string
+      enum: [public, private]
+      description: Chosen when the record is created and immutable thereafter.
+    SourceKind:
+      type: string
+      enum: [client, agent, import, server]
+    SourceReference:
+      type: object
+      required: [kind, provider]
+      properties:
+        kind:
+          $ref: '#/components/schemas/SourceKind'
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+        externalId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Unique with `provider` within one user when present.
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+      additionalProperties: false
+    ResourceReference:
+      type: object
+      description: |
+        Ordered typed relationship. Only identifiers are exposed; referenced
+        payloads must be fetched through their own authorization boundary.
+        Cross-user targets and every target referenced by a public source must
+        be public.
+      required: [relation, targetType, targetUserId, targetId]
+      properties:
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9._:-]{0,63}$'
+          default: reference
+        targetType:
+          type: string
+          enum: [user, record, event]
+        targetUserId:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+      additionalProperties: false
+    ResourceReferenceInput:
+      type: object
+      required: [targetType, targetUserId, targetId]
+      properties:
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9._:-]{0,63}$'
+          default: reference
+        targetType:
+          type: string
+          enum: [user, record, event]
+        targetUserId:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+      additionalProperties: false
+    ResourceReferenceList:
+      type: array
+      maxItems: 200
+      default: []
+      items:
+        $ref: '#/components/schemas/ResourceReferenceInput'
+    Location:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+      additionalProperties: false
+    Weather:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        emoji:
+          type: string
+          maxLength: 32
+        temperatureC:
+          type: number
+          minimum: -150
+          maximum: 100
+      additionalProperties: false
+    PublicRecordPayload:
+      type: object
+      description: |
+        Server-readable journal payload. Known fields support the first-party
+        client; additional domain fields are preserved for forward-compatible
+        agents and migrated records. The compact JSON representation must not
+        exceed 262144 UTF-8 bytes, including a payload rendered from a template.
+        Object keys and string values must be PostgreSQL-compatible Unicode text;
+        U+0000 and unpaired UTF-16 surrogates are rejected.
+      x-max-serialized-bytes: 262144
+      properties:
+        text:
+          type: string
+          maxLength: 100000
+        emoji:
+          type: string
+          maxLength: 32
+        context:
+          $ref: '#/components/schemas/JsonObject'
+        location:
+          $ref: '#/components/schemas/Location'
+        weather:
+          $ref: '#/components/schemas/Weather'
+      additionalProperties: true
+      minProperties: 1
+    TemplateRenderRequest:
+      type: object
+      required: [templateId, variables]
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+          description: Omit to render the current version.
+        variables:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    TemplateAttribution:
+      type: object
+      required: [templateId, version]
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    CiphertextEnvelope:
+      type: object
+      description: |
+        AES-256-GCM ciphertext including its authentication tag. Associated
+        data canonically binds user, record, device, revision, opaque media
+        IDs, crypto version, key version, and content type; clients must follow
+        the linked crypto profile exactly.
+      required:
+        - algorithm
+        - cryptoVersion
+        - keyVersion
+        - nonce
+        - ciphertext
+        - contentType
+      properties:
+        algorithm:
+          type: string
+          const: A256GCM
+        cryptoVersion:
+          type: integer
+          const: 1
+        keyVersion:
+          type: integer
+          const: 1
+        nonce:
+          type: string
+          contentEncoding: base64
+          description: Exactly 12 bytes after base64 decoding.
+          minLength: 16
+          maxLength: 16
+        ciphertext:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 699052
+          x-max-decoded-bytes: 524288
+          description: |
+            Ciphertext concatenated with the 16-byte GCM tag. Decoded content
+            must not exceed 524288 bytes.
+        contentType:
+          type: string
+          const: application/vnd.exeligmos.record+json
+      additionalProperties: false
+    PublicRecordInput:
+      type: object
+      required: [deviceId, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional stable client-generated UUID for offline creation.
+        deviceId:
+          type: string
+          format: uuid
+        visibility:
+          type: string
+          const: public
+          default: public
+        occurredAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          description: Must not precede `occurredAt`.
+        payload:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        render:
+          $ref: '#/components/schemas/TemplateRenderRequest'
+        tagIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          default: []
+          items:
+            type: string
+            format: uuid
+        mediaIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          default: []
+          items:
+            type: string
+            format: uuid
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        source:
+          $ref: '#/components/schemas/SourceReference'
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      oneOf:
+        - properties:
+            payload:
+              $ref: '#/components/schemas/PublicRecordPayload'
+            render:
+              $ref: '#/components/schemas/TemplateRenderRequest'
+          required: [payload]
+          not:
+            properties:
+              render:
+                $ref: '#/components/schemas/TemplateRenderRequest'
+            required: [render]
+        - properties:
+            payload:
+              $ref: '#/components/schemas/PublicRecordPayload'
+            render:
+              $ref: '#/components/schemas/TemplateRenderRequest'
+          required: [render]
+          not:
+            properties:
+              payload:
+                $ref: '#/components/schemas/PublicRecordPayload'
+            required: [payload]
+      additionalProperties: false
+    PrivateRecordInput:
+      type: object
+      required: [id, deviceId, visibility, encryption]
+      description: |
+        The client-generated ID is required because the authenticated
+        ciphertext binds it before upload. No occurrence time, source, label,
+        tags, semantic metadata, or media description is accepted outside
+        ciphertext. Opaque private-media IDs are exposed only so the server can
+        authorize downloads and retain media that is still attached.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Required client-generated UUID used by crypto profile v1.
+        deviceId:
+          type: string
+          format: uuid
+        visibility:
+          type: string
+          const: private
+        encryption:
+          $ref: '#/components/schemas/CiphertextEnvelope'
+        mediaIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          default: []
+          items:
+            type: string
+            format: uuid
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      additionalProperties: false
+    CreateRecordRequest:
+      oneOf:
+        - $ref: '#/components/schemas/PublicRecordInput'
+        - $ref: '#/components/schemas/PrivateRecordInput'
+      discriminator:
+        propertyName: visibility
+        mapping:
+          public: '#/components/schemas/PublicRecordInput'
+          private: '#/components/schemas/PrivateRecordInput'
+    ReplaceRecordRequest:
+      oneOf:
+        - $ref: '#/components/schemas/PublicRecordInput'
+        - $ref: '#/components/schemas/PrivateRecordInput'
+      discriminator:
+        propertyName: visibility
+        mapping:
+          public: '#/components/schemas/PublicRecordInput'
+          private: '#/components/schemas/PrivateRecordInput'
+    RecordCommon:
+      type: object
+      required:
+        - id
+        - userId
+        - deviceId
+        - visibility
+        - revision
+        - createdAt
+        - updatedAt
+        - references
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        deviceId:
+          type: string
+          format: uuid
+          readOnly: true
+        visibility:
+          $ref: '#/components/schemas/RecordVisibility'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        references:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ResourceReference'
+    PublicRecord:
+      allOf:
+        - $ref: '#/components/schemas/RecordCommon'
+        - type: object
+          required:
+            - visibility
+            - author
+            - occurredAt
+            - payload
+            - tagIds
+            - tags
+            - media
+            - metadata
+          properties:
+            visibility:
+              type: string
+              const: public
+            author:
+              $ref: '#/components/schemas/PublicUserSummary'
+            occurredAt:
+              type: string
+              format: date-time
+            endedAt:
+              type: string
+              format: date-time
+            payload:
+              $ref: '#/components/schemas/PublicRecordPayload'
+            template:
+              $ref: '#/components/schemas/TemplateAttribution'
+            tagIds:
+              type: array
+              maxItems: 200
+              uniqueItems: true
+              items:
+                type: string
+                format: uuid
+            tags:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/PublicTagSummary'
+            media:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/MediaObject'
+            metadata:
+              $ref: '#/components/schemas/ResourceMetadata'
+            source:
+              $ref: '#/components/schemas/SourceReference'
+      unevaluatedProperties: false
+    PrivateRecord:
+      allOf:
+        - $ref: '#/components/schemas/RecordCommon'
+        - type: object
+          description: |
+            Outside `encryption`, only the common opaque identity, ownership,
+            visibility, revision, server timestamps, and device fields
+            are exposed. All semantic fields remain encrypted.
+          required: [visibility, encryption, media]
+          properties:
+            visibility:
+              type: string
+              const: private
+            encryption:
+              $ref: '#/components/schemas/CiphertextEnvelope'
+            media:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/MediaObject'
+      unevaluatedProperties: false
+    Record:
+      oneOf:
+        - $ref: '#/components/schemas/PublicRecord'
+        - $ref: '#/components/schemas/PrivateRecord'
+      discriminator:
+        propertyName: visibility
+        mapping:
+          public: '#/components/schemas/PublicRecord'
+          private: '#/components/schemas/PrivateRecord'
+    PublicRecordPatch:
+      type: object
+      required: [visibility]
+      minProperties: 2
+      properties:
+        visibility:
+          type: string
+          const: public
+        deviceId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: [string, 'null']
+          format: date-time
+        payload:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        tagIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        mediaIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/SourceReference'
+            - type: 'null'
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      additionalProperties: false
+    PrivateRecordPatch:
+      type: object
+      required: [visibility, encryption]
+      minProperties: 2
+      description: |
+        No semantic, source, or occurrence fields are accepted outside
+        ciphertext. A fresh envelope is required for every new revision.
+      properties:
+        visibility:
+          type: string
+          const: private
+        deviceId:
+          type: string
+          format: uuid
+        encryption:
+          $ref: '#/components/schemas/CiphertextEnvelope'
+        mediaIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      additionalProperties: false
+    UpdateRecordRequest:
+      oneOf:
+        - $ref: '#/components/schemas/PublicRecordPatch'
+        - $ref: '#/components/schemas/PrivateRecordPatch'
+      discriminator:
+        propertyName: visibility
+        mapping:
+          public: '#/components/schemas/PublicRecordPatch'
+          private: '#/components/schemas/PrivateRecordPatch'
+    RecordPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Record'
+    PublicRecordProjection:
+      type: object
+      description: |
+        Anonymous public representation. It omits the creating device and all
+        owner-only media URLs while preserving explicitly public content.
+      required:
+        - id
+        - userId
+        - author
+        - visibility
+        - occurredAt
+        - payload
+        - tagIds
+        - tags
+        - media
+        - metadata
+        - references
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        author:
+          $ref: '#/components/schemas/PublicUserSummary'
+        visibility:
+          type: string
+          const: public
+        occurredAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        payload:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        template:
+          $ref: '#/components/schemas/TemplateAttribution'
+        tagIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        tags:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/PublicTagSummary'
+        media:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/PublicMediaObject'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        source:
+          $ref: '#/components/schemas/SourceReference'
+        references:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ResourceReference'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    PublicRecordProjectionPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/PublicRecordProjection'
+    CreateEventRequest:
+      type: object
+      required: [deviceId, startsAt, label, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional stable client-generated UUID.
+        deviceId:
+          type: string
+          format: uuid
+        visibility:
+          type: string
+          enum: [public, private]
+          default: public
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+          description: Must be equal to or later than `startsAt`.
+        label:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: integer
+          format: int32
+          minimum: 0
+          description: |
+            Stable numeric event type. Clients must preserve and tolerate
+            unknown future values rather than rejecting the event.
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      additionalProperties: false
+    UpdateEventRequest:
+      type: object
+      minProperties: 1
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        visibility:
+          type: string
+          enum: [public, private]
+          description: Immutable after creation.
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, 'null']
+          format: date-time
+          description: Set null to mark the event as ongoing.
+        label:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: integer
+          format: int32
+          minimum: 0
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        references:
+          $ref: '#/components/schemas/ResourceReferenceList'
+      additionalProperties: false
+    Event:
+      type: object
+      required:
+        - id
+        - userId
+        - author
+        - deviceId
+        - visibility
+        - startsAt
+        - label
+        - type
+        - metadata
+        - references
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        author:
+          $ref: '#/components/schemas/PublicUserSummary'
+        deviceId:
+          type: string
+          format: uuid
+        visibility:
+          type: string
+          enum: [public, private]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        label:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: integer
+          format: int32
+          minimum: 0
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        references:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ResourceReference'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    EventPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Event'
+    PublicEventProjection:
+      type: object
+      required:
+        [id, userId, author, visibility, startsAt, label, type, metadata, references, revision, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        author:
+          $ref: '#/components/schemas/PublicUserSummary'
+        visibility:
+          type: string
+          const: public
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        label:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: integer
+          format: int32
+          minimum: 0
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        references:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ResourceReference'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    PublicEventPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/PublicEventProjection'
+    PublicActivityResourceType:
+      type: string
+      enum: [user, record, event]
+    PublicActivityItem:
+      type: object
+      description: |
+        Identifier-only public activity notification. A user `delete` removes
+        the actor's public projection and all cached public resources; a user
+        `upsert` restores the projection and requires actor-filtered refetches.
+        The user resource ID is the actor ID, while its resource URL uses the
+        stable public login.
+      required:
+        [sequence, publishedAt, actor, resourceType, resourceId, operation, revision, resourceUrl]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        publishedAt:
+          type: string
+          format: date-time
+        actor:
+          $ref: '#/components/schemas/PublicUserSummary'
+        resourceType:
+          $ref: '#/components/schemas/PublicActivityResourceType'
+        resourceId:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum: [upsert, delete]
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        resourceUrl:
+          type: string
+          format: uri-reference
+      additionalProperties: false
+    PublicActivityPage:
+      type: object
+      required: [data, nextCursor, hasMore]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicActivityItem'
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        hasMore:
+          type: boolean
+      additionalProperties: false
+    CreateTagRequest:
+      type: object
+      required: [name]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional stable client-generated UUID.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'
+        emoji:
+          type: string
+          maxLength: 32
+        sortOrder:
+          type: integer
+          format: int32
+          default: 0
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    UpdateTagRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        color:
+          type: [string, 'null']
+          pattern: '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'
+        emoji:
+          type: [string, 'null']
+          maxLength: 32
+        sortOrder:
+          type: integer
+          format: int32
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    Tag:
+      type: object
+      required:
+        - id
+        - userId
+        - name
+        - sortOrder
+        - metadata
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'
+        emoji:
+          type: string
+          maxLength: 32
+        sortOrder:
+          type: integer
+          format: int32
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    TagPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Tag'
+    TemplateEngine:
+      type: string
+      enum: [mustache]
+    CreateTemplateRequest:
+      type: object
+      required: [name, engine, body, variableSchema]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional stable client-generated UUID.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+        engine:
+          $ref: '#/components/schemas/TemplateEngine'
+        body:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        variableSchema:
+          type: object
+          description: JSON Schema 2020-12 used to validate render variables.
+          minProperties: 1
+          additionalProperties: true
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    UpdateTemplateRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        engine:
+          $ref: '#/components/schemas/TemplateEngine'
+        body:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        variableSchema:
+          type: object
+          minProperties: 1
+          additionalProperties: true
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+      additionalProperties: false
+    Template:
+      type: object
+      required:
+        - id
+        - userId
+        - name
+        - engine
+        - body
+        - variableSchema
+        - metadata
+        - version
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 2000
+        engine:
+          $ref: '#/components/schemas/TemplateEngine'
+        body:
+          $ref: '#/components/schemas/PublicRecordPayload'
+        variableSchema:
+          type: object
+          additionalProperties: true
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+        version:
+          type: integer
+          minimum: 1
+          readOnly: true
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        retiredAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+      additionalProperties: false
+    TemplatePage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Template'
+    MediaEncryption:
+      type: object
+      description: Encryption metadata for ciphertext stored as the media byte stream.
+      required: [algorithm, cryptoVersion, keyVersion, nonce]
+      properties:
+        algorithm:
+          type: string
+          const: A256GCM
+        cryptoVersion:
+          type: integer
+          const: 1
+        keyVersion:
+          type: integer
+          const: 1
+        nonce:
+          type: string
+          contentEncoding: base64
+          minLength: 16
+          maxLength: 16
+          description: Exactly 12 bytes after base64 decoding.
+        plaintextContentType:
+          $ref: '#/components/schemas/MediaContentType'
+          description: Optional privacy tradeoff disclosed by the encrypting client.
+      additionalProperties: false
+    CreateMediaUploadRequest:
+      type: object
+      required: [deviceId, fileName, contentType, byteLength, sha256]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+          description: |
+            Optional client-generated media ID. It is required for encrypted
+            media because the ID participates in per-object key derivation.
+        deviceId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^[^/\\\\]+$'
+        contentType:
+          $ref: '#/components/schemas/MediaContentType'
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5368709120
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+        encryption:
+          $ref: '#/components/schemas/MediaEncryption'
+      dependentRequired:
+        encryption: [mediaId]
+      additionalProperties: false
+    MediaUploadStatus:
+      type: string
+      enum: [reserved, received, completed, aborted, expired]
+    MediaUpload:
+      type: object
+      required:
+        - id
+        - userId
+        - deviceId
+        - status
+        - fileName
+        - contentType
+        - byteLength
+        - receivedBytes
+        - sha256
+        - uploadUrl
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        deviceId:
+          type: string
+          format: uuid
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/MediaUploadStatus'
+        fileName:
+          type: string
+          maxLength: 255
+        contentType:
+          $ref: '#/components/schemas/MediaContentType'
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+        receivedBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          readOnly: true
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+        encryption:
+          $ref: '#/components/schemas/MediaEncryption'
+        uploadUrl:
+          type: string
+          format: uri-reference
+          readOnly: true
+        expiresAt:
+          type: string
+          format: date-time
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        mediaId:
+          type: string
+          format: uuid
+          readOnly: true
+      additionalProperties: false
+    MediaObject:
+      type: object
+      required:
+        - id
+        - userId
+        - deviceId
+        - fileName
+        - contentType
+        - byteLength
+        - sha256
+        - revision
+        - createdAt
+        - contentUrl
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        userId:
+          type: string
+          format: uuid
+          readOnly: true
+        deviceId:
+          type: string
+          format: uuid
+          readOnly: true
+        fileName:
+          type: string
+          maxLength: 255
+        contentType:
+          $ref: '#/components/schemas/MediaContentType'
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+        encryption:
+          $ref: '#/components/schemas/MediaEncryption'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        contentUrl:
+          type: string
+          format: uri-reference
+          readOnly: true
+        publicContentUrl:
+          type: string
+          format: uri-reference
+          readOnly: true
+          description: |
+            Stable URL present on every public media object. Anonymous GET
+            returns 404 until an active public record references the object.
+      additionalProperties: false
+    PublicMediaObject:
+      type: object
+      description: Safe representation of media attached to an anonymous public record.
+      required:
+        - id
+        - fileName
+        - contentType
+        - byteLength
+        - sha256
+        - createdAt
+        - publicContentUrl
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          maxLength: 255
+        contentType:
+          $ref: '#/components/schemas/MediaContentType'
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+        createdAt:
+          type: string
+          format: date-time
+        publicContentUrl:
+          type: string
+          format: uri-reference
+      additionalProperties: false
+    SyncResourceType:
+      type: string
+      enum: [record, event, tag, template, device, media, user, subscription]
+    ChangeOperation:
+      type: string
+      enum: [upsert, delete]
+    Tombstone:
+      type: object
+      required: [id, userId, resourceType, revision, deletedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        resourceType:
+          $ref: '#/components/schemas/SyncResourceType'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        deletedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    SyncResource:
+      oneOf:
+        - $ref: '#/components/schemas/Record'
+        - $ref: '#/components/schemas/Event'
+        - $ref: '#/components/schemas/Tag'
+        - $ref: '#/components/schemas/Template'
+        - $ref: '#/components/schemas/Device'
+        - $ref: '#/components/schemas/MediaObject'
+        - $ref: '#/components/schemas/User'
+        - $ref: '#/components/schemas/Subscription'
+    Change:
+      type: object
+      required:
+        - sequence
+        - changedAt
+        - resourceType
+        - operation
+        - resourceId
+        - revision
+        - etag
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        changedAt:
+          type: string
+          format: date-time
+        resourceType:
+          $ref: '#/components/schemas/SyncResourceType'
+        operation:
+          $ref: '#/components/schemas/ChangeOperation'
+        resourceId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        etag:
+          type: string
+          minLength: 3
+        resource:
+          $ref: '#/components/schemas/SyncResource'
+        tombstone:
+          $ref: '#/components/schemas/Tombstone'
+      oneOf:
+        - properties:
+            operation:
+              const: upsert
+            resource:
+              $ref: '#/components/schemas/SyncResource'
+            tombstone:
+              $ref: '#/components/schemas/Tombstone'
+          required: [resource]
+          not:
+            properties:
+              tombstone:
+                $ref: '#/components/schemas/Tombstone'
+            required: [tombstone]
+        - properties:
+            operation:
+              const: delete
+            resource:
+              $ref: '#/components/schemas/SyncResource'
+            tombstone:
+              $ref: '#/components/schemas/Tombstone'
+          required: [tombstone]
+          not:
+            properties:
+              resource:
+                $ref: '#/components/schemas/SyncResource'
+            required: [resource]
+      additionalProperties: false
+    ChangePage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data, nextCursor]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Change'
+            nextCursor:
+              type: string
+              minLength: 1
+              maxLength: 2048
+    MutationId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._:-]+$'
+    UpsertRecordMutation:
+      type: object
+      required: [kind, clientMutationId, record]
+      properties:
+        kind:
+          type: string
+          const: upsertRecord
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        ifMatch:
+          type: string
+          description: >-
+            Optional compatibility hint. Record synchronization is
+            client-authoritative: an active or deleted relay copy with the same
+            ID is replaced by the submitted local record even when this value
+            is absent or stale.
+        record:
+          $ref: '#/components/schemas/CreateRecordRequest'
+      additionalProperties: false
+    UpsertEventMutation:
+      type: object
+      required: [kind, clientMutationId, event]
+      properties:
+        kind:
+          type: string
+          const: upsertEvent
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        ifMatch:
+          type: string
+          description: Required when replacing an existing event.
+        event:
+          $ref: '#/components/schemas/CreateEventRequest'
+      additionalProperties: false
+    UpsertTagMutation:
+      type: object
+      required: [kind, clientMutationId, tag]
+      properties:
+        kind:
+          type: string
+          const: upsertTag
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        ifMatch:
+          type: string
+          description: Required when replacing an existing tag.
+        tag:
+          $ref: '#/components/schemas/CreateTagRequest'
+      additionalProperties: false
+    UpsertTemplateMutation:
+      type: object
+      required: [kind, clientMutationId, template]
+      properties:
+        kind:
+          type: string
+          const: upsertTemplate
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        ifMatch:
+          type: string
+          description: Required when creating a new template version.
+        template:
+          $ref: '#/components/schemas/CreateTemplateRequest'
+      additionalProperties: false
+    DeleteMutation:
+      type: object
+      required: [kind, clientMutationId, resourceType, resourceId, ifMatch]
+      properties:
+        kind:
+          type: string
+          const: delete
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        resourceType:
+          type: string
+          enum: [record, event, tag, template]
+        resourceId:
+          type: string
+          format: uuid
+        ifMatch:
+          type: string
+          minLength: 3
+      additionalProperties: false
+    SyncMutation:
+      oneOf:
+        - $ref: '#/components/schemas/UpsertRecordMutation'
+        - $ref: '#/components/schemas/UpsertEventMutation'
+        - $ref: '#/components/schemas/UpsertTagMutation'
+        - $ref: '#/components/schemas/UpsertTemplateMutation'
+        - $ref: '#/components/schemas/DeleteMutation'
+      discriminator:
+        propertyName: kind
+        mapping:
+          upsertRecord: '#/components/schemas/UpsertRecordMutation'
+          upsertEvent: '#/components/schemas/UpsertEventMutation'
+          upsertTag: '#/components/schemas/UpsertTagMutation'
+          upsertTemplate: '#/components/schemas/UpsertTemplateMutation'
+          delete: '#/components/schemas/DeleteMutation'
+    SyncBatchRequest:
+      type: object
+      required: [deviceId, mutations]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          description: Must match an API key's bound device when API-key authenticated.
+        atomic:
+          type: boolean
+          default: false
+        mutations:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/SyncMutation'
+      additionalProperties: false
+    MutationStatus:
+      type: string
+      enum: [succeeded, failed]
+    SyncMutationResult:
+      type: object
+      required: [clientMutationId, status]
+      properties:
+        clientMutationId:
+          $ref: '#/components/schemas/MutationId'
+        status:
+          $ref: '#/components/schemas/MutationStatus'
+        resourceType:
+          $ref: '#/components/schemas/SyncResourceType'
+        resourceId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        etag:
+          type: string
+        problem:
+          $ref: '#/components/schemas/Problem'
+      additionalProperties: false
+    SyncBatchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/SyncMutationResult'
+      additionalProperties: false

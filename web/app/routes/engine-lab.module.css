@@ -1,0 +1,522 @@
+.page {
+  display: grid;
+  gap: var(--space-5);
+  max-width: 100rem;
+  margin: 0 auto;
+}
+
+.header,
+.sectionHeading,
+.selectionTitle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.header {
+  padding: var(--space-3) 0 var(--space-2);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 3.25rem);
+  font-weight: 620;
+  letter-spacing: -0.045em;
+}
+
+.lede,
+.sectionDescription {
+  max-width: 56rem;
+  color: var(--color-text-muted);
+  line-height: 1.65;
+}
+
+.lede {
+  margin: var(--space-3) 0 0;
+  font-size: 0.92rem;
+}
+
+.diagnostics {
+  display: grid;
+  flex: 0 0 min(25rem, 40%);
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: rgb(17 21 26 / 78%);
+}
+
+.diagnostics div {
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.diagnostics div + div {
+  border-left: 1px solid var(--color-border);
+}
+
+.diagnostics dt,
+.metrics dt {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.diagnostics dd {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+}
+
+.panel {
+  min-width: 0;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: rgb(17 21 26 / 86%);
+  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 12%);
+}
+
+.sectionHeading h2,
+.selectionTitle h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.sectionHeading h2 {
+  font-size: 1.15rem;
+}
+
+.sectionDescription {
+  margin: var(--space-2) 0 var(--space-5);
+  font-size: 0.82rem;
+}
+
+.status,
+.passStatus,
+.failStatus,
+.rarityBadge {
+  flex: 0 0 auto;
+  padding: 0.34rem 0.55rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+.passStatus {
+  border-color: rgb(139 215 193 / 42%);
+  color: var(--color-accent-strong);
+  background: rgb(139 215 193 / 8%);
+}
+
+.failStatus {
+  border-color: rgb(255 143 143 / 42%);
+  color: var(--color-danger);
+  background: rgb(255 143 143 / 8%);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(12rem, 2fr) repeat(5, minmax(7rem, 1fr)) auto;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.controls label {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.controls label span {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+.controls input,
+.controls select {
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+.controls input:focus,
+.controls select:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 1px var(--color-focus);
+}
+
+.controls button {
+  align-self: end;
+  height: 2.35rem;
+  padding: 0 var(--space-4);
+  border: 1px solid rgb(139 215 193 / 42%);
+  border-radius: var(--radius-sm);
+  background: rgb(139 215 193 / 12%);
+  color: var(--color-accent-strong);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.controls button:hover {
+  background: rgb(139 215 193 / 18%);
+}
+
+.warning,
+.problem {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid rgb(255 207 112 / 34%);
+  border-radius: var(--radius-sm);
+  background: rgb(255 207 112 / 7%);
+  color: var(--color-focus);
+  font-size: 0.76rem;
+}
+
+.problem {
+  border-color: rgb(255 143 143 / 34%);
+  background: rgb(255 143 143 / 7%);
+  color: var(--color-danger);
+}
+
+.selection {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.7fr) minmax(18rem, 1.6fr) minmax(16rem, 1fr);
+  gap: var(--space-5);
+  align-items: center;
+  margin-top: var(--space-5);
+}
+
+.selectedGlyph {
+  width: min(100%, 15rem);
+  aspect-ratio: 1;
+  padding: var(--space-4);
+  color: var(--fixture-color, var(--color-accent));
+}
+
+.selectionData,
+.clockData {
+  min-width: 0;
+}
+
+.clockData {
+  align-self: stretch;
+  padding-left: var(--space-5);
+  border-left: 1px solid var(--color-border);
+}
+
+.rarityBadge {
+  border-color: color-mix(in srgb, var(--fixture-color) 45%, transparent);
+  color: var(--fixture-color);
+  background: color-mix(in srgb, var(--fixture-color) 8%, transparent);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: var(--space-4) 0 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-border);
+}
+
+.metrics div {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--color-canvas);
+}
+
+.metrics dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.tableScroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.tableScroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  text-align: left;
+}
+
+.tableScroll th,
+.tableScroll td {
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.tableScroll thead th {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.tableScroll tbody th {
+  font-weight: 550;
+}
+
+.tableScroll tbody tr:last-child th,
+.tableScroll tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tableScroll code {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--fixture-color);
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--fixture-color) 10%, transparent);
+}
+
+.fixtureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: var(--space-3);
+}
+
+.compactGrid {
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+}
+
+.glyphCard {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  padding: var(--space-4);
+  border: 1px solid
+    color-mix(in srgb, var(--fixture-color, var(--color-border)) 24%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(
+      circle at 50% 35%,
+      color-mix(in srgb, var(--fixture-color, white) 6%, transparent),
+      transparent 58%
+    ),
+    var(--color-canvas);
+  text-align: center;
+}
+
+.glyphStage {
+  display: grid;
+  width: min(100%, 8.5rem);
+  aspect-ratio: 1;
+  place-items: center;
+}
+
+.glyphCardCompact .glyphStage {
+  width: min(100%, 6.4rem);
+}
+
+.glyphCard h3 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.glyphCard code,
+.cardMeta {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+}
+
+.cardMeta {
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+}
+
+.operationGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-border);
+}
+
+.operationGrid div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--color-canvas);
+}
+
+.operationGrid code {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+}
+
+.operationGrid strong {
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.vectorDetails {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.vectorDetails summary {
+  padding: var(--space-4) 0;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+}
+
+.hashes {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.hashes div {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.hashes code {
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+}
+
+.pass {
+  color: var(--color-accent-strong);
+}
+
+.fail {
+  color: var(--color-danger);
+}
+
+@media (max-width: 90rem) {
+  .controls {
+    grid-template-columns: repeat(4, minmax(8rem, 1fr));
+  }
+
+  .addressControl {
+    grid-column: span 2;
+  }
+
+  .controls button {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 68rem) {
+  .header {
+    display: grid;
+  }
+
+  .diagnostics {
+    width: 100%;
+    max-width: 34rem;
+  }
+
+  .selection {
+    grid-template-columns: minmax(9rem, 0.7fr) minmax(18rem, 1.5fr);
+  }
+
+  .clockData {
+    grid-column: 1 / -1;
+    padding: var(--space-5) 0 0;
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 46rem) {
+  .header,
+  .sectionHeading,
+  .selectionTitle {
+    display: grid;
+  }
+
+  .diagnostics {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics div + div {
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
+  }
+
+  .controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .addressControl,
+  .controls button {
+    grid-column: 1 / -1;
+  }
+
+  .selection {
+    grid-template-columns: 1fr;
+  }
+
+  .selectedGlyph {
+    justify-self: center;
+  }
+
+  .clockData {
+    grid-column: auto;
+  }
+
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .hashes div {
+    grid-template-columns: 1fr;
+  }
+}

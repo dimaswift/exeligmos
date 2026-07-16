@@ -3128,7 +3128,6 @@ struct MirrorCameraView: View {
     @State private var reviewCaptureID = UUID()
     @State private var reviewPreviewImage: UIImage?
     @State private var isProcessingReview = false
-    @State private var isTrackingAnimacyDataset = false
     @State private var sonificationSession: ImageSonificationSession?
     @State private var importPhotoItem: PhotosPickerItem?
     @State private var isImportingPhoto = false
@@ -3285,16 +3284,6 @@ struct MirrorCameraView: View {
             }
             camera.stop()
         }
-        .sheet(isPresented: $isTrackingAnimacyDataset) {
-            if let reviewCapture, !reviewCapture.isVideo {
-                NavigationStack {
-                    AnimacyDatasetTrackerView(
-                        sourceImage: reviewCapture.sourceImage,
-                        initialConfiguration: outputConfiguration
-                    )
-                }
-            }
-        }
         .sheet(item: $sonificationSession) { session in
             NavigationStack {
                 ImageSonificationPanelView(image: session.image)
@@ -3400,10 +3389,6 @@ struct MirrorCameraView: View {
 
             if reviewCapture == nil {
                 liveAdjustmentControls
-            }
-
-            if let reviewCapture, !reviewCapture.isVideo {
-                trackEntityButton
             }
 
             cameraControls
@@ -3626,25 +3611,6 @@ struct MirrorCameraView: View {
         .disabled(camera.isRecordingVideo || saver.isSaving || isImportingPhoto || timedCaptureCountdownStart != nil)
         .opacity((camera.isRecordingVideo || saver.isSaving || isImportingPhoto || timedCaptureCountdownStart != nil) ? 0.5 : 1)
         .accessibilityLabel("Import image")
-    }
-
-    private var trackEntityButton: some View {
-        Button {
-            isTrackingAnimacyDataset = true
-        } label: {
-            Label("Track entity", systemImage: "scope")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(.cyan.opacity(0.28), in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(.cyan.opacity(0.55), lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .disabled(isProcessingReview)
     }
 
     private var reviewRotationDegrees: Binding<Double> {
@@ -4224,7 +4190,6 @@ struct MirrorCameraView: View {
 
         switch reviewCapture {
         case .photo(let image):
-            let imageId = UUID().uuidString
             guard let renderedImage = MirrorOutputComposer.renderPhoto(
                 source: image,
                 configuration: outputConfiguration
@@ -4246,12 +4211,10 @@ struct MirrorCameraView: View {
                     sourceURL: nil,
                     fileExtension: "jpg"
                 ))
-                logAnimacyCapture(imageId: imageId, userAccepted: true)
                 saver.showStatus("Saved version")
                 isProcessingReview = false
             } else {
                 saver.save(renderedImage)
-                logAnimacyCapture(imageId: imageId, userAccepted: true)
                 isProcessingReview = false
             }
 
@@ -4309,18 +4272,6 @@ struct MirrorCameraView: View {
         sonificationSession = ImageSonificationSession(image: renderedImage)
     }
 
-    private func logAnimacyCapture(imageId: String, userAccepted: Bool) {
-        let log = AnimacyCaptureLog(
-            imageId: imageId,
-            timestamp: Date(),
-            animacyScore: 0,
-            userAccepted: userAccepted,
-            mirrorAngle: mode.primaryMirrorAngle,
-            mirrorOffset: reflectionSelection.reflectedSide == nil ? nil : 0
-        )
-        try? AnimacyCaptureLogger.append(log)
-    }
-
     private func cameraToolButton(
         systemImage: String,
         accessibilityLabel: String,
@@ -4341,560 +4292,6 @@ struct MirrorCameraView: View {
         let horizontalSide = max(size.width - 28, 180)
         let verticalSide = max(size.height - 330, 180)
         return min(horizontalSide, verticalSide)
-    }
-}
-
-private struct AnimacyDatasetTrackerView: View {
-    @EnvironmentObject private var services: AppServices
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
-
-    let sourceImage: UIImage
-
-    @State private var captureID = UUID()
-    @State private var mode: ThreadMirrorCameraMode
-    @State private var reflectionSelection: MirrorReflectionSelection
-    @State private var reviewFreeRotationRadians: CGFloat
-    @State private var reviewScale: CGFloat
-    @State private var lastReviewScale: CGFloat
-    @State private var reviewOffset: CGSize
-    @State private var lastReviewOffset: CGSize
-    @State private var isBinaryFilterEnabled: Bool
-    @State private var thresholdLevel: Double
-    @State private var selectedRarity: AnimacyDatasetRarity = .rare
-    @State private var previewImage: UIImage?
-    @State private var samples: [AnimacyDatasetTransformationDraft] = []
-    @State private var statusMessage = ""
-    @State private var isSubmitting = false
-
-    init(
-        sourceImage: UIImage,
-        initialConfiguration: MirrorOutputConfiguration
-    ) {
-        self.sourceImage = sourceImage
-        _mode = State(initialValue: initialConfiguration.mode)
-        _reflectionSelection = State(initialValue: initialConfiguration.reflectionSelection)
-        _reviewFreeRotationRadians = State(initialValue: initialConfiguration.imageTransform.freeRotationRadians)
-        _reviewScale = State(initialValue: initialConfiguration.imageTransform.scale)
-        _lastReviewScale = State(initialValue: initialConfiguration.imageTransform.scale)
-        _reviewOffset = State(initialValue: initialConfiguration.imageTransform.offset)
-        _lastReviewOffset = State(initialValue: initialConfiguration.imageTransform.offset)
-        _isBinaryFilterEnabled = State(initialValue: initialConfiguration.isBinaryFilterEnabled)
-        _thresholdLevel = State(initialValue: initialConfiguration.thresholdLevel)
-    }
-
-    private var currentConfiguration: MirrorOutputConfiguration {
-        MirrorOutputConfiguration(
-            mode: mode,
-            reflectionSelection: reflectionSelection,
-            imageTransform: MirrorImageTransform(
-                freeRotationRadians: reviewFreeRotationRadians,
-                scale: reviewScale,
-                offset: reviewOffset
-            ),
-            isBinaryFilterEnabled: isBinaryFilterEnabled,
-            thresholdLevel: thresholdLevel,
-            isDoubleOutputEnabled: false,
-            temporalMode: .forwardBackward
-        )
-    }
-
-    private var previewKey: String {
-        [
-            captureID.uuidString,
-            mode.id,
-            "\(reflectionSelection)",
-            "\(reviewFreeRotationRadians)",
-            "\(reviewScale)",
-            "\(reviewOffset.width)",
-            "\(reviewOffset.height)",
-            isBinaryFilterEnabled ? "binary" : "color",
-            "\(thresholdLevel)"
-        ].joined(separator: "|")
-    }
-
-    private var trackerRotationDegrees: Binding<Double> {
-        Binding {
-            Double(reviewFreeRotationRadians) * 180 / Double.pi
-        } set: { newValue in
-            setRotationRadians(CGFloat(newValue * Double.pi / 180))
-        }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                preview
-
-                rarityControls
-                mirrorControls
-                sampleControls
-
-                if !samples.isEmpty {
-                    samplePreviewList
-                }
-
-                if !statusMessage.isEmpty {
-                    Text(statusMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-            }
-            .padding(16)
-        }
-        .background(Color.black.ignoresSafeArea())
-        .navigationTitle("Track Entity")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Close") {
-                    dismiss()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await submit() }
-                } label: {
-                    if isSubmitting {
-                        ProgressView()
-                    } else {
-                        Text("Submit")
-                    }
-                }
-                .disabled(samples.isEmpty || isSubmitting)
-            }
-        }
-        .task(id: previewKey) {
-            updatePreview()
-        }
-    }
-
-    private var preview: some View {
-        GeometryReader { proxy in
-            let side = proxy.size.width
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.white.opacity(0.07))
-
-                Image(uiImage: previewImage ?? sourceImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: side, height: side)
-                    .clipped()
-            }
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(.white.opacity(0.12), lineWidth: 1)
-            }
-            .gesture(panGesture(side: side))
-            .simultaneousGesture(zoomGesture())
-        }
-        .aspectRatio(1, contentMode: .fit)
-    }
-
-    private var rarityControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Rarity", systemImage: "diamond")
-                .font(.subheadline.weight(.semibold))
-
-            HStack(spacing: 8) {
-                ForEach(AnimacyDatasetRarity.allCases) { rarity in
-                    Button {
-                        selectedRarity = rarity
-                    } label: {
-                        VStack(spacing: 5) {
-                            Image(systemName: selectedRarity == rarity ? "largecircle.fill.circle" : "circle")
-                                .font(.subheadline.weight(.semibold))
-                            Text(rarity.title)
-                                .font(.caption2.weight(.semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.72)
-                        }
-                        .foregroundStyle(selectedRarity == rarity ? rarity.tintColor : .white.opacity(0.72))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background((selectedRarity == rarity ? rarity.tintColor : .white).opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke((selectedRarity == rarity ? rarity.tintColor : .white).opacity(0.2), lineWidth: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .foregroundStyle(.white)
-        .padding(14)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var mirrorControls: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                trackerButton(systemImage: "rotate.left") {
-                    rotate(byDegrees: -45)
-                }
-                trackerButton(systemImage: mode.symbolName) {
-                    mode = mode.next
-                }
-                trackerButton(systemImage: reflectionSelection.symbolName) {
-                    reflectionSelection = reflectionSelection.next
-                }
-                trackerButton(systemImage: "arrow.counterclockwise") {
-                    resetTransform()
-                }
-                trackerButton(systemImage: isBinaryFilterEnabled ? "circle.lefthalf.filled" : "circle.lefthalf.filled.inverse") {
-                    isBinaryFilterEnabled.toggle()
-                }
-                trackerButton(systemImage: "rotate.right") {
-                    rotate(byDegrees: 45)
-                }
-            }
-
-            HStack(spacing: 10) {
-                Image(systemName: "rotate.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.cyan)
-                Slider(value: trackerRotationDegrees, in: -180...180, step: 1)
-                    .tint(.cyan)
-            }
-
-            if isBinaryFilterEnabled {
-                Slider(value: $thresholdLevel, in: 0...1)
-                    .tint(.cyan)
-            }
-        }
-        .padding(14)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var sampleControls: some View {
-        Button {
-            addCurrentTransformation()
-        } label: {
-            Label("Add transformation", systemImage: "plus.circle")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.black)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(.white, in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var samplePreviewList: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Preview Set")
-                .font(.headline)
-                .foregroundStyle(.white)
-
-            ForEach(samples) { sample in
-                HStack(spacing: 12) {
-                    if let previewImage = sample.previewImage {
-                        Image(uiImage: previewImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(sample.rarity.title)
-                            .font(.system(.headline, design: .rounded))
-                            .foregroundStyle(sample.rarity.tintColor)
-                        Text("rotation \(Int((Double(sample.configuration.imageTransform.freeRotationRadians) * 180 / Double.pi).rounded()))")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.68))
-                            .lineLimit(2)
-                    }
-
-                    Spacer()
-
-                    Button(role: .destructive) {
-                        samples.removeAll { $0.id == sample.id }
-                    } label: {
-                        Image(systemName: "trash")
-                            .foregroundStyle(.white.opacity(0.86))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(10)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-            }
-        }
-    }
-
-    private func trackerButton(systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(.black.opacity(0.38), in: Circle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func panGesture(side: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                guard side > 0 else { return }
-                reviewOffset = CGSize(
-                    width: lastReviewOffset.width + value.translation.width / side,
-                    height: lastReviewOffset.height + value.translation.height / side
-                )
-            }
-            .onEnded { _ in
-                lastReviewOffset = reviewOffset
-            }
-    }
-
-    private func zoomGesture() -> some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                reviewScale = min(max(lastReviewScale * value, 1), 4)
-            }
-            .onEnded { _ in
-                lastReviewScale = reviewScale
-            }
-    }
-
-    private func rotate(byDegrees degrees: Double) {
-        setRotationRadians(reviewFreeRotationRadians + CGFloat(degrees * Double.pi / 180))
-    }
-
-    private func setRotationRadians(_ radians: CGFloat) {
-        let normalized = Self.normalizedRotation(radians)
-        let focus = reviewFocusVector(
-            rotation: reviewFreeRotationRadians,
-            scale: effectiveReviewScale(for: reviewFreeRotationRadians),
-            offset: reviewOffset
-        )
-        let nextScale = effectiveReviewScale(for: normalized)
-        let rotatedFocus = Self.rotated(focus, by: normalized)
-        let translation = CGPoint(
-            x: -rotatedFocus.x * nextScale,
-            y: -rotatedFocus.y * nextScale
-        )
-        reviewFreeRotationRadians = normalized
-        reviewOffset = CGSize(width: translation.x, height: -translation.y)
-        lastReviewOffset = reviewOffset
-    }
-
-    private func resetTransform() {
-        reviewFreeRotationRadians = 0
-        reviewScale = 1
-        lastReviewScale = 1
-        reviewOffset = .zero
-        lastReviewOffset = .zero
-    }
-
-    private func reviewFocusVector(
-        rotation: CGFloat,
-        scale: CGFloat,
-        offset: CGSize
-    ) -> CGPoint {
-        let safeScale = max(scale, 0.1)
-        let translation = CGPoint(x: offset.width, y: -offset.height)
-        let unrotatedTranslation = CGPoint(
-            x: -translation.x / safeScale,
-            y: -translation.y / safeScale
-        )
-        return Self.rotated(unrotatedTranslation, by: -rotation)
-    }
-
-    private func effectiveReviewScale(for radians: CGFloat) -> CGFloat {
-        let coverScale = abs(cos(radians)) + abs(sin(radians))
-        return max(reviewScale, coverScale, 0.1)
-    }
-
-    private static func rotated(_ point: CGPoint, by radians: CGFloat) -> CGPoint {
-        CGPoint(
-            x: point.x * cos(radians) - point.y * sin(radians),
-            y: point.x * sin(radians) + point.y * cos(radians)
-        )
-    }
-
-    private static func normalizedRotation(_ radians: CGFloat) -> CGFloat {
-        let fullTurn = CGFloat.pi * 2
-        var value = radians.truncatingRemainder(dividingBy: fullTurn)
-        if value > CGFloat.pi {
-            value -= fullTurn
-        } else if value < -CGFloat.pi {
-            value += fullTurn
-        }
-        return value
-    }
-
-    @MainActor
-    private func updatePreview() {
-        previewImage = MirrorOutputComposer.renderPreview(
-            source: sourceImage,
-            configuration: currentConfiguration
-        )
-    }
-
-    private func addCurrentTransformation() {
-        let configuration = currentConfiguration
-        let preview = MirrorOutputComposer.renderDatasetImage(
-            source: sourceImage,
-            configuration: configuration
-        )
-        let draft = AnimacyDatasetTransformationDraft(
-            id: UUID(),
-            createdAt: Date(),
-            configuration: configuration,
-            rarity: selectedRarity,
-            previewImage: preview
-        )
-        samples.append(draft)
-        statusMessage = "Added \(samples.count) transformation\(samples.count == 1 ? "" : "s")."
-    }
-
-    @MainActor
-    private func submit() async {
-        guard !samples.isEmpty, !isSubmitting else { return }
-        isSubmitting = true
-        defer { isSubmitting = false }
-
-        do {
-            let payload = try makePayload()
-            try services.animacyDatasetQueue.enqueue(payload)
-            statusMessage = "Queued locally with \(samples.count) samples."
-
-            if syncServerURL.nilIfBlank != nil {
-                let upload = try await services.animacyDatasetQueue.uploadPending(to: syncServerURL)
-                if upload.failedCount > 0 {
-                    statusMessage = "Queued locally. Upload failed for \(upload.failedCount): \(upload.lastError ?? "server unavailable")"
-                } else if upload.uploadedCount > 0 {
-                    statusMessage = "Uploaded \(upload.uploadedCount) queued capture\(upload.uploadedCount == 1 ? "" : "s")."
-                }
-            }
-        } catch {
-            statusMessage = error.localizedDescription
-        }
-    }
-
-    private func makePayload() throws -> AnimacyDatasetUploadPayload {
-        guard let originalData = sourceImage.jpegData(compressionQuality: 0.94) else {
-            throw AnimacyDatasetTrackerError.couldNotEncodeOriginal
-        }
-
-        return AnimacyDatasetUploadPayload(
-            schemaVersion: 1,
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
-            createdAt: Date(),
-            capture: AnimacyDatasetCapturePayload(
-                id: captureID,
-                source: "camera",
-                originalWidth: sourceImage.cgImage?.width ?? Int(sourceImage.size.width * sourceImage.scale),
-                originalHeight: sourceImage.cgImage?.height ?? Int(sourceImage.size.height * sourceImage.scale),
-                transformations: try samples.map(transformationPayload)
-            ),
-            originalImage: AnimacyDatasetImageBlob(
-                fileName: "\(captureID.uuidString)-original.jpg",
-                contentType: "image/jpeg",
-                dataBase64: originalData.base64EncodedString()
-            )
-        )
-    }
-
-    private func transformationPayload(
-        from sample: AnimacyDatasetTransformationDraft
-    ) throws -> AnimacyDatasetTransformationPayload {
-        guard
-            let datasetImage = MirrorOutputComposer.renderDatasetImage(
-                source: sourceImage,
-                configuration: sample.configuration
-            ),
-            let datasetData = datasetImage.jpegData(compressionQuality: 0.92)
-        else {
-            throw AnimacyDatasetTrackerError.couldNotRenderSample
-        }
-
-        return AnimacyDatasetTransformationPayload(
-            id: sample.id,
-            createdAt: sample.createdAt,
-            rarity: sample.rarity,
-            mirrorMode: sample.configuration.mode.id,
-            reflectedSide: sample.configuration.reflectionSelection.reflectedSide?.rawValue,
-            mirrorEdges: sample.configuration.mode
-                .edges(reflectionSelection: sample.configuration.reflectionSelection)
-                .map(AnimacyDatasetMirrorEdgePayload.init(edge:)),
-            imageTransform: AnimacyDatasetImageTransformPayload(transform: sample.configuration.imageTransform),
-            isBinaryFilterEnabled: sample.configuration.isBinaryFilterEnabled,
-            thresholdLevel: sample.configuration.thresholdLevel,
-            isDoubleOutputEnabled: sample.configuration.isDoubleOutputEnabled,
-            datasetImage: AnimacyDatasetImageBlob(
-                fileName: "\(sample.id.uuidString).jpg",
-                contentType: "image/jpeg",
-                dataBase64: datasetData.base64EncodedString()
-            )
-        )
-    }
-}
-
-private struct AnimacyDatasetTransformationDraft: Identifiable {
-    let id: UUID
-    let createdAt: Date
-    let configuration: MirrorOutputConfiguration
-    let rarity: AnimacyDatasetRarity
-    let previewImage: UIImage?
-}
-
-private enum AnimacyDatasetTrackerError: LocalizedError {
-    case couldNotEncodeOriginal
-    case couldNotRenderSample
-
-    var errorDescription: String? {
-        switch self {
-        case .couldNotEncodeOriginal:
-            "The original capture could not be encoded."
-        case .couldNotRenderSample:
-            "One of the reflected samples could not be rendered."
-        }
-    }
-}
-
-private extension AnimacyDatasetMirrorEdgePayload {
-    init(edge: MirrorEdge) {
-        self.init(
-            normalizedX: Double(edge.normalizedPoint.x),
-            normalizedY: Double(edge.normalizedPoint.y),
-            angleRadians: Double(edge.angleRadians),
-            reflectedSide: edge.reflectedSide.rawValue
-        )
-    }
-}
-
-private extension AnimacyDatasetImageTransformPayload {
-    init(transform: MirrorImageTransform) {
-        self.init(
-            rotationRadians: Double(transform.freeRotationRadians),
-            scale: Double(transform.scale),
-            offsetX: Double(transform.offset.width),
-            offsetY: Double(transform.offset.height)
-        )
-    }
-}
-
-private extension AnimacyDatasetRarity {
-    var tintColor: Color {
-        switch self {
-        case .common:
-            .gray
-        case .rare:
-            .cyan
-        case .epic:
-            .purple
-        case .legendary:
-            .yellow
-        case .mythic:
-            .red
-        }
     }
 }
 
@@ -5253,7 +4650,6 @@ private struct ThreadCameraPlaceholderView: View {
 
 private final class ThreadMirrorCameraController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate, @unchecked Sendable {
     @Published private(set) var previewImage: UIImage?
-    @Published private(set) var animacyResult: AnimacyResult?
     @Published private(set) var authorizationState: CameraAuthorizationState = .notDetermined
     @Published private(set) var errorMessage: String?
     @Published private(set) var cameraPosition: AVCaptureDevice.Position = .back
@@ -5265,8 +4661,6 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "exeligmos.thread-mirror-camera.session")
     private let videoQueue = DispatchQueue(label: "exeligmos.thread-mirror-camera.video")
-    private let animacyScorer: any AnimacyScoring
-
     private var output: AVCaptureVideoDataOutput?
     private var audioInput: AVCaptureDeviceInput?
     private var movieOutput: AVCaptureMovieFileOutput?
@@ -5284,18 +4678,10 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
     private var thresholdLevel: Double = 0.5
     private var requestedTorchEnabled = false
     private var lastFrameTime: CFTimeInterval = 0
-    private var lastAnimacyFrameTime: CFTimeInterval = 0
-    private var isAnimacyScoreInFlight = false
-    private let isAnimacyScoringEnabled = false
     private var videoRecorder: MirrorVideoRecorder?
     private var videoRecordingURL: URL?
     private var videoRecordingCompletion: ((Result<URL, Error>) -> Void)?
     private var isAudioCaptureAuthorized = false
-
-    init(animacyScorer: any AnimacyScoring = AnimacyScorer()) {
-        self.animacyScorer = animacyScorer
-        super.init()
-    }
 
     @MainActor
     func configurePreferredCamera(position: AVCaptureDevice.Position, backLens: MirrorCameraBackLens) {
@@ -5344,7 +4730,6 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
                 Task { @MainActor in
                     self.cameraPosition = nextPosition
                     self.previewImage = nil
-                    self.animacyResult = nil
                 }
             } catch {
                 Task { @MainActor in
@@ -5369,7 +4754,6 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
                     self.cameraPosition = .back
                     self.backLens = nextLens
                     self.previewImage = nil
-                    self.animacyResult = nil
                 }
             } catch {
                 Task { @MainActor in
@@ -5767,48 +5151,10 @@ private final class ThreadMirrorCameraController: NSObject, ObservableObject, AV
         ) else {
             return
         }
-        if isAnimacyScoringEnabled, let cgImage = image.cgImage {
-            submitAnimacyFrame(cgImage, now: now)
-        }
-
         Task { @MainActor in
             self.previewImage = image
             self.latestOriginalImage = originalImage
         }
-    }
-
-    private func submitAnimacyFrame(_ cgImage: CGImage, now: CFTimeInterval) {
-        guard isAnimacyScoringEnabled else { return }
-        guard now - lastAnimacyFrameTime >= 1.0 / 10.0, !isAnimacyScoreInFlight else { return }
-        lastAnimacyFrameTime = now
-        isAnimacyScoreInFlight = true
-
-        let scorer = animacyScorer
-        Task.detached(priority: .utility) { [weak self, scorer] in
-            guard let controller = self else { return }
-            defer {
-                controller.videoQueue.async { [weak controller] in
-                    controller?.isAnimacyScoreInFlight = false
-                }
-            }
-
-            do {
-                let result = try await scorer.score(cgImage: cgImage)
-                await controller.publishAnimacyResult(result)
-            } catch {
-                await controller.publishAnimacyError(error)
-            }
-        }
-    }
-
-    @MainActor
-    private func publishAnimacyResult(_ result: AnimacyResult) {
-        animacyResult = result
-    }
-
-    @MainActor
-    private func publishAnimacyError(_ error: Error) {
-        errorMessage = error.localizedDescription
     }
 
     private static func squareImage(_ image: CIImage) -> CIImage {

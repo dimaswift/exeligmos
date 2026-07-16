@@ -1,10 +1,46 @@
 {
   "name": "exeligmos-sync-server",
-  "version": "1.0.0",
+  "version": "2.0.0-alpha.1",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
   "scripts": {
-    "start": "node server.js",
-    "patch:devices": "node patch-record-devices.js"
+    "start": "npm run start:v2",
+    "dev:v2": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "start:v2": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test test/integration/*.test.ts",
+    "test:contract": "redocly lint openapi/openapi.yaml",
+    "check": "npm run typecheck && npm test && npm run test:contract",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",
+    "db:migrate:prod": "node --env-file-if-exists=.env --enable-source-maps dist/db/migrate.js",
+    "import:legacy": "node --env-file-if-exists=.env --import tsx src/legacy-import/cli.ts",
+    "import:legacy:prod": "node --env-file-if-exists=.env --enable-source-maps dist/legacy-import/cli.js"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "argon2": "^0.44.0",
+    "fastify": "^5.10.0",
+    "jose": "^6.2.3",
+    "mustache": "^4.2.0",
+    "pg": "^8.22.0",
+    "swagger-ui-dist": "5.32.8"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.39.0",
+    "@types/mustache": "^4.2.6",
+    "@types/node": "^24.13.3",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "yaml": "^2.9.0"
   }
 }

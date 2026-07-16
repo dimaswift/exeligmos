@@ -1,0 +1,17 @@
+{
+  "name": "@exeligmos/domain-spec",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Versioned language-neutral domain catalog and conformance vectors.",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/validate.mjs",
+    "test": "node scripts/validate.mjs"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

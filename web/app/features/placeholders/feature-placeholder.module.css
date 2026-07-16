@@ -1,0 +1,37 @@
+.panel {
+  min-height: 24rem;
+  padding: clamp(1.5rem, 4vw, 3rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(140deg, rgb(23 28 34 / 96%), rgb(13 17 21 / 96%));
+  box-shadow: var(--shadow-panel);
+}
+
+.panel h1 {
+  max-width: 18ch;
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 4.5rem);
+  font-weight: 530;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.summary {
+  max-width: 48rem;
+  margin: var(--space-5) 0;
+  color: var(--color-text-muted);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+.contract {
+  max-width: 44rem;
+  padding: var(--space-4);
+  border-left: 2px solid var(--color-accent);
+  background: rgb(139 215 193 / 6%);
+}
+
+.contract p {
+  margin-bottom: 0;
+  color: var(--color-text-muted);
+}

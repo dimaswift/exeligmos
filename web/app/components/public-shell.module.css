@@ -1,0 +1,116 @@
+.shell {
+  min-height: 100vh;
+}
+
+.skipLink {
+  position: fixed;
+  z-index: 10;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-strong);
+  color: var(--color-canvas);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-150%);
+}
+
+.skipLink:focus {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.header,
+.footer {
+  width: min(76rem, calc(100% - clamp(2rem, 8vw, 8rem)));
+  margin-inline: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 4.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text);
+  font-weight: 680;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.brandMark {
+  width: 0.82rem;
+  height: 0.82rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: inset 0 0 0 0.2rem var(--color-canvas);
+}
+
+.navigation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.navLink,
+.signIn {
+  padding: 0.52rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.navLink:hover,
+.navLink.active {
+  color: var(--color-accent-strong);
+  background: rgb(139 215 193 / 8%);
+}
+
+.signIn {
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.signIn:hover {
+  border-color: var(--color-accent);
+}
+
+.main {
+  width: min(76rem, calc(100% - clamp(2rem, 8vw, 8rem)));
+  min-height: calc(100vh - 11rem);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 5vw, 4.5rem);
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-block: var(--space-5);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+@media (max-width: 42rem) {
+  .header,
+  .main,
+  .footer {
+    width: min(100% - 2rem, 76rem);
+  }
+
+  .footer {
+    display: grid;
+  }
+}

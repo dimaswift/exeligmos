@@ -587,6 +587,312 @@ final class EntityAndExportTests: XCTestCase {
     }
 }
 
+final class SyncServiceV2Tests: XCTestCase {
+    func testRegistrationInputMatchesServerSchemaAndNormalizesOptionalFields() throws {
+        let input = try SyncRegistrationInput.validated(
+            login: "  Aurora.User  ",
+            password: "correct-horse-battery-staple",
+            displayName: "  Aurora User  ",
+            inviteCode: "  EXELIGMOS-2026  "
+        )
+
+        XCTAssertEqual(input.login, "aurora.user")
+        XCTAssertEqual(input.password, "correct-horse-battery-staple")
+        XCTAssertEqual(input.displayName, "Aurora User")
+        XCTAssertEqual(input.inviteCode, "EXELIGMOS-2026")
+
+        let request = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: String]
+        )
+        XCTAssertEqual(request, [
+            "login": "aurora.user",
+            "password": "correct-horse-battery-staple",
+            "displayName": "Aurora User",
+            "inviteCode": "EXELIGMOS-2026",
+        ])
+    }
+
+    func testRegistrationRequestOmitsBlankOptionalFields() throws {
+        let input = try SyncRegistrationInput.validated(
+            login: "aurora",
+            password: "correct-horse-battery-staple",
+            displayName: "   ",
+            inviteCode: ""
+        )
+
+        let request = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: String]
+        )
+        XCTAssertEqual(Set(request.keys), ["login", "password"])
+    }
+
+    func testRegistrationInputExplainsInvalidLoginAndPassword() {
+        XCTAssertThrowsError(try SyncRegistrationInput.validated(
+            login: "aurora@example.com",
+            password: "correct-horse-battery-staple",
+            displayName: nil,
+            inviteCode: nil
+        )) { error in
+            XCTAssertTrue(error.localizedDescription.contains("periods, underscores, or hyphens"))
+        }
+
+        XCTAssertThrowsError(try SyncRegistrationInput.validated(
+            login: "aurora",
+            password: "too-short",
+            displayName: nil,
+            inviteCode: nil
+        )) { error in
+            XCTAssertTrue(error.localizedDescription.contains("12 to 1024"))
+        }
+    }
+
+    func testCredentialBearingURLsRequireTheConfiguredOrigin() throws {
+        let server = try XCTUnwrap(URL(string: "https://journal.example.com"))
+
+        XCTAssertTrue(SyncService.isSameOrigin(
+            try XCTUnwrap(URL(string: "https://journal.example.com:443/v1/media/1/content")),
+            as: server
+        ))
+        XCTAssertFalse(SyncService.isSameOrigin(
+            try XCTUnwrap(URL(string: "https://cdn.example.com/v1/media/1/content")),
+            as: server
+        ))
+        XCTAssertFalse(SyncService.isSameOrigin(
+            try XCTUnwrap(URL(string: "http://journal.example.com/v1/media/1/content")),
+            as: server
+        ))
+        XCTAssertFalse(SyncService.isSameOrigin(
+            try XCTUnwrap(URL(string: "https://journal.example.com:8443/v1/media/1/content")),
+            as: server
+        ))
+    }
+
+    func testSnapshotCollectionURLsUseEachEndpointsSupportedLimit() throws {
+        let server = try XCTUnwrap(URL(string: "https://journal.example.com"))
+        let service = SyncService()
+        let tagsURL = try service.collectionPageURL(
+            server: server,
+            path: "/v1/tags",
+            limit: 200,
+            cursor: nil
+        )
+        let recordsURL = try service.collectionPageURL(
+            server: server,
+            path: "/v1/records",
+            limit: 25,
+            cursor: "next page"
+        )
+        let tagItems = try XCTUnwrap(URLComponents(url: tagsURL, resolvingAgainstBaseURL: false)?.queryItems)
+        let recordItems = try XCTUnwrap(URLComponents(url: recordsURL, resolvingAgainstBaseURL: false)?.queryItems)
+
+        XCTAssertEqual(tagItems.first(where: { $0.name == "limit" })?.value, "200")
+        XCTAssertEqual(recordItems.first(where: { $0.name == "limit" })?.value, "25")
+        XCTAssertEqual(recordItems.first(where: { $0.name == "cursor" })?.value, "next page")
+    }
+
+    func testPrivateRecordEnvelopeDecodesWithoutPublicFields() throws {
+        let data = Data("""
+        {
+          "id": "f91d97ab-f28d-4fb8-991a-2c1c75e96532",
+          "userId": "ca040b4a-90fa-4099-bf46-fc5fd5f7ba66",
+          "deviceId": "87824812-dc22-47c6-bb4e-1b69adac916f",
+          "visibility": "private",
+          "revision": 4,
+          "createdAt": "2026-07-15T00:00:00Z",
+          "updatedAt": "2026-07-15T00:01:00Z",
+          "encryption": {
+            "algorithm": "A256GCM",
+            "cryptoVersion": 1,
+            "keyVersion": 1,
+            "nonce": "AAAAAAAAAAAAAAAA",
+            "ciphertext": "AAAAAAAAAAAAAAAAAAAAAA==",
+            "contentType": "application/vnd.exeligmos.record+json"
+          },
+          "media": []
+        }
+        """.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let record = try decoder.decode(SyncRecordResource.self, from: data)
+
+        XCTAssertEqual(record.visibility, "private")
+        XCTAssertNil(record.occurredAt)
+        XCTAssertNil(record.payload)
+        XCTAssertNil(record.tagIDs)
+    }
+
+    func testLocalStoreOwnerBindingCannotSilentlySwitchAccounts() throws {
+        let suite = "SyncServiceV2Tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SyncV2StateStore(defaults: defaults)
+        let server = try XCTUnwrap(URL(string: "https://journal.example.com"))
+        let firstUser = UUID()
+
+        XCTAssertNoThrow(try store.bindLocalStoreIfNeeded(server: server, userID: firstUser))
+        XCTAssertNoThrow(try store.bindLocalStoreIfNeeded(server: server, userID: firstUser))
+        XCTAssertThrowsError(try store.bindLocalStoreIfNeeded(server: server, userID: UUID())) { error in
+            guard case SyncService.SyncError.localStoreOwnerMismatch = error else {
+                return XCTFail("Expected an owner mismatch, got \(error)")
+            }
+        }
+    }
+
+    func testServerRejectedMutationGetsANewReceiptID() {
+        let command = SyncLocalCommand(type: .entryUpsert, subjectID: UUID().uuidString)
+        let originalID = command.id
+
+        command.prepareRetry(afterServerRejection: SyncService.SyncError.invalidResponse(
+            statusCode: 412,
+            body: "ETag changed"
+        ))
+
+        XCTAssertNotEqual(command.id, originalID)
+        XCTAssertEqual(command.attemptCount, 1)
+        XCTAssertNil(command.sentAt)
+    }
+
+    func testPendingCommandsUploadTagsBeforeRecords() {
+        let record = SyncLocalCommand(
+            createdAt: Date(timeIntervalSince1970: 1),
+            type: .entryUpsert,
+            subjectID: UUID().uuidString
+        )
+        let tag = SyncLocalCommand(
+            createdAt: Date(timeIntervalSince1970: 2),
+            type: .tagUpsert,
+            subjectID: UUID().uuidString
+        )
+        let sent = SyncLocalCommand(
+            createdAt: Date(timeIntervalSince1970: 0),
+            type: .tagUpsert,
+            subjectID: UUID().uuidString
+        )
+        sent.markSent()
+
+        let ordered = SyncLocalCommand.pendingInPushOrder([record, sent, tag])
+
+        XCTAssertEqual(ordered.map(\.type), [.tagUpsert, .entryUpsert])
+    }
+
+    func testLegacyEntryPayloadPreservesIdentityAndTimestamps() throws {
+        let recordID = UUID()
+        let deviceID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000.123)
+        let updatedAt = Date(timeIntervalSince1970: 1_700_000_120.456)
+        let eventDate = Date(timeIntervalSince1970: 1_699_900_000.789)
+        let endDate = eventDate.addingTimeInterval(900)
+        let original = JournalEntrySnapshot(
+            id: recordID,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            eventDate: eventDate,
+            endDate: endDate,
+            unixTimestamp: Int64(eventDate.timeIntervalSince1970),
+            version: 7,
+            text: "Imported observation",
+            emoji: "☀️",
+            mediaItems: [],
+            tagIDs: ["007"],
+            context: .empty(date: eventDate),
+            latitude: 55.75,
+            longitude: 37.62,
+            sourceRecordID: UUID(),
+            sourceDeviceID: "LEGACY-PHONE",
+            sourceDeviceEmoji: "◇",
+            sourceDeviceName: "Legacy phone",
+            weatherCode: 1,
+            weatherEmoji: "☀️",
+            temperatureC: 21
+        )
+        let remote = SyncRecordResource(
+            id: recordID,
+            userID: UUID(),
+            deviceID: deviceID,
+            visibility: "public",
+            revision: 9,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            occurredAt: eventDate,
+            endedAt: endDate,
+            payload: try jsonValue(original),
+            tagIDs: [],
+            media: []
+        )
+
+        let mapped = try SyncV2PayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
+
+        XCTAssertEqual(mapped.id, recordID)
+        XCTAssertEqual(mapped.createdAt.timeIntervalSince1970, createdAt.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(mapped.updatedAt.timeIntervalSince1970, updatedAt.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(mapped.eventDate.timeIntervalSince1970, eventDate.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(mapped.endDate).timeIntervalSince1970, endDate.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(mapped.unixTimestamp, original.unixTimestamp)
+        XCTAssertEqual(mapped.version, 7)
+        XCTAssertEqual(mapped.tagIDs, ["007"])
+        XCTAssertEqual(mapped.sourceDeviceID, "LEGACY-PHONE")
+        XCTAssertEqual(mapped.text, "Imported observation")
+    }
+
+    func testAgentRecordFallsBackToServerOccurrenceAndStandardDomainContext() throws {
+        let recordID = UUID()
+        let deviceID = UUID()
+        let occurredAt = Date(timeIntervalSince1970: 1_750_000_000)
+        let remote = SyncRecordResource(
+            id: recordID,
+            userID: UUID(),
+            deviceID: deviceID,
+            visibility: "public",
+            revision: 3,
+            createdAt: occurredAt.addingTimeInterval(60),
+            updatedAt: occurredAt.addingTimeInterval(120),
+            occurredAt: occurredAt,
+            endedAt: nil,
+            payload: .object([
+                "text": .string("X1.7 solar flare"),
+                "emoji": .string("☀️"),
+                "location": .object([
+                    "latitude": .number(12.5),
+                    "longitude": .number(-45.25)
+                ]),
+                "weather": .object([
+                    "code": .integer(2),
+                    "emoji": .string("⛅️"),
+                    "temperatureC": .integer(18)
+                ])
+            ]),
+            tagIDs: [],
+            media: []
+        )
+
+        let mapped = try SyncV2PayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
+
+        XCTAssertEqual(mapped.id, recordID)
+        XCTAssertEqual(mapped.eventDate, occurredAt)
+        XCTAssertEqual(mapped.unixTimestamp, Int64(occurredAt.timeIntervalSince1970))
+        XCTAssertEqual(mapped.version, 3)
+        XCTAssertEqual(mapped.sourceDeviceID, deviceID.uuidString)
+        XCTAssertEqual(mapped.text, "X1.7 solar flare")
+        XCTAssertEqual(mapped.latitude, 12.5)
+        XCTAssertEqual(mapped.longitude, -45.25)
+        XCTAssertEqual(mapped.weatherCode, 2)
+        XCTAssertEqual(mapped.context.eventDate, occurredAt)
+    }
+
+    private func jsonValue<T: Encodable>(_ value: T) throws -> SyncJSONValue {
+        let encoder = JSONEncoder()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(formatter.string(from: date))
+        }
+        return try JSONDecoder().decode(SyncJSONValue.self, from: encoder.encode(value))
+    }
+}
+
 private enum Fixtures {
     static let previousDate = Date(timeIntervalSince1970: 1_700_000_000)
     static let interval: TimeInterval = 8_000
