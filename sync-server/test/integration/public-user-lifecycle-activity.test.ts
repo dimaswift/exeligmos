@@ -68,13 +68,13 @@ test(
          VALUES ($1, $2)`,
         [followerId, targetId],
       );
-      const createdRecord = await sql.query<{ id: string }>(
+      const createdRecord = await sql.query<{ public_id: string }>(
         `INSERT INTO records (user_id, device_id, event_at, public_payload)
          VALUES ($1, $2, now(), '{"text":"public solar activity"}'::jsonb)
-         RETURNING id`,
+         RETURNING public_id`,
         [targetId, targetDeviceId],
       );
-      const recordId = required(createdRecord.rows[0]?.id);
+      const recordId = required(createdRecord.rows[0]?.public_id);
 
       const initial = await app.inject({
         method: "GET",

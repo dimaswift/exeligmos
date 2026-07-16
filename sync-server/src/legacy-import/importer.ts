@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import type { QueryResultRow } from "pg";
 
 import type { Database, Queryable } from "../db/database.js";
+import { generateRecordPublicId } from "../resources/records.js";
 import {
   MediaStorageIntegrityError,
   MediaStorageMissingError,
@@ -461,34 +462,11 @@ async function importEntry(
   }
 
   const createdRecord = await database.transaction(async (queryable) => {
-    const inserted = await queryable.query(
-      `INSERT INTO records (
-         id, user_id, device_id, visibility, event_at, end_at, public_payload,
-         metadata, source_kind, source_provider, source_external_id,
-         source_metadata, created_at, updated_at
-       ) VALUES (
-         $1, $2, $3, 'public', $4::timestamptz, $5::timestamptz, $6::jsonb,
-         $7::jsonb, 'import', 'exeligmos.folder-relay', $8,
-         $9::jsonb, $10::timestamptz, $11::timestamptz
-       )
-       ON CONFLICT (id) DO NOTHING`,
-      [
-        entry.id,
-        mapping.userId,
-        deviceId,
-        entry.eventDate,
-        entry.endDate ?? null,
-        JSON.stringify(entry.document),
-        JSON.stringify(legacyMetadata(entry.relativePath, entry.sha256)),
-        entry.id,
-        JSON.stringify({
-          legacyDeviceId: entry.sourceDeviceId ?? null,
-          legacyDeviceName: legacyString(entry.document.sourceDeviceName) ?? null,
-          legacyDeviceEmoji: legacyString(entry.document.sourceDeviceEmoji) ?? null,
-        }),
-        entry.createdAt,
-        entry.updatedAt,
-      ],
+    const inserted = await insertLegacyRecord(
+      queryable,
+      mapping.userId,
+      deviceId,
+      entry,
     );
     await assertRecordImported(queryable, mapping.userId, deviceId, entry);
     for (const compactId of entry.tagCompactIds) {
@@ -511,9 +489,60 @@ async function importEntry(
       );
     }
     await assertRecordRelationships(queryable, entry, tagIds);
-    return inserted.rowCount;
+    return inserted;
   });
   return { record: createdRecord, media: createdMedia };
+}
+
+async function insertLegacyRecord(
+  queryable: Queryable,
+  userId: string,
+  deviceId: string,
+  entry: LegacyEntrySource,
+): Promise<number> {
+  const existing = await queryable.query(
+    "SELECT 1 FROM records WHERE id = $1",
+    [entry.id],
+  );
+  if (existing.rowCount === 1) {
+    return 0;
+  }
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const inserted = await queryable.query(
+      `INSERT INTO records (
+         id, public_id, user_id, device_id, visibility, event_at, end_at,
+         public_payload, metadata, source_kind, source_provider,
+         source_external_id, source_metadata, created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4, 'public', $5::timestamptz, $6::timestamptz,
+         $7::jsonb, $8::jsonb, 'import', 'exeligmos.folder-relay', $9,
+         $10::jsonb, $11::timestamptz, $12::timestamptz
+       )
+       ON CONFLICT (public_id) DO NOTHING`,
+      [
+        entry.id,
+        generateRecordPublicId(),
+        userId,
+        deviceId,
+        entry.eventDate,
+        entry.endDate ?? null,
+        JSON.stringify(entry.document),
+        JSON.stringify(legacyMetadata(entry.relativePath, entry.sha256)),
+        entry.id,
+        JSON.stringify({
+          legacyDeviceId: entry.sourceDeviceId ?? null,
+          legacyDeviceName: legacyString(entry.document.sourceDeviceName) ?? null,
+          legacyDeviceEmoji: legacyString(entry.document.sourceDeviceEmoji) ?? null,
+        }),
+        entry.createdAt,
+        entry.updatedAt,
+      ],
+    );
+    if (inserted.rowCount === 1) {
+      return 1;
+    }
+  }
+  throw new Error("Could not allocate a unique public ID for a legacy record");
 }
 
 async function importMedia(

@@ -24,7 +24,7 @@ describe("activity feed model", () => {
     const publicResource = {
       kind: "record",
       record: {
-        id: "public-record",
+        id: "Pub01",
         userId: "user",
         author: { id: "user", login: "sun", displayName: "The Sun" },
         visibility: "public",
@@ -43,7 +43,8 @@ describe("activity feed model", () => {
     const privateResource = {
       kind: "record",
       record: {
-        id: "private-record",
+        id: "Prv01",
+        originId: "70000000-0000-4000-8000-000000000007",
         userId: "user",
         deviceId: "device",
         visibility: "private",
@@ -65,7 +66,7 @@ describe("activity feed model", () => {
 
     expect(activityResourceTimestamp(publicResource)).toBe("2026-07-15T10:00:00Z");
     expect(activityResourceTimestamp(privateResource)).toBe("2026-07-15T12:00:00Z");
-    expect(activityResourceKey(publicResource)).toBe("record:public-record");
+    expect(activityResourceKey(publicResource)).toBe("record:Pub01");
   });
 
   it("sorts metadata keys recursively for stable server markup", () => {

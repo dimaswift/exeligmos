@@ -1,0 +1,20 @@
+{
+  "name": "ESP32C6LCD147",
+  "version": "0.1.0",
+  "description": "Board-specific display, SD card, and LVGL helpers for the Waveshare ESP32-C6-LCD-1.47.",
+  "keywords": [
+    "esp32-c6",
+    "st7789",
+    "lvgl",
+    "sd"
+  ],
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ],
+  "dependencies": {
+    "lvgl/lvgl": "9.5.0"
+  }
+}

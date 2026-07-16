@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import SwiftUI
 
@@ -8,6 +9,14 @@ struct SarosHarmonicJournalApp: App {
     private let modelContainer: ModelContainer
 
     init() {
+        let defaults = UserDefaults.standard
+        if defaults.string(forKey: JournalSettings.syncServerURLKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            defaults.set(
+                JournalSettings.defaultSyncServerURL,
+                forKey: JournalSettings.syncServerURLKey
+            )
+        }
         do {
             modelContainer = try ModelContainer(
                 for: TrackedEntity.self,
@@ -30,6 +39,7 @@ struct SarosHarmonicJournalApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(services)
+                .environmentObject(services.syncCoordinator)
                 .preferredColorScheme(.dark)
         }
         .modelContainer(modelContainer)

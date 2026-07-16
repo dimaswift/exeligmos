@@ -85,14 +85,27 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
   });
 
   try {
+    const statsResponse = await app.inject({ method: "GET", url: "/v1/sync/stats" });
+    assert.equal(statsResponse.statusCode, 200, statsResponse.body);
+    const stats = statsResponse.json<{ cursor: string } & Record<string, unknown>>();
+    assert.ok(stats.cursor.length > 1);
+    assert.deepEqual({ ...stats, cursor: "<cursor>" }, {
+      cursor: "<cursor>",
+      records: { total: 0, public: 0, private: 0 },
+      events: { total: 0 },
+      tags: { total: 0 },
+      templates: { total: 0 },
+      media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+    });
+
     const first = await app.inject({ method: "GET", url: "/v1/sync/changes" });
     assert.equal(first.statusCode, 200, first.body);
     const page = first.json<{ data: unknown[]; nextCursor: string; hasMore: boolean }>();
     assert.deepEqual(page.data, []);
     assert.equal(page.hasMore, false);
     assert.ok(page.nextCursor.length > 1);
-    assert.deepEqual(requiredScopes, [["sync:read"]]);
-    assert.equal(reads, 1);
+    assert.deepEqual(requiredScopes, [["sync:read"], ["sync:read"]]);
+    assert.equal(reads, 2);
 
     const rebound = await app.inject({
       method: "GET",
@@ -193,6 +206,20 @@ class EmptySyncDatabase implements Database {
   ): Promise<DatabaseResult<Row>> {
     if (text.startsWith("SET TRANSACTION")) {
       return result<Row>([]);
+    }
+    if (text.includes("AS public_record_count")) {
+      return result<Row>([{
+        high_water: "0",
+        public_record_count: "0",
+        private_record_count: "0",
+        event_count: "0",
+        tag_count: "0",
+        template_count: "0",
+        media_count: "0",
+        media_byte_length: "0",
+        restorable_media_count: "0",
+        restorable_media_byte_length: "0",
+      }]);
     }
     if (text.includes("AS high_water")) {
       return result<Row>([{ high_water: "0", last_pruned: "0" }]);

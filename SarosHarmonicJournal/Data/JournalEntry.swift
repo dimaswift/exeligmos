@@ -1,6 +1,23 @@
 import Foundation
 import SwiftData
 
+enum JournalRecordPublicID {
+    static let length = 5
+    static let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+    static func generate() -> String {
+        var generator = SystemRandomNumberGenerator()
+        return String((0..<length).map { _ in alphabet.randomElement(using: &generator)! })
+    }
+
+    static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.count == length,
+              value.allSatisfy({ alphabet.contains($0) }) else { return nil }
+        return value
+    }
+}
+
 enum JournalWaveDirection: String, Codable, CaseIterable, Identifiable {
     case ascending
     case descending
@@ -365,6 +382,14 @@ struct JournalEventContext: Codable, Hashable {
 @Model
 final class JournalEntry {
     @Attribute(.unique) var id: UUID
+    /// Compact server/public identity. The UUID above remains the durable local
+    /// origin identity and is sent to the owner API as `originId`.
+    var publicID: String?
+    /// Nil means the record is local-only and may be claimed by the next user
+    /// who signs in. A non-nil value prevents cross-account uploads.
+    var syncOwnerUserID: UUID?
+    /// Nil until this local origin has been acknowledged by the relay.
+    var acknowledgedServerRevision: Int64?
     var createdAt: Date
     var updatedAt: Date
     var eventDate: Date
@@ -391,6 +416,9 @@ final class JournalEntry {
 
     init(
         id: UUID = UUID(),
+        publicID: String? = nil,
+        syncOwnerUserID: UUID? = nil,
+        acknowledgedServerRevision: Int64? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         eventDate: Date,
@@ -412,6 +440,9 @@ final class JournalEntry {
         temperatureC: Int? = nil
     ) {
         self.id = id
+        self.publicID = Self.normalizedPublicID(publicID) ?? JournalRecordPublicID.generate()
+        self.syncOwnerUserID = syncOwnerUserID
+        self.acknowledgedServerRevision = acknowledgedServerRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.eventDate = eventDate
@@ -433,6 +464,10 @@ final class JournalEntry {
         self.weatherCode = weatherCode
         self.weatherEmoji = weatherEmoji
         self.temperatureC = temperatureC
+    }
+
+    static func normalizedPublicID(_ value: String?) -> String? {
+        JournalRecordPublicID.normalized(value)
     }
 
     var mediaItems: [JournalMediaItem] {
@@ -535,6 +570,8 @@ extension JournalEventContext {
 @Model
 final class JournalTag {
     @Attribute(.unique) var id: UUID
+    var syncOwnerUserID: UUID?
+    var acknowledgedServerRevision: Int64?
     var createdAt: Date
     var updatedAt: Date
     var name: String
@@ -549,6 +586,8 @@ final class JournalTag {
 
     init(
         id: UUID = UUID(),
+        syncOwnerUserID: UUID? = nil,
+        acknowledgedServerRevision: Int64? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         name: String,
@@ -562,6 +601,8 @@ final class JournalTag {
         octalID: String? = nil
     ) {
         self.id = id
+        self.syncOwnerUserID = syncOwnerUserID
+        self.acknowledgedServerRevision = acknowledgedServerRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.name = name

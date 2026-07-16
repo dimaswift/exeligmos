@@ -10,6 +10,7 @@ import { NOOP_AUTH_ATTEMPT_LIMITER } from "../../src/auth/rate-limit.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
 import { runMigrations } from "../../src/db/migrate.js";
+import { generateRecordPublicId } from "../../src/resources/records.js";
 import { testConfig } from "../helpers.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -80,6 +81,8 @@ test(
         "records:write",
         "events:read",
         "events:write",
+        "sync:read",
+        "sync:write",
       ]);
       const recordsOnlyKey = await issueApiKey(
         app,
@@ -120,11 +123,15 @@ test(
       );
 
       const publicIdempotencyKey = `record-public-${randomUUID()}`;
+      const requestedPublicId = generateRecordPublicId();
+      const requestedPublicOriginId = randomUUID();
       const publicRequest = {
         method: "POST" as const,
         url: "/v1/records",
         headers: mutationHeaders(apiKey, publicIdempotencyKey),
         payload: {
+          id: requestedPublicId,
+          originId: requestedPublicOriginId,
           deviceId: device.id,
           occurredAt: "2026-07-14T16:42:00Z",
           payload: {
@@ -145,6 +152,8 @@ test(
       assert.equal(publicReplay.statusCode, 201, publicReplay.body);
       assert.deepEqual(publicReplay.json(), publicRecord.json());
       const publicBody = publicRecord.json<RecordBody>();
+      assert.equal(publicBody.id, requestedPublicId);
+      assert.equal(publicBody.originId, requestedPublicOriginId);
       assert.equal(publicBody.visibility, "public");
       assert.equal(publicBody.deviceId, device.id);
       assert.equal(
@@ -152,6 +161,21 @@ test(
         `/v1/records/${publicBody.id}`,
       );
       const publicEtag = requiredResponseHeader(publicRecord.headers.etag);
+
+      const collidingPublicRecord = await app.inject({
+        method: "POST",
+        url: "/v1/records",
+        headers: mutationHeaders(apiKey, `record-collision-${randomUUID()}`),
+        payload: {
+          id: requestedPublicId,
+          originId: randomUUID(),
+          deviceId: device.id,
+          occurredAt: "2026-07-14T16:43:00Z",
+          payload: { text: "Must not claim an occupied record id" },
+        },
+      });
+      assert.equal(collidingPublicRecord.statusCode, 409, collidingPublicRecord.body);
+      assert.equal(collidingPublicRecord.json().code, "record_id_collision");
 
       const rendered = await app.inject({
         method: "POST",
@@ -266,6 +290,7 @@ test(
       });
       assert.equal(anonymousPublic.statusCode, 200, anonymousPublic.body);
       assert.equal("deviceId" in anonymousPublic.json(), false);
+      assert.equal("originId" in anonymousPublic.json(), false);
       assert.equal(
         anonymousPublic.headers["cache-control"],
         "public, max-age=30",
@@ -278,13 +303,15 @@ test(
       });
       assert.equal(otherTenantPublic.statusCode, 404);
 
-      const privateId = randomUUID();
+      const privateId = generateRecordPublicId();
+      const privateOriginId = randomUUID();
       const privateRecord = await app.inject({
         method: "POST",
         url: "/v1/records",
         headers: mutationHeaders(apiKey, `record-private-${randomUUID()}`),
         payload: {
           id: privateId,
+          originId: privateOriginId,
           deviceId: device.id,
           visibility: "private",
           encryption: {
@@ -323,7 +350,8 @@ test(
           `private-no-profile-${randomUUID()}`,
         ),
         payload: {
-          id: randomUUID(),
+          id: generateRecordPublicId(),
+          originId: randomUUID(),
           deviceId: otherUserDevice.id,
           visibility: "private",
           encryption: {
@@ -524,7 +552,7 @@ test(
           AND cl.entity_id = r.id
           AND cl.revision = r.revision
          WHERE r.id = $1`,
-        [privateId],
+        [privateOriginId],
       );
       const privateTombstoneRow = privateTombstone.rows[0];
       assert.ok(privateTombstoneRow);
@@ -556,6 +584,44 @@ test(
         headers: bearer(apiKey),
       });
       assert.equal(deletedPrivate.statusCode, 404);
+
+      const restoredPrivate = await app.inject({
+        method: "POST",
+        url: "/v1/sync/batches",
+        headers: mutationHeaders(apiKey, `restore-private-${randomUUID()}`),
+        payload: {
+          deviceId: device.id,
+          mutations: [{
+            kind: "upsertRecord",
+            clientMutationId: `restore-private-${randomUUID()}`,
+            record: {
+              id: privateId,
+              originId: privateOriginId,
+              deviceId: device.id,
+              visibility: "private",
+              encryption: {
+                algorithm: "A256GCM",
+                cryptoVersion: 1,
+                keyVersion: 1,
+                nonce: Buffer.alloc(12, 7).toString("base64"),
+                ciphertext: Buffer.alloc(32, 8).toString("base64"),
+                contentType: "application/vnd.exeligmos.record+json",
+              },
+            },
+          }],
+        },
+      });
+      assert.equal(restoredPrivate.statusCode, 200, restoredPrivate.body);
+      assert.equal(restoredPrivate.json().results[0]?.status, "succeeded");
+      assert.equal(restoredPrivate.json().results[0]?.resourceId, privateId);
+      const restoredPrivateRead = await app.inject({
+        method: "GET",
+        url: `/v1/records/${privateId}`,
+        headers: bearer(apiKey),
+      });
+      assert.equal(restoredPrivateRead.statusCode, 200, restoredPrivateRead.body);
+      assert.equal(restoredPrivateRead.json().originId, privateOriginId);
+      assert.equal(restoredPrivateRead.json().revision, 3);
 
       const recordDelete = await app.inject({
         method: "DELETE",
@@ -590,7 +656,7 @@ test(
           AND cl.entity_id = r.id
           AND cl.revision = r.revision
          WHERE r.id = $1`,
-        [publicBody.id],
+        [publicBody.originId],
       );
       const publicTombstoneRow = publicTombstone.rows[0];
       assert.ok(publicTombstoneRow);
@@ -655,6 +721,7 @@ interface Registration {
 
 interface RecordBody {
   readonly id: string;
+  readonly originId: string;
   readonly deviceId: string;
   readonly visibility: "public" | "private";
 }

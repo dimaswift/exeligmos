@@ -33,11 +33,19 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var syncCoordinator: SyncCoordinator
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+    @AppStorage(JournalSettings.onboardingCompletedKey) private var onboardingCompleted = false
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
+    @AppStorage(JournalSettings.lastSyncAtKey) private var lastSyncAt = 0.0
 
     @State private var selectedTab: AppTab = .feed
     @State private var feedMode: FeedMode = .past
@@ -45,18 +53,25 @@ struct RootView: View {
     @State private var activityCaptureRequest: ActivityEntryCaptureRequest?
     @State private var sharedMediaCaptureRequest: SharedMediaCaptureRequest?
     @State private var isConsumingSharedMediaImport = false
+    @State private var futureNotificationRefreshTask: Task<Void, Never>?
     private let activityCompletionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            ForEach(AppTab.allCases) { tab in
-                NavigationStack {
-                    screen(for: tab)
+        Group {
+            if onboardingCompleted {
+                TabView(selection: $selectedTab) {
+                    ForEach(AppTab.allCases) { tab in
+                        NavigationStack {
+                            screen(for: tab)
+                        }
+                        .tabItem {
+                            Label(tab.title, systemImage: tab.symbol)
+                        }
+                        .tag(tab)
+                    }
                 }
-                .tabItem {
-                    Label(tab.title, systemImage: tab.symbol)
-                }
-                .tag(tab)
+            } else {
+                JournalOnboardingView()
             }
         }
         .background(AutoSyncObserver())
@@ -91,6 +106,10 @@ struct RootView: View {
                 )
             }
         }
+        .sheet(isPresented: $syncCoordinator.isProgressPresented) {
+            SyncProgressView()
+                .interactiveDismissDisabled(syncCoordinator.progress?.canDismiss == false)
+        }
         .onOpenURL(perform: handleDeepLink)
         .onReceive(NotificationCenter.default.publisher(for: .recordCaptureRequested)) { notification in
             if let entityID = notification.object as? UUID {
@@ -104,6 +123,21 @@ struct RootView: View {
             openFutureFeed()
         }
         .task {
+            // Keychain credentials can survive an app deletion. A genuinely
+            // fresh install must stay local-only behind onboarding until the
+            // user explicitly chooses Log in or Sign up again.
+            if onboardingCompleted {
+                await syncCoordinator.restoreAuthentication(for: syncServerURL)
+                if syncCoordinator.isAuthenticated {
+                    syncCoordinator.scheduleAutomaticSync(
+                        serverURL: syncServerURL,
+                        modelContext: modelContext,
+                        tags: tags,
+                        entries: entries,
+                        commands: syncCommands
+                    )
+                }
+            }
             consumePendingFutureFeed()
             consumePendingRecordCapture()
             consumePendingSharedMediaImport()
@@ -121,8 +155,16 @@ struct RootView: View {
         .onChange(of: pulseSaros) { _, _ in
             refreshSarosEventNotifications()
         }
-        .onChange(of: entries.map(\.notificationFingerprint)) { _, _ in
-            refreshFutureEntryNotifications()
+        .onChange(of: entries.count) { _, _ in
+            scheduleFutureEntryNotificationRefresh()
+        }
+        .onChange(of: lastSyncAt) { _, _ in
+            scheduleFutureEntryNotificationRefresh()
+        }
+        .onChange(of: syncCoordinator.isInitialRestoreActive) { wasRestoring, isRestoring in
+            if wasRestoring && !isRestoring {
+                scheduleFutureEntryNotificationRefresh()
+            }
         }
         .onChange(of: entities.map(\.id)) { _, _ in
             consumePendingRecordCapture()
@@ -139,7 +181,7 @@ struct RootView: View {
     private func screen(for tab: AppTab) -> some View {
         switch tab {
         case .feed:
-            FeedView(feedMode: $feedMode)
+            FeedView(feedMode: $feedMode, isActive: selectedTab == .feed)
         case .timeline:
             SarosCurrentWaveTimelineView()
         case .saros:
@@ -299,8 +341,13 @@ struct RootView: View {
         }
     }
 
-    private func refreshFutureEntryNotifications() {
-        Task {
+    private func scheduleFutureEntryNotificationRefresh() {
+        futureNotificationRefreshTask?.cancel()
+        guard !syncCoordinator.isInitialRestoreActive else { return }
+        let entries = entries
+        futureNotificationRefreshTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
             await services.notificationScheduler.refreshFutureEntryNotifications(for: entries)
         }
     }
@@ -571,12 +618,14 @@ enum ContinuousActivityLogger {
 
 private struct FeedView: View {
     @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var syncCoordinator: SyncCoordinator
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
 
     @State private var selectedRarity: FlipRarity?
     @State private var selectedDirection: JournalWaveDirection?
@@ -592,6 +641,7 @@ private struct FeedView: View {
     @State private var isFilterPresented = false
     @State private var now = Date()
     @Binding var feedMode: FeedMode
+    let isActive: Bool
 
     private let feedClock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
@@ -801,9 +851,43 @@ private struct FeedView: View {
         }
     }
 
+    private var entrySyncStates: [UUID: JournalEntrySyncState] {
+        var states: [UUID: JournalEntrySyncState] = Dictionary(uniqueKeysWithValues: entries.map { entry in
+            (
+                entry.id,
+                entry.publicID != nil && entry.acknowledgedServerRevision != nil
+                    ? .synced
+                    : .localOnly
+            )
+        })
+        guard let userID = syncCoordinator.authenticatedUser?.id else { return states }
+        for command in syncCommands where command.isPending
+            && (command.ownerUserID == nil || command.ownerUserID == userID)
+            && (command.type == .entryUpsert || command.type == .entryDelete) {
+            guard let id = UUID(uuidString: command.subjectID) else { continue }
+            let newState: JournalEntrySyncState = command.requiresManualRetry ? .failed : .pending
+            if states[id] != .failed || newState == .failed {
+                states[id] = newState
+            }
+        }
+        return states
+    }
+
     var body: some View {
         List {
-            if entries.isEmpty {
+            if !isActive || captureRequest != nil || selectedEntry != nil {
+                Color.clear
+                    .frame(height: 1)
+                    .listRowBackground(Color.clear)
+            } else if syncCoordinator.isInitialRestoreActive {
+                Section {
+                    ContentUnavailableView(
+                        "Restoring journal",
+                        systemImage: "arrow.down.circle",
+                        description: Text("Records are being checkpointed in the background.")
+                    )
+                }
+            } else if entries.isEmpty {
                 Section {
                     ContentUnavailableView("No entries yet", systemImage: "rectangle.stack")
                 }
@@ -812,6 +896,7 @@ private struct FeedView: View {
                     ContentUnavailableView("No matching entries", systemImage: "line.3.horizontal.decrease.circle")
                 }
             } else {
+                let syncStates = entrySyncStates
                 ForEach(entryGroups) { group in
                     Section {
                         ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
@@ -819,7 +904,12 @@ private struct FeedView: View {
                                 Button {
                                     selectedEntry = item.entry
                                 } label: {
-                                    JournalEntryRow(entry: item.entry, tags: tags, now: timeline.date)
+                                    JournalEntryRow(
+                                        entry: item.entry,
+                                        tags: tags,
+                                        now: timeline.date,
+                                        syncState: syncStates[item.entry.id]
+                                    )
                                 }
                                 .buttonStyle(.plain)
                                 .contextMenu {
@@ -916,7 +1006,7 @@ private struct FeedView: View {
 
     @MainActor
     private func refreshFromRelay() async {
-        guard syncServerURL.nilIfBlank != nil else { return }
+        guard syncServerURL.nilIfBlank != nil, services.syncCoordinator.isAuthenticated else { return }
         do {
             _ = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
@@ -957,12 +1047,16 @@ private struct FeedView: View {
 
     @MainActor
     private func finishEntry(_ entry: JournalEntry) {
+        let ownerID = entry.syncOwnerUserID ?? services.syncCoordinator.authenticatedUser?.id
+        entry.syncOwnerUserID = ownerID
         entry.endDate = Date()
         entry.updatedAt = Date()
         entry.version += 1
         SyncLocalCommand.enqueue(
             .entryUpsert,
             subjectID: entry.id.uuidString,
+            ownerUserID: ownerID,
+            remoteResourceID: entry.publicID,
             existing: syncCommands,
             modelContext: modelContext
         )
@@ -1207,16 +1301,6 @@ private enum LunarEchoSeries: String, CaseIterable {
 
     var halfWindow: TimeInterval {
         SarosPulseCalculator.averageDuration(for: .mega) * 2
-    }
-}
-
-private extension JournalEntry {
-    var notificationFingerprint: String {
-        [
-            id.uuidString,
-            String(Int(eventDate.timeIntervalSince1970)),
-            String(Int(updatedAt.timeIntervalSince1970))
-        ].joined(separator: "-")
     }
 }
 
@@ -1821,24 +1905,260 @@ enum AppDeepLinkStore {
     }
 }
 
-private struct AutoSyncObserver: View {
-    @EnvironmentObject private var services: AppServices
+private enum OnboardingAccountMode: String {
+    case login = "Log in"
+    case register = "Sign up"
+}
+
+private struct JournalOnboardingView: View {
+    @EnvironmentObject private var syncCoordinator: SyncCoordinator
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var commands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.onboardingCompletedKey) private var onboardingCompleted = false
+    @AppStorage(JournalSettings.syncServerURLKey) private var serverURL = JournalSettings.defaultSyncServerURL
+
+    @State private var mode: OnboardingAccountMode?
+    @State private var login = ""
+    @State private var password = ""
+    @State private var displayName = ""
+    @State private var inviteCode = ""
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Spacer()
+                Image(systemName: "circle.grid.3x3.fill")
+                    .font(.system(size: 72))
+                    .foregroundStyle(.blue)
+                VStack(spacing: 8) {
+                    Text("Exeligmos")
+                        .font(.largeTitle.bold())
+                    Text("A local-first journal. Record without an account, then merge safely whenever you sign in.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let mode {
+                    accountForm(mode)
+                } else {
+                    VStack(spacing: 12) {
+                        Button("Log in") { mode = .login }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                        Button("Sign up") { mode = .register }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                    }
+                }
+                Spacer()
+                Button("Skip for now") { onboardingCompleted = true }
+                    .foregroundStyle(.secondary)
+                    .disabled(isWorking)
+            }
+            .padding(28)
+            .alert("Account error", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func accountForm(_ mode: OnboardingAccountMode) -> some View {
+        VStack(spacing: 12) {
+            TextField("Server URL", text: $serverURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .textFieldStyle(.roundedBorder)
+            TextField("Login", text: $login)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            SecureField("Password", text: $password)
+                .textFieldStyle(.roundedBorder)
+            if mode == .register {
+                TextField("Display name (optional)", text: $displayName)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Invite code (optional)", text: $inviteCode)
+                    .textInputAutocapitalization(.characters)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Button {
+                Task { await authenticate(mode) }
+            } label: {
+                if isWorking { ProgressView() } else { Text(mode.rawValue) }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(
+                isWorking || serverURL.nilIfBlank == nil || login.nilIfBlank == nil || password.isEmpty
+            )
+            Button("Back") { self.mode = nil }
+                .disabled(isWorking)
+        }
+    }
+
+    @MainActor
+    private func authenticate(_ mode: OnboardingAccountMode) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            switch mode {
+            case .login:
+                try await syncCoordinator.loginAndMerge(
+                    serverURL: serverURL,
+                    login: login,
+                    password: password,
+                    modelContext: modelContext,
+                    tags: tags,
+                    entries: entries,
+                    commands: commands
+                )
+            case .register:
+                try await syncCoordinator.registerAndMerge(
+                    serverURL: serverURL,
+                    login: login,
+                    password: password,
+                    displayName: displayName,
+                    inviteCode: inviteCode,
+                    modelContext: modelContext,
+                    tags: tags,
+                    entries: entries,
+                    commands: commands
+                )
+            }
+            password = ""
+            onboardingCompleted = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SyncProgressView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                if coordinator.progress?.phase == .complete {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 64))
+                        .foregroundStyle(.green)
+                } else if coordinator.progress?.phase == .failed {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 56))
+                        .foregroundStyle(.orange)
+                } else {
+                    ProgressView()
+                        .controlSize(.large)
+                }
+                Text(coordinator.progress?.phase.rawValue ?? "Synchronizing")
+                    .font(.title2.bold())
+                Text(coordinator.progress?.detail ?? "You can keep using the app while this continues.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+
+                if let progress = coordinator.progress {
+                    VStack(spacing: 16) {
+                        progressSection(
+                            title: "Restore",
+                            completed: progress.restoredRecords,
+                            total: progress.totalRecords,
+                            noun: "records"
+                        )
+                        if progress.totalMedia > 0 {
+                            progressSection(
+                                title: "Media",
+                                completed: progress.restoredMedia,
+                                total: progress.totalMedia,
+                                noun: "files"
+                            )
+                        }
+                        if progress.totalUploadRecords > 0 {
+                            progressSection(
+                                title: "Upload",
+                                completed: progress.uploadedRecords,
+                                total: progress.totalUploadRecords,
+                                noun: "records"
+                            )
+                        }
+                        if progress.totalUploadMedia > 0 {
+                            progressSection(
+                                title: "Upload media",
+                                completed: progress.uploadedMedia,
+                                total: progress.totalUploadMedia,
+                                noun: "files"
+                            )
+                        }
+                    }
+                    if progress.skippedPrivateRecords > 0 {
+                        Label(
+                            "\(progress.skippedPrivateRecords) private records remain encrypted on the server and cannot yet be restored on a fresh install.",
+                            systemImage: "lock.trianglebadge.exclamationmark"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                Button(coordinator.progress?.phase == .complete ? "Done" : "Hide") {
+                    coordinator.dismissProgress()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(28)
+            .navigationTitle(coordinator.progress?.isInitialRestore == true ? "Restoring Journal" : "Sync")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func progressSection(title: String, completed: Int, total: Int, noun: String) -> some View {
+        let safeTotal = max(total, 1)
+        let safeCompleted = min(max(completed, 0), safeTotal)
+        return VStack(spacing: 6) {
+            HStack {
+                Text(title).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(safeCompleted) / \(total) \(noun)")
+                    .font(.subheadline.monospacedDigit())
+            }
+            ProgressView(value: Double(safeCompleted), total: Double(safeTotal))
+        }
+    }
+}
+
+private struct AutoSyncObserver: View {
+    @EnvironmentObject private var syncCoordinator: SyncCoordinator
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
+    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
 
     @State private var isSyncing = false
     @State private var lastCheckedFingerprint = ""
+    @State private var retryClockDate = Date()
+
+    private let retryClock = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     private var syncFingerprint: String {
-        "\(syncServerURL)|\(commandFingerprint)"
+        "\(syncServerURL)|\(syncCoordinator.authenticatedUser?.id.uuidString ?? "signed-out")|\(commandFingerprint)"
     }
 
     private var commandFingerprint: String {
         syncCommands
-            .filter(\.isEligibleForAutomaticSync)
+            .filter { $0.isEligibleForAutomaticSync(at: retryClockDate) }
             .map { "\($0.id.uuidString):\($0.updatedAt.timeIntervalSince1970):\($0.typeRawValue):\($0.subjectID)" }
             .joined(separator: ",")
     }
@@ -1849,6 +2169,7 @@ private struct AutoSyncObserver: View {
             .task(id: syncFingerprint) {
                 await pushPendingCommands()
             }
+            .onReceive(retryClock) { retryClockDate = $0 }
     }
 
     @MainActor
@@ -1856,7 +2177,11 @@ private struct AutoSyncObserver: View {
         guard syncServerURL.nilIfBlank != nil else { return }
         try? await Task.sleep(nanoseconds: 850_000_000)
         guard !Task.isCancelled else { return }
-        let hasPendingCommands = syncCommands.contains(where: \.isEligibleForAutomaticSync)
+        guard let userID = syncCoordinator.authenticatedUser?.id else { return }
+        let hasPendingCommands = syncCommands.contains {
+            $0.isEligibleForAutomaticSync(at: retryClockDate)
+                && ($0.ownerUserID == nil || $0.ownerUserID == userID)
+        }
         guard hasPendingCommands else { return }
         let fingerprint = syncFingerprint
         guard lastCheckedFingerprint != fingerprint else { return }
@@ -1865,18 +2190,14 @@ private struct AutoSyncObserver: View {
         isSyncing = true
         defer { isSyncing = false }
 
-        do {
-            _ = try await services.syncService.pushPendingLocalCommands(
-                with: syncServerURL,
-                modelContext: modelContext,
-                tags: tags,
-                entries: entries,
-                commands: syncCommands
-            )
-            lastCheckedFingerprint = fingerprint
-        } catch {
-            // Keep background command sending quiet; manual refresh surfaces detailed relay errors.
-        }
+        syncCoordinator.scheduleAutomaticSync(
+            serverURL: syncServerURL,
+            modelContext: modelContext,
+            tags: tags,
+            entries: entries,
+            commands: syncCommands
+        )
+        lastCheckedFingerprint = fingerprint
     }
 }
 

@@ -17,25 +17,38 @@ final class SyncLocalCommand {
     var updatedAt: Date
     var typeRawValue: String
     var subjectID: String
+    /// Server-facing identifier needed after the local model is deleted.
+    var remoteResourceID: String?
+    /// Nil commands belong to local-only content and may be claimed by the
+    /// next authenticated user. Non-nil commands never cross account scopes.
+    var ownerUserID: UUID?
     var sentAt: Date?
     var attemptCount: Int
     var lastError: String?
+    /// Transient transport/server failures retry with bounded backoff. Nil
+    /// with a positive attempt count means explicit user action is required.
+    var automaticRetryAt: Date?
 
     init(
         id: UUID = UUID(),
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         type: SyncLocalCommandType,
-        subjectID: String
+        subjectID: String,
+        ownerUserID: UUID? = nil,
+        remoteResourceID: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.typeRawValue = type.rawValue
         self.subjectID = subjectID
+        self.ownerUserID = ownerUserID
+        self.remoteResourceID = remoteResourceID
         self.sentAt = nil
         self.attemptCount = 0
         self.lastError = nil
+        self.automaticRetryAt = nil
     }
 
     var type: SyncLocalCommandType? {
@@ -47,22 +60,43 @@ final class SyncLocalCommand {
     }
 
     /// Automatic delivery gets one attempt per local mutation body. A failed
-    /// command remains pending for manual retry, but cannot spin the app in a
-    /// tight rejection loop.
+    /// validation command remains pending for manual retry; transient failures
+    /// become eligible only after their bounded backoff expires.
     var isEligibleForAutomaticSync: Bool {
-        isPending && attemptCount == 0
+        isEligibleForAutomaticSync(at: Date())
+    }
+
+    func isEligibleForAutomaticSync(at date: Date) -> Bool {
+        guard isPending else { return false }
+        if attemptCount == 0 { return true }
+        return automaticRetryAt.map { $0 <= date } ?? false
+    }
+
+    var requiresManualRetry: Bool {
+        isPending && attemptCount > 0 && automaticRetryAt == nil
     }
 
     func markFailed(_ error: Error) {
-        attemptCount += 1
+        attemptCount = max(attemptCount, 0) + 1
         lastError = error.localizedDescription
         updatedAt = Date()
+        automaticRetryAt = nil
+    }
+
+    func markTransientFailure(_ error: Error, now: Date = Date()) {
+        attemptCount = max(attemptCount, 0) + 1
+        lastError = error.localizedDescription
+        updatedAt = now
+        let exponent = min(max(attemptCount - 1, 0), 6)
+        let delay = min(TimeInterval(5 * (1 << exponent)), 300)
+        automaticRetryAt = now.addingTimeInterval(delay)
     }
 
     func markSent(at date: Date = Date()) {
         sentAt = date
         lastError = nil
         updatedAt = date
+        automaticRetryAt = nil
     }
 
     /// A server acknowledgement with `status: failed` is a completed logical
@@ -72,10 +106,17 @@ final class SyncLocalCommand {
         markFailed(error)
     }
 
+    func prepareAutomaticRetry(afterServerRejection error: Error) {
+        id = UUID()
+        markTransientFailure(error)
+    }
+
     @MainActor
     static func enqueue(
         _ type: SyncLocalCommandType,
         subjectID: String,
+        ownerUserID: UUID? = nil,
+        remoteResourceID: String? = nil,
         existing commands: [SyncLocalCommand],
         modelContext: ModelContext
     ) {
@@ -104,19 +145,67 @@ final class SyncLocalCommand {
             existing.updatedAt = Date()
             existing.attemptCount = 0
             existing.lastError = nil
+            existing.automaticRetryAt = nil
+            if existing.ownerUserID == nil {
+                existing.ownerUserID = ownerUserID
+            }
+            existing.remoteResourceID = remoteResourceID ?? existing.remoteResourceID
             return
         }
 
-        modelContext.insert(SyncLocalCommand(type: type, subjectID: subjectID))
+        modelContext.insert(SyncLocalCommand(
+            type: type,
+            subjectID: subjectID,
+            ownerUserID: ownerUserID,
+            remoteResourceID: remoteResourceID
+        ))
     }
 
-    static func pendingInPushOrder(_ commands: [SyncLocalCommand]) -> [SyncLocalCommand] {
-        commands.filter(\.isPending).sorted { lhs, rhs in
+    @MainActor
+    static func pending(
+        forSubjectID subjectID: String,
+        modelContext: ModelContext
+    ) throws -> [SyncLocalCommand] {
+        let subjectID = subjectID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !subjectID.isEmpty else { return [] }
+        var descriptor = FetchDescriptor<SyncLocalCommand>(
+            predicate: #Predicate {
+                $0.sentAt == nil && $0.subjectID == subjectID
+            },
+            sortBy: [SortDescriptor(\SyncLocalCommand.createdAt)]
+        )
+        // At most one pending command per mutation kind is useful for a
+        // subject; bound materialization even if an older build left extras.
+        descriptor.fetchLimit = SyncLocalCommandType.allCases.count
+        return try modelContext.fetch(descriptor)
+    }
+
+    static func pendingInPushOrder(
+        _ commands: [SyncLocalCommand],
+        userID: UUID
+    ) -> [SyncLocalCommand] {
+        commands.filter { command in
+            command.isEligibleForAutomaticSync
+                && (command.ownerUserID == nil || command.ownerUserID == userID)
+        }.sorted { lhs, rhs in
             let lhsPriority = lhs.type == .tagUpsert ? 0 : 1
             let rhsPriority = rhs.type == .tagUpsert ? 0 : 1
             if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
             if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
             return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    static func retryFailed(_ commands: [SyncLocalCommand], userID: UUID) {
+        let now = Date()
+        for command in commands where command.isPending
+            && command.attemptCount > 0
+            && (command.ownerUserID == nil || command.ownerUserID == userID) {
+            command.id = UUID()
+            command.attemptCount = 0
+            command.lastError = nil
+            command.automaticRetryAt = nil
+            command.updatedAt = now
         }
     }
 
@@ -146,6 +235,20 @@ struct SyncReconcileSummary: Hashable {
     }
 }
 
+enum SyncTransferEvent: Sendable {
+    case restoreTotals(records: Int, media: Int, tags: Int)
+    case localRestoreBaseline(records: Int, media: Int, tags: Int)
+    case uploadTotals(records: Int, media: Int)
+    case downloading
+    case uploading
+    case restoredTag
+    case restoredRecord
+    case restoredMedia
+    case uploadedRecord
+    case uploadedMedia
+    case skippedPrivateRecord
+}
+
 struct SyncServerStatus: Codable, Hashable {
     let ok: Bool
     let hasBackup: Bool
@@ -153,6 +256,28 @@ struct SyncServerStatus: Codable, Hashable {
     let entityCount: Int
     let recordCount: Int
     let mediaCount: Int
+}
+
+struct SyncAccountStats: Decodable, Hashable, Sendable {
+    struct Count: Decodable, Hashable, Sendable { let total: Int }
+    struct RecordCount: Decodable, Hashable, Sendable {
+        let total: Int
+        let `public`: Int
+        let `private`: Int
+    }
+    struct MediaCount: Decodable, Hashable, Sendable {
+        let total: Int
+        let byteLength: Int64
+        let restorable: Int
+        let restorableByteLength: Int64
+    }
+
+    let cursor: String
+    let records: RecordCount
+    let events: Count
+    let tags: Count
+    let templates: Count
+    let media: MediaCount
 }
 
 struct SyncAuthenticatedUser: Codable, Hashable, Sendable {
@@ -227,10 +352,10 @@ final class SyncService {
                 let authenticatedUserID
             ):
                 "This local journal is bound to \(boundUserID.uuidString) at \(boundServer), not " +
-                    "\(authenticatedUserID.uuidString) at \(authenticatedServer). Reset or migrate the local " +
+                    "\(authenticatedUserID.uuidString) at \(authenticatedServer). Reset the local " +
                     "journal before syncing another account."
             case .invalidLocalStoreOwnerBinding:
-                "The local journal owner binding is damaged. Reset or migrate local data before syncing."
+                "The local journal owner binding is damaged. Reset local data before syncing."
             }
         }
     }
@@ -262,10 +387,16 @@ final class SyncService {
             to: server,
             path: "/v1/auth/login",
             method: "POST",
+            timeoutInterval: 5,
             expectedStatus: [200]
         )
         try await credentials.save(response, for: server.absoluteString)
-        try await ensureCurrentDevice(on: server, user: response.user)
+        do {
+            try await ensureCurrentDevice(on: server, user: response.user, timeoutInterval: 5)
+        } catch {
+            try? await credentials.clear(for: server.absoluteString)
+            throw error
+        }
         return response.user
     }
 
@@ -289,10 +420,16 @@ final class SyncService {
             to: server,
             path: "/v1/auth/register",
             method: "POST",
+            timeoutInterval: 5,
             expectedStatus: [201]
         )
         try await credentials.save(response, for: server.absoluteString)
-        try await ensureCurrentDevice(on: server, user: response.user)
+        do {
+            try await ensureCurrentDevice(on: server, user: response.user, timeoutInterval: 5)
+        } catch {
+            try? await credentials.clear(for: server.absoluteString)
+            throw error
+        }
         return response.user
     }
 
@@ -367,12 +504,45 @@ final class SyncService {
         modelContext: ModelContext,
         tags: [JournalTag],
         entries: [JournalEntry],
-        commands: [SyncLocalCommand]
+        commands: [SyncLocalCommand],
+        progress: ((SyncTransferEvent) -> Void)? = nil
     ) async throws -> SyncReconcileSummary {
         let server = try serverBaseURL(serverURLString)
         let stored = try await requireStoredSession(for: server)
         let deviceID = try await ensureCurrentDevice(on: server, user: stored.user)
-        try stateStore.bindLocalStoreIfNeeded(server: server, userID: stored.user.id)
+        let stats = try await accountStats(from: server)
+        progress?(.restoreTotals(
+            records: stats.records.public,
+            media: stats.media.restorable,
+            tags: stats.tags.total
+        ))
+        let acknowledgedEntries = entries.filter {
+            $0.syncOwnerUserID == stored.user.id && $0.acknowledgedServerRevision != nil
+        }
+        let localMedia = Dictionary(
+            acknowledgedEntries.flatMap(\.mediaItems).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        ).values.filter { FileManager.default.fileExists(atPath: MediaStorage.url(for: $0).path) }
+        let acknowledgedTags = tags.filter {
+            $0.syncOwnerUserID == stored.user.id && $0.acknowledgedServerRevision != nil
+        }
+        progress?(.localRestoreBaseline(
+            records: acknowledgedEntries.count,
+            media: localMedia.count,
+            tags: acknowledgedTags.count
+        ))
+        let eligibleCommands = SyncLocalCommand.pendingInPushOrder(
+            commands,
+            userID: stored.user.id
+        )
+        let eligiblePending = SyncPendingMutationIDs(
+            commands: eligibleCommands,
+            userID: stored.user.id
+        )
+        let pendingEntries = entries.filter { eligiblePending.entryUpserts.contains($0.id) }
+        let pendingMediaCount = pendingEntries.reduce(0) { $0 + $1.mediaItems.count }
+        progress?(.uploadTotals(records: pendingEntries.count, media: pendingMediaCount))
+        progress?(.downloading)
 
         var tagByID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
         var entryByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
@@ -382,7 +552,9 @@ final class SyncService {
             modelContext: modelContext,
             tagByID: &tagByID,
             entryByID: &entryByID,
-            commands: commands
+            commands: commands,
+            snapshotCursor: stats.cursor,
+            progress: progress
         )
         let pushed = try await pushPendingCommands(
             to: server,
@@ -391,7 +563,8 @@ final class SyncService {
             modelContext: modelContext,
             tags: Array(tagByID.values),
             entries: Array(entryByID.values),
-            commands: commands
+            commands: commands,
+            progress: progress
         )
         let secondPull = try await pullChanges(
             from: server,
@@ -399,9 +572,12 @@ final class SyncService {
             modelContext: modelContext,
             tagByID: &tagByID,
             entryByID: &entryByID,
-            commands: commands
+            commands: commands,
+            snapshotCursor: stats.cursor,
+            progress: progress
         )
 
+        try pruneSentCommands(modelContext: modelContext)
         markLastSync()
         return SyncReconcileSummary(
             uploadedRecordCount: pushed.recordCount,
@@ -412,18 +588,31 @@ final class SyncService {
         )
     }
 
+    func accountStats(from serverURLString: String) async throws -> SyncAccountStats {
+        try await accountStats(from: serverBaseURL(serverURLString))
+    }
+
+    private func accountStats(from server: URL) async throws -> SyncAccountStats {
+        var request = URLRequest(url: try endpoint(server, path: "/v1/sync/stats"))
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await authorizedData(request, server: server)
+        try require(response, data: data, expectedStatus: [200])
+        return try decode(SyncAccountStats.self, from: data, context: "sync statistics")
+    }
+
     @MainActor
     func pushPendingLocalCommands(
         with serverURLString: String,
         modelContext: ModelContext,
         tags: [JournalTag],
         entries: [JournalEntry],
-        commands: [SyncLocalCommand]
+        commands: [SyncLocalCommand],
+        progress: ((SyncTransferEvent) -> Void)? = nil
     ) async throws -> SyncPushSummary {
         let server = try serverBaseURL(serverURLString)
         let stored = try await requireStoredSession(for: server)
         let deviceID = try await ensureCurrentDevice(on: server, user: stored.user)
-        try stateStore.bindLocalStoreIfNeeded(server: server, userID: stored.user.id)
         let result = try await pushPendingCommands(
             to: server,
             user: stored.user,
@@ -431,10 +620,23 @@ final class SyncService {
             modelContext: modelContext,
             tags: tags,
             entries: entries,
-            commands: commands
+            commands: commands,
+            progress: progress
         )
+        try pruneSentCommands(modelContext: modelContext)
         markLastSync()
         return result
+    }
+
+    @MainActor
+    private func pruneSentCommands(modelContext: ModelContext) throws {
+        let descriptor = FetchDescriptor<SyncLocalCommand>(
+            predicate: #Predicate { $0.sentAt != nil }
+        )
+        let sent = try modelContext.fetch(descriptor)
+        guard !sent.isEmpty else { return }
+        sent.forEach(modelContext.delete)
+        try modelContext.save()
     }
 
     // MARK: - Change feed
@@ -446,14 +648,16 @@ final class SyncService {
         modelContext: ModelContext,
         tagByID: inout [UUID: JournalTag],
         entryByID: inout [UUID: JournalEntry],
-        commands: [SyncLocalCommand]
+        commands: [SyncLocalCommand],
+        snapshotCursor: String,
+        progress: ((SyncTransferEvent) -> Void)?
     ) async throws -> SyncRestoreSummary {
         var cursor = stateStore.cursor(server: server, userID: user.id)
         var didReconcileExpiredCursor = false
         var entityCount = 0
         var recordCount = 0
         var mediaCount = 0
-        let pending = SyncPendingMutationIDs(commands: commands)
+        let pending = SyncPendingMutationIDs(commands: commands, userID: user.id)
 
         if cursor == nil {
             let restored = try await reconcileFullCollections(
@@ -463,12 +667,16 @@ final class SyncService {
                 tagByID: &tagByID,
                 entryByID: &entryByID,
                 commands: commands,
-                pending: pending
+                pending: pending,
+                progress: progress
             )
             entityCount += restored.entityCount
             recordCount += restored.recordCount
             mediaCount += restored.mediaCount
+            stateStore.setCursor(snapshotCursor, server: server, userID: user.id)
+            cursor = snapshotCursor
         }
+        var entryByPublicID = publicEntryIndex(entryByID.values, ownerID: user.id)
 
         while true {
             var components = URLComponents(url: try endpoint(server, path: "/v1/sync/changes"), resolvingAgainstBaseURL: false)
@@ -487,6 +695,7 @@ final class SyncService {
                 // Do not silently restart at the retained prefix. Reconcile the
                 // complete owner collections first, and only clear the durable
                 // cursor once that snapshot has committed successfully.
+                let freshStats = try await accountStats(from: server)
                 let restored = try await reconcileFullCollections(
                     from: server,
                     user: user,
@@ -494,18 +703,25 @@ final class SyncService {
                     tagByID: &tagByID,
                     entryByID: &entryByID,
                     commands: commands,
-                    pending: pending
+                    pending: pending,
+                    progress: progress
                 )
                 entityCount += restored.entityCount
                 recordCount += restored.recordCount
                 mediaCount += restored.mediaCount
-                stateStore.setCursor(nil, server: server, userID: user.id)
-                cursor = nil
+                stateStore.setCursor(freshStats.cursor, server: server, userID: user.id)
+                cursor = freshStats.cursor
+                entryByPublicID = publicEntryIndex(entryByID.values, ownerID: user.id)
                 didReconcileExpiredCursor = true
                 continue
             }
             try require(response, data: data, expectedStatus: [200])
             let page = try decode(SyncChangePage.self, from: data, context: "sync change page")
+            var pagePending = currentPendingMutationIDs(
+                modelContext: modelContext,
+                userID: user.id,
+                fallback: pending
+            )
 
             for change in page.data {
                 if change.operation == "delete" {
@@ -527,84 +743,153 @@ final class SyncService {
 
                 switch (change.resourceType, change.operation) {
                 case ("tag", "upsert"):
-                    guard let resource = change.resource else { continue }
-                    if pending.tagDeletes.contains(change.resourceID) {
+                    guard let resource = change.resource,
+                          let tagID = UUID(uuidString: change.resourceID) else { continue }
+                    if pagePending.tagDeletes.contains(tagID) {
                         removeLocalTag(
-                            change.resourceID,
+                            tagID,
                             modelContext: modelContext,
                             tagByID: &tagByID,
                             entryByID: &entryByID
                         )
                         continue
                     }
-                    if pending.tagUpserts.contains(change.resourceID), tagByID[change.resourceID] != nil {
+                    if pagePending.tagUpserts.contains(tagID), tagByID[tagID] != nil {
                         continue
                     }
                     let remote = try decodeValue(SyncTagResource.self, from: resource, context: "tag change")
+                    if let existing = tagByID[remote.id],
+                       existing.syncOwnerUserID == user.id,
+                       (existing.acknowledgedServerRevision ?? 0) >= remote.revision {
+                        continue
+                    }
                     if let existing = tagByID[remote.id] {
                         apply(remote, to: existing)
+                        existing.syncOwnerUserID = user.id
+                        existing.acknowledgedServerRevision = remote.revision
                     } else {
                         let tag = makeTag(from: remote, existing: Array(tagByID.values))
+                        tag.syncOwnerUserID = user.id
+                        tag.acknowledgedServerRevision = remote.revision
                         modelContext.insert(tag)
                         tagByID[tag.id] = tag
                     }
                     entityCount += 1
+                    progress?(.restoredTag)
 
                 case ("tag", "delete"):
-                    if pending.tagUpserts.contains(change.resourceID) {
+                    guard let tagID = UUID(uuidString: change.resourceID) else { continue }
+                    if pagePending.tagUpserts.contains(tagID) {
                         continue
                     }
                     removeLocalTag(
-                        change.resourceID,
+                        tagID,
                         modelContext: modelContext,
                         tagByID: &tagByID,
                         entryByID: &entryByID
                     )
-                    markCommandsSuperseded(commands, type: .tagDelete, subjectID: change.resourceID)
+                    markCommandsSuperseded(commands, type: .tagDelete, subjectID: tagID)
                     entityCount += 1
 
                 case ("record", "upsert"):
                     guard let resource = change.resource else { continue }
-                    if pending.entryDeletes.contains(change.resourceID) {
-                        removeLocalEntry(change.resourceID, modelContext: modelContext, entryByID: &entryByID)
-                        continue
-                    }
-                    if pending.entryUpserts.contains(change.resourceID), entryByID[change.resourceID] != nil {
-                        continue
-                    }
                     let remote = try decodeValue(SyncRecordResource.self, from: resource, context: "record change")
+                    rekeyUnacknowledgedPublicIDCollision(
+                        remote,
+                        ownerID: user.id,
+                        entryByPublicID: &entryByPublicID,
+                        commands: commands
+                    )
+                    let existing = localEntry(
+                        for: remote,
+                        ownerID: user.id,
+                        entryByID: entryByID,
+                        entryByPublicID: entryByPublicID
+                    )
+                    var pendingNow = pagePending
+                    if let existing, pendingNow.entryDeletes.contains(existing.id) {
+                        removeLocalEntry(
+                            existing.id,
+                            modelContext: modelContext,
+                            entryByID: &entryByID,
+                            entryByPublicID: &entryByPublicID
+                        )
+                        continue
+                    }
+                    if let existing, pendingNow.entryUpserts.contains(existing.id) {
+                        // Preserve the dirty local document while adopting the
+                        // relay's immutable alias for this same origin.
+                        markRestored(existing, from: remote, ownerID: user.id)
+                        continue
+                    }
                     guard remote.visibility == "public" else {
                         // Keep the cursor moving, but never destroy a local projection in
                         // response to an upsert the client cannot decrypt.
+                        progress?(.skippedPrivateRecord)
+                        continue
+                    }
+                    if let existing, hasCurrentLocalProjection(existing, for: remote, ownerID: user.id) {
                         continue
                     }
                     let downloaded = try await restoreMedia(
                         remote.media,
-                        existing: entryByID[remote.id]?.mediaItems ?? [],
+                        existing: existing?.mediaItems ?? [],
                         preferredTypes: SyncV2PayloadMapper.mediaTypes(from: remote),
                         server: server
                     )
                     mediaCount += downloaded.downloadCount
+                    for _ in 0..<downloaded.downloadCount { progress?(.restoredMedia) }
                     let snapshot = try SyncV2PayloadMapper.entrySnapshot(
                         from: remote,
                         localMedia: downloaded.items,
                         tags: tagByID
                     )
-                    if let existing = entryByID[remote.id] {
-                        apply(snapshot, to: existing)
-                    } else {
-                        let entry = JournalEntry(syncSnapshot: snapshot)
-                        modelContext.insert(entry)
-                        entryByID[entry.id] = entry
-                    }
-                    recordCount += 1
-
-                case ("record", "delete"):
-                    if pending.entryUpserts.contains(change.resourceID) {
+                    // Network/media awaits above re-enter the main actor. An
+                    // edit created during that time must win over this remote
+                    // snapshot even though it was absent from the sync's
+                    // original command array.
+                    pendingNow = currentPendingMutationIDs(
+                        modelContext: modelContext,
+                        userID: user.id,
+                        fallback: pending
+                    )
+                    pagePending = pendingNow
+                    if let existing, pendingNow.entryDeletes.contains(existing.id) {
                         continue
                     }
-                    removeLocalEntry(change.resourceID, modelContext: modelContext, entryByID: &entryByID)
-                    markCommandsSuperseded(commands, type: .entryDelete, subjectID: change.resourceID)
+                    if let existing, pendingNow.entryUpserts.contains(existing.id) {
+                        markRestored(existing, from: remote, ownerID: user.id)
+                        continue
+                    }
+                    if let existing {
+                        apply(snapshot, to: existing)
+                        markRestored(existing, from: remote, ownerID: user.id)
+                    } else {
+                        let entry = JournalEntry(syncSnapshot: snapshot)
+                        markRestored(entry, from: remote, ownerID: user.id)
+                        modelContext.insert(entry)
+                        entryByID[entry.id] = entry
+                        entryByPublicID[remote.id] = entry
+                    }
+                    recordCount += 1
+                    progress?(.restoredRecord)
+
+                case ("record", "delete"):
+                    guard let existing = entryByPublicID[change.resourceID] else {
+                        continue
+                    }
+                    guard existing.syncOwnerUserID == user.id,
+                          existing.acknowledgedServerRevision != nil else { continue }
+                    if pagePending.entryUpserts.contains(existing.id) {
+                        continue
+                    }
+                    removeLocalEntry(
+                        existing.id,
+                        modelContext: modelContext,
+                        entryByID: &entryByID,
+                        entryByPublicID: &entryByPublicID
+                    )
+                    markCommandsSuperseded(commands, type: .entryDelete, subjectID: existing.id)
                     recordCount += 1
 
                 default:
@@ -617,6 +902,7 @@ final class SyncService {
             try modelContext.save()
             stateStore.setCursor(page.nextCursor, server: server, userID: user.id)
             cursor = page.nextCursor
+            await Task.yield()
             guard page.hasMore else { break }
         }
 
@@ -625,6 +911,113 @@ final class SyncService {
             recordCount: recordCount,
             mediaCount: mediaCount
         )
+    }
+
+    private func localEntry(
+        for remote: SyncRecordResource,
+        ownerID: UUID,
+        entryByID: [UUID: JournalEntry],
+        entryByPublicID: [String: JournalEntry]
+    ) -> JournalEntry? {
+        if let originID = remote.originID,
+           let originMatch = entryByID[originID],
+           originMatch.syncOwnerUserID == nil || originMatch.syncOwnerUserID == ownerID {
+            return originMatch
+        }
+        guard let publicMatch = entryByPublicID[remote.id],
+              publicMatch.syncOwnerUserID == nil || publicMatch.syncOwnerUserID == ownerID else {
+            return nil
+        }
+        return publicMatch
+    }
+
+    private func publicEntryIndex<S: Sequence>(
+        _ entries: S,
+        ownerID: UUID
+    ) -> [String: JournalEntry] where S.Element == JournalEntry {
+        Dictionary(
+            entries.compactMap { entry in
+                guard entry.syncOwnerUserID == nil || entry.syncOwnerUserID == ownerID,
+                      let publicID = entry.publicID else { return nil }
+                return (publicID, entry)
+            },
+            uniquingKeysWith: { acknowledged, candidate in
+                (acknowledged.acknowledgedServerRevision ?? 0)
+                    >= (candidate.acknowledgedServerRevision ?? 0) ? acknowledged : candidate
+            }
+        )
+    }
+
+    /// A public ID is transport identity only. If a never-acknowledged local
+    /// origin collides with a different server origin, retain its UUID and
+    /// reroll only the five-character public ID.
+    private func rekeyUnacknowledgedPublicIDCollision(
+        _ remote: SyncRecordResource,
+        ownerID: UUID,
+        entryByPublicID: inout [String: JournalEntry],
+        commands: [SyncLocalCommand]
+    ) {
+        guard let local = entryByPublicID[remote.id],
+              local.syncOwnerUserID == nil || local.syncOwnerUserID == ownerID,
+              local.acknowledgedServerRevision == nil,
+              remote.originID != local.id else { return }
+        let occupied = Set(entryByPublicID.keys).subtracting([remote.id])
+        var candidate = JournalRecordPublicID.generate()
+        while occupied.contains(candidate) || candidate == remote.id {
+            candidate = JournalRecordPublicID.generate()
+        }
+        entryByPublicID.removeValue(forKey: remote.id)
+        local.publicID = candidate
+        entryByPublicID[candidate] = local
+        for command in commands where command.isPending && command.subjectID == local.id.uuidString {
+            command.id = UUID()
+            command.attemptCount = 0
+            command.lastError = nil
+            command.automaticRetryAt = nil
+            command.updatedAt = Date()
+        }
+    }
+
+    private func markRestored(
+        _ entry: JournalEntry,
+        from remote: SyncRecordResource,
+        ownerID: UUID
+    ) {
+        entry.publicID = remote.id
+        entry.syncOwnerUserID = ownerID
+        entry.acknowledgedServerRevision = remote.revision
+    }
+
+    private func hasCurrentLocalProjection(
+        _ entry: JournalEntry,
+        for remote: SyncRecordResource,
+        ownerID: UUID
+    ) -> Bool {
+        guard entry.syncOwnerUserID == ownerID,
+              entry.publicID == remote.id,
+              (entry.acknowledgedServerRevision ?? 0) >= remote.revision else {
+            return false
+        }
+        let localByID = Dictionary(uniqueKeysWithValues: entry.mediaItems.map { ($0.id, $0) })
+        return remote.media.allSatisfy { media in
+            guard let local = localByID[media.id] else { return false }
+            return FileManager.default.fileExists(atPath: MediaStorage.url(for: local).path)
+        }
+    }
+
+    @MainActor
+    private func currentPendingMutationIDs(
+        modelContext: ModelContext,
+        userID: UUID,
+        fallback: SyncPendingMutationIDs
+    ) -> SyncPendingMutationIDs {
+        let descriptor = FetchDescriptor<SyncLocalCommand>(
+            predicate: #Predicate { $0.sentAt == nil }
+        )
+        guard let commands = try? modelContext.fetch(descriptor) else {
+            return fallback
+        }
+        return SyncPendingMutationIDs(commands: commands, userID: userID)
     }
 
     /// Merges relay snapshots into the local SwiftData collections. A missing
@@ -638,7 +1031,8 @@ final class SyncService {
         tagByID: inout [UUID: JournalTag],
         entryByID: inout [UUID: JournalEntry],
         commands: [SyncLocalCommand],
-        pending: SyncPendingMutationIDs
+        pending: SyncPendingMutationIDs,
+        progress: ((SyncTransferEvent) -> Void)?
     ) async throws -> SyncRestoreSummary {
         var entityCount = 0
         var recordCount = 0
@@ -662,16 +1056,21 @@ final class SyncService {
                 from: data,
                 context: "tag collection snapshot"
             )
+            let pagePending = currentPendingMutationIDs(
+                modelContext: modelContext,
+                userID: user.id,
+                fallback: pending
+            )
 
             for remote in page.data {
                 stateStore.setETag(
-                    resourceETag(type: "tag", id: remote.id, revision: remote.revision),
+                    resourceETag(type: "tag", id: remote.id.uuidString, revision: remote.revision),
                     resourceType: "tag",
-                    resourceID: remote.id,
+                    resourceID: remote.id.uuidString,
                     server: server,
                     userID: user.id
                 )
-                if pending.tagDeletes.contains(remote.id) {
+                if pagePending.tagDeletes.contains(remote.id) {
                     removeLocalTag(
                         remote.id,
                         modelContext: modelContext,
@@ -680,19 +1079,31 @@ final class SyncService {
                     )
                     continue
                 }
-                if pending.tagUpserts.contains(remote.id), tagByID[remote.id] != nil {
+                if pagePending.tagUpserts.contains(remote.id), tagByID[remote.id] != nil {
+                    continue
+                }
+                if let existing = tagByID[remote.id],
+                   existing.syncOwnerUserID == user.id,
+                   (existing.acknowledgedServerRevision ?? 0) >= remote.revision {
                     continue
                 }
                 if let existing = tagByID[remote.id] {
                     apply(remote, to: existing)
+                    existing.syncOwnerUserID = user.id
+                    existing.acknowledgedServerRevision = remote.revision
                 } else {
                     let tag = makeTag(from: remote, existing: Array(tagByID.values))
+                    tag.syncOwnerUserID = user.id
+                    tag.acknowledgedServerRevision = remote.revision
                     modelContext.insert(tag)
                     tagByID[tag.id] = tag
                 }
                 entityCount += 1
+                progress?(.restoredTag)
             }
 
+            try modelContext.save()
+            await Task.yield()
             guard page.hasMore else { break }
             guard let next = page.nextCursor?.nilIfBlank, next != tagCursor else {
                 throw SyncError.invalidResponse(
@@ -703,12 +1114,13 @@ final class SyncService {
             tagCursor = next
         }
 
+        var entryByPublicID = publicEntryIndex(entryByID.values, ownerID: user.id)
         var recordCursor: String?
         while true {
             let url = try collectionPageURL(
                 server: server,
                 path: "/v1/records",
-                limit: 25,
+                limit: 10,
                 cursor: recordCursor
             )
             var request = URLRequest(url: url)
@@ -721,49 +1133,92 @@ final class SyncService {
                 from: data,
                 context: "record collection snapshot"
             )
+            var pagePending = currentPendingMutationIDs(
+                modelContext: modelContext,
+                userID: user.id,
+                fallback: pending
+            )
 
             for remote in page.data {
-                stateStore.setETag(
-                    resourceETag(type: "record", id: remote.id, revision: remote.revision),
-                    resourceType: "record",
-                    resourceID: remote.id,
-                    server: server,
-                    userID: user.id
+                rekeyUnacknowledgedPublicIDCollision(
+                    remote,
+                    ownerID: user.id,
+                    entryByPublicID: &entryByPublicID,
+                    commands: commands
                 )
-                if pending.entryDeletes.contains(remote.id) {
-                    removeLocalEntry(remote.id, modelContext: modelContext, entryByID: &entryByID)
+                let existing = localEntry(
+                    for: remote,
+                    ownerID: user.id,
+                    entryByID: entryByID,
+                    entryByPublicID: entryByPublicID
+                )
+                var pendingNow = pagePending
+                if let existing, pendingNow.entryDeletes.contains(existing.id) {
+                    removeLocalEntry(
+                        existing.id,
+                        modelContext: modelContext,
+                        entryByID: &entryByID,
+                        entryByPublicID: &entryByPublicID
+                    )
                     continue
                 }
-                if pending.entryUpserts.contains(remote.id), entryByID[remote.id] != nil {
+                if let existing, pendingNow.entryUpserts.contains(existing.id) {
+                    // Keep local content authoritative while converging its
+                    // transport identity with the relay copy for this origin.
+                    markRestored(existing, from: remote, ownerID: user.id)
                     continue
                 }
                 guard remote.visibility == "public" else {
                     // The iOS client has no local key model yet. A snapshot
                     // upsert it cannot decrypt is not a delete command.
+                    progress?(.skippedPrivateRecord)
+                    continue
+                }
+                if let existing, hasCurrentLocalProjection(existing, for: remote, ownerID: user.id) {
                     continue
                 }
                 let downloaded = try await restoreMedia(
                     remote.media,
-                    existing: entryByID[remote.id]?.mediaItems ?? [],
+                    existing: existing?.mediaItems ?? [],
                     preferredTypes: SyncV2PayloadMapper.mediaTypes(from: remote),
                     server: server
                 )
                 mediaCount += downloaded.downloadCount
+                for _ in 0..<downloaded.downloadCount { progress?(.restoredMedia) }
                 let snapshot = try SyncV2PayloadMapper.entrySnapshot(
                     from: remote,
                     localMedia: downloaded.items,
                     tags: tagByID
                 )
-                if let existing = entryByID[remote.id] {
+                pendingNow = currentPendingMutationIDs(
+                    modelContext: modelContext,
+                    userID: user.id,
+                    fallback: pending
+                )
+                pagePending = pendingNow
+                if let existing, pendingNow.entryDeletes.contains(existing.id) {
+                    continue
+                }
+                if let existing, pendingNow.entryUpserts.contains(existing.id) {
+                    markRestored(existing, from: remote, ownerID: user.id)
+                    continue
+                }
+                if let existing {
                     apply(snapshot, to: existing)
+                    markRestored(existing, from: remote, ownerID: user.id)
                 } else {
                     let entry = JournalEntry(syncSnapshot: snapshot)
+                    markRestored(entry, from: remote, ownerID: user.id)
                     modelContext.insert(entry)
                     entryByID[entry.id] = entry
+                    entryByPublicID[remote.id] = entry
                 }
                 recordCount += 1
+                progress?(.restoredRecord)
             }
 
+            try modelContext.save()
+            await Task.yield()
             guard page.hasMore else { break }
             guard let next = page.nextCursor?.nilIfBlank, next != recordCursor else {
                 throw SyncError.invalidResponse(
@@ -801,9 +1256,13 @@ final class SyncService {
     private func removeLocalEntry(
         _ id: UUID,
         modelContext: ModelContext,
-        entryByID: inout [UUID: JournalEntry]
+        entryByID: inout [UUID: JournalEntry],
+        entryByPublicID: inout [String: JournalEntry]
     ) {
         guard let entry = entryByID.removeValue(forKey: id) else { return }
+        if let publicID = entry.publicID {
+            entryByPublicID.removeValue(forKey: publicID)
+        }
         modelContext.delete(entry)
     }
 
@@ -817,12 +1276,15 @@ final class SyncService {
         modelContext: ModelContext,
         tags: [JournalTag],
         entries: [JournalEntry],
-        commands: [SyncLocalCommand]
+        commands: [SyncLocalCommand],
+        progress: ((SyncTransferEvent) -> Void)?,
+        recordIDCollisionRetriesRemaining: Int = 8
     ) async throws -> SyncPushSummary {
-        let pending = SyncLocalCommand.pendingInPushOrder(commands)
+        let pending = SyncLocalCommand.pendingInPushOrder(commands, userID: user.id)
         guard !pending.isEmpty else {
             return SyncPushSummary(entityCount: 0, recordCount: 0, mediaCount: 0)
         }
+        progress?(.uploading)
 
         let tagByStringID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id.uuidString, $0) })
         let entryByStringID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id.uuidString, $0) })
@@ -830,8 +1292,13 @@ final class SyncService {
         var entityCount = 0
         var recordCount = 0
         var mediaCount = 0
+        var transientFailure: Error?
 
-        for command in pending {
+        commandLoop: for command in pending {
+            // `enqueue` rotates this ID whenever the local subject is saved
+            // again. Treat it as the outbox generation so an acknowledgement
+            // for an older body can never clear or fail a newer edit.
+            var attemptedCommandID = command.id
             do {
                 let prepared: SyncPreparedMutation?
                 switch command.type {
@@ -840,25 +1307,40 @@ final class SyncService {
                         command.markSent()
                         continue
                     }
+                    guard entry.syncOwnerUserID == nil || entry.syncOwnerUserID == user.id else {
+                        continue
+                    }
+                    let publicID = entry.publicID ?? JournalRecordPublicID.generate()
+                    entry.publicID = publicID
+                    entry.syncOwnerUserID = entry.syncOwnerUserID ?? user.id
+                    command.ownerUserID = command.ownerUserID ?? user.id
+                    let snapshot = JournalEntrySnapshot(entry: entry)
                     var mediaIDs: [UUID] = []
-                    for item in entry.mediaItems {
+                    for item in snapshot.mediaItems {
                         let uploaded = try await ensureMediaUploaded(
                             item,
                             deviceID: deviceID,
                             server: server
                         )
+                        guard command.id == attemptedCommandID else {
+                            continue commandLoop
+                        }
                         mediaIDs.append(uploaded.id)
-                        if uploaded.didUpload { mediaCount += 1 }
+                        progress?(.uploadedMedia)
+                        if uploaded.didUpload {
+                            mediaCount += 1
+                        }
                     }
-                    let payload = try jsonValue(from: JournalEntrySnapshot(entry: entry))
+                    let payload = try ownerSyncPayload(from: snapshot)
                     let record = SyncRecordInput(
-                        id: entry.id,
+                        id: publicID,
+                        originID: snapshot.id,
                         deviceID: deviceID,
                         visibility: "public",
-                        occurredAt: entry.eventDate,
-                        endedAt: entry.endDate,
+                        occurredAt: snapshot.eventDate,
+                        endedAt: snapshot.endDate,
                         payload: payload,
-                        tagIDs: entry.tagIDs.compactMap { tagIDByCompactID[$0] },
+                        tagIDs: (snapshot.tagIDs ?? []).compactMap { tagIDByCompactID[$0] },
                         mediaIDs: mediaIDs,
                         metadata: .object([
                             "payloadSchema": .string("journal-entry-v1"),
@@ -867,7 +1349,7 @@ final class SyncService {
                         source: SyncSourceInput(
                             kind: "client",
                             provider: "saros-harmonic-journal",
-                            externalID: entry.id.uuidString,
+                            externalID: publicID,
                             url: nil,
                             metadata: .object([:])
                         )
@@ -875,7 +1357,7 @@ final class SyncService {
                     prepared = SyncPreparedMutation(
                         request: SyncMutationRequest(
                             kind: "upsertRecord",
-                            clientMutationID: command.id.uuidString,
+                            clientMutationID: attemptedCommandID.uuidString,
                             // Record sync is client-authoritative. The relay
                             // creates or replaces this ID atomically.
                             ifMatch: nil,
@@ -885,36 +1367,43 @@ final class SyncService {
                             resourceID: nil
                         ),
                         resourceType: "record",
-                        resourceID: entry.id
+                        resourceID: publicID
                     )
 
                 case .entryDelete:
-                    guard let id = UUID(uuidString: command.subjectID) else {
+                    guard command.ownerUserID == user.id else { continue }
+                    guard let publicID = command.remoteResourceID else {
                         command.markSent()
                         continue
                     }
                     guard let etag = try await currentETag(
                         resourceType: "record",
-                        resourceID: id,
-                        path: "/v1/records/\(id.uuidString)",
+                        resourceID: publicID,
+                        path: "/v1/records/\(publicID)",
                         server: server,
                         userID: user.id
                     ) else {
+                        guard command.id == attemptedCommandID else {
+                            continue commandLoop
+                        }
                         command.markSent()
                         continue
+                    }
+                    guard command.id == attemptedCommandID else {
+                        continue commandLoop
                     }
                     prepared = SyncPreparedMutation(
                         request: SyncMutationRequest(
                             kind: "delete",
-                            clientMutationID: command.id.uuidString,
+                            clientMutationID: attemptedCommandID.uuidString,
                             ifMatch: etag,
                             record: nil,
                             tag: nil,
                             resourceType: "record",
-                            resourceID: id
+                            resourceID: publicID
                         ),
                         resourceType: "record",
-                        resourceID: id
+                        resourceID: publicID
                     )
 
                 case .tagUpsert:
@@ -922,14 +1411,12 @@ final class SyncService {
                         command.markSent()
                         continue
                     }
-                    let etag = try await currentETag(
-                        resourceType: "tag",
-                        resourceID: tag.id,
-                        path: "/v1/tags/\(tag.id.uuidString)",
-                        server: server,
-                        userID: user.id
-                    )
-                    let snapshot = try jsonValue(from: JournalTagSnapshot(tag: tag))
+                    guard tag.syncOwnerUserID == nil || tag.syncOwnerUserID == user.id else {
+                        continue
+                    }
+                    tag.syncOwnerUserID = tag.syncOwnerUserID ?? user.id
+                    command.ownerUserID = command.ownerUserID ?? user.id
+                    let snapshot = JournalTagSnapshot(tag: tag)
                     let input = SyncTagInput(
                         id: tag.id,
                         name: tag.name.nilIfBlank ?? "Saros \(tag.saros)",
@@ -937,14 +1424,24 @@ final class SyncService {
                         emoji: tag.emoji.nilIfBlank,
                         sortOrder: Int(tag.compactID, radix: 8) ?? 0,
                         metadata: .object([
-                            "journalTag": snapshot,
+                            "journalTag": try jsonValue(from: snapshot),
                             "payloadSchema": .string("journal-tag-v1")
                         ])
                     )
+                    let etag = try await currentETag(
+                        resourceType: "tag",
+                        resourceID: tag.id.uuidString,
+                        path: "/v1/tags/\(tag.id.uuidString)",
+                        server: server,
+                        userID: user.id
+                    )
+                    guard command.id == attemptedCommandID else {
+                        continue commandLoop
+                    }
                     prepared = SyncPreparedMutation(
                         request: SyncMutationRequest(
                             kind: "upsertTag",
-                            clientMutationID: command.id.uuidString,
+                            clientMutationID: attemptedCommandID.uuidString,
                             ifMatch: etag,
                             record: nil,
                             tag: input,
@@ -952,36 +1449,43 @@ final class SyncService {
                             resourceID: nil
                         ),
                         resourceType: "tag",
-                        resourceID: tag.id
+                        resourceID: tag.id.uuidString
                     )
 
                 case .tagDelete:
+                    guard command.ownerUserID == user.id else { continue }
                     guard let id = UUID(uuidString: command.subjectID) else {
                         command.markSent()
                         continue
                     }
                     guard let etag = try await currentETag(
                         resourceType: "tag",
-                        resourceID: id,
+                        resourceID: id.uuidString,
                         path: "/v1/tags/\(id.uuidString)",
                         server: server,
                         userID: user.id
                     ) else {
+                        guard command.id == attemptedCommandID else {
+                            continue commandLoop
+                        }
                         command.markSent()
                         continue
+                    }
+                    guard command.id == attemptedCommandID else {
+                        continue commandLoop
                     }
                     prepared = SyncPreparedMutation(
                         request: SyncMutationRequest(
                             kind: "delete",
-                            clientMutationID: command.id.uuidString,
+                            clientMutationID: attemptedCommandID.uuidString,
                             ifMatch: etag,
                             record: nil,
                             tag: nil,
                             resourceType: "tag",
-                            resourceID: id
+                            resourceID: id.uuidString
                         ),
                         resourceType: "tag",
-                        resourceID: id
+                        resourceID: id.uuidString
                     )
 
                 case nil:
@@ -992,12 +1496,15 @@ final class SyncService {
                 guard let prepared else { continue }
                 let batch = SyncBatchRequest(deviceID: deviceID, atomic: false, mutations: [prepared.request])
                 var request = try jsonRequest(batch, server: server, path: "/v1/sync/batches", method: "POST")
-                request.setValue("sync-\(command.id.uuidString)", forHTTPHeaderField: "Idempotency-Key")
+                request.setValue("sync-\(attemptedCommandID.uuidString)", forHTTPHeaderField: "Idempotency-Key")
                 let (data, response) = try await authorizedData(request, server: server)
+                guard command.id == attemptedCommandID else {
+                    continue commandLoop
+                }
                 try require(response, data: data, expectedStatus: [200])
                 let result = try decode(SyncBatchResponse.self, from: data, context: "sync mutation result")
                 guard let mutation = result.results.first,
-                      mutation.clientMutationID == command.id.uuidString else {
+                      mutation.clientMutationID == attemptedCommandID.uuidString else {
                     throw SyncError.invalidResponse(statusCode: nil, body: "Mutation acknowledgement is missing.")
                 }
                 guard mutation.status == "succeeded" else {
@@ -1005,13 +1512,58 @@ final class SyncService {
                         statusCode: mutation.problem?.status,
                         body: mutation.problem?.detail ?? mutation.problem?.code ?? "Mutation failed."
                     )
+                    if isGlobalOutboxFailure(rejection) {
+                        throw rejection
+                    }
                     stateStore.removeETag(
                         resourceType: prepared.resourceType,
                         resourceID: prepared.resourceID,
                         server: server,
                         userID: user.id
                     )
-                    command.prepareRetry(afterServerRejection: rejection)
+                    if mutation.problem?.code == "record_id_collision",
+                       command.type == .entryUpsert,
+                       let entry = entryByStringID[command.subjectID],
+                       entry.acknowledgedServerRevision == nil {
+                        guard recordIDCollisionRetriesRemaining > 0 else {
+                            command.prepareRetry(afterServerRejection: rejection)
+                            continue
+                        }
+                        let occupied = Set(entries.compactMap(\.publicID))
+                        var candidate = JournalRecordPublicID.generate()
+                        while occupied.contains(candidate) {
+                            candidate = JournalRecordPublicID.generate()
+                        }
+                        entry.publicID = candidate
+                        command.id = UUID()
+                        attemptedCommandID = command.id
+                        command.attemptCount = 0
+                        command.lastError = nil
+                        command.automaticRetryAt = nil
+                        command.updatedAt = Date()
+                        let retried = try await pushPendingCommands(
+                            to: server,
+                            user: user,
+                            deviceID: deviceID,
+                            modelContext: modelContext,
+                            tags: tags,
+                            entries: entries,
+                            commands: [command],
+                            progress: progress,
+                            recordIDCollisionRetriesRemaining: recordIDCollisionRetriesRemaining - 1
+                        )
+                        entityCount += retried.entityCount
+                        recordCount += retried.recordCount
+                        mediaCount += retried.mediaCount
+                        continue
+                    }
+                    if Self.isRetryableFailure(rejection) {
+                        command.prepareAutomaticRetry(afterServerRejection: rejection)
+                        transientFailure = rejection
+                        break
+                    } else {
+                        command.prepareRetry(afterServerRejection: rejection)
+                    }
                     continue
                 }
                 if let etag = mutation.etag {
@@ -1024,13 +1576,59 @@ final class SyncService {
                     )
                 }
                 command.markSent()
-                if prepared.resourceType == "record" { recordCount += 1 } else { entityCount += 1 }
+                if prepared.resourceType == "record" {
+                    if command.type == .entryUpsert,
+                       let entry = entryByStringID[command.subjectID] {
+                        entry.syncOwnerUserID = user.id
+                        entry.acknowledgedServerRevision = mutation.revision
+                    }
+                    recordCount += 1
+                    progress?(.uploadedRecord)
+                } else {
+                    if command.type == .tagUpsert,
+                       let tag = tagByStringID[command.subjectID] {
+                        tag.syncOwnerUserID = user.id
+                        tag.acknowledgedServerRevision = mutation.revision
+                    }
+                    entityCount += 1
+                }
             } catch {
-                command.markFailed(error)
+                if isCancellation(error) { throw error }
+                if isGlobalOutboxFailure(error) {
+                    // Session/device authorization failures affect the whole
+                    // sync run. Keep every command immediately eligible so a
+                    // successful login can resume the outbox unchanged.
+                    throw error
+                }
+                guard command.id == attemptedCommandID else {
+                    if Self.isRetryableFailure(error), command.automaticRetryAt != nil {
+                        // A nested collision retry rotates its receipt when the
+                        // server rejects that retry transiently. Preserve the
+                        // coordinator-level failure as well as the command's
+                        // already-persisted automatic retry deadline.
+                        transientFailure = error
+                        break
+                    }
+                    // A newer local save owns this outbox row now. The stale
+                    // attempt's result must have no effect on that generation.
+                    continue commandLoop
+                }
+                if Self.isRetryableFailure(error) {
+                    // Keep the receipt ID: a disconnected response may still
+                    // have committed, and replay must remain idempotent.
+                    if command.automaticRetryAt == nil {
+                        command.markTransientFailure(error)
+                    }
+                    transientFailure = error
+                    break
+                } else {
+                    command.markFailed(error)
+                }
             }
         }
 
         try modelContext.save()
+        if let transientFailure { throw transientFailure }
         return SyncPushSummary(
             entityCount: entityCount,
             recordCount: recordCount,
@@ -1043,7 +1641,8 @@ final class SyncService {
     @discardableResult
     private func ensureCurrentDevice(
         on server: URL,
-        user: SyncAuthenticatedUser
+        user: SyncAuthenticatedUser,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> UUID {
         let deviceID = stateStore.deviceID(server: server, userID: user.id)
         let local = JournalDevice.current()
@@ -1059,6 +1658,7 @@ final class SyncService {
             ])
         )
         var create = try jsonRequest(body, server: server, path: "/v1/devices", method: "POST")
+        if let timeoutInterval { create.timeoutInterval = timeoutInterval }
         create.setValue("ios-device-\(deviceID.uuidString)", forHTTPHeaderField: "Idempotency-Key")
         let (createData, createResponse) = try await authorizedData(create, server: server)
         if createResponse.statusCode != 201 && createResponse.statusCode != 200 && createResponse.statusCode != 409 {
@@ -1067,12 +1667,14 @@ final class SyncService {
         if createResponse.statusCode == 409 {
             var get = URLRequest(url: try endpoint(server, path: "/v1/devices/\(deviceID.uuidString)"))
             get.httpMethod = "GET"
+            if let timeoutInterval { get.timeoutInterval = timeoutInterval }
             let (data, response) = try await authorizedData(get, server: server)
             try require(response, data: data, expectedStatus: [200])
         }
 
         var bind = URLRequest(url: try endpoint(server, path: "/v1/devices/\(deviceID.uuidString)/current-session"))
         bind.httpMethod = "PUT"
+        if let timeoutInterval { bind.timeoutInterval = timeoutInterval }
         let (bindData, bindResponse) = try await authorizedData(bind, server: server)
         try require(bindResponse, data: bindData, expectedStatus: [204])
         return deviceID
@@ -1315,6 +1917,10 @@ final class SyncService {
                 didRefreshAuthentication = true
                 continue
             }
+            if http.statusCode == 401 {
+                try? await credentials.clear(for: server.absoluteString)
+                throw SyncError.authenticationRequired
+            }
             if let delay = rateLimitDelay(for: http), rateLimitRetries < 3 {
                 rateLimitRetries += 1
                 try await sleepForRateLimit(delay)
@@ -1344,6 +1950,10 @@ final class SyncService {
                 try await credentials.invalidateAccessToken(for: server.absoluteString)
                 didRefreshAuthentication = true
                 continue
+            }
+            if http.statusCode == 401 {
+                try? await credentials.clear(for: server.absoluteString)
+                throw SyncError.authenticationRequired
             }
             if let delay = rateLimitDelay(for: http), rateLimitRetries < 3 {
                 rateLimitRetries += 1
@@ -1375,6 +1985,11 @@ final class SyncService {
                 didRefreshAuthentication = true
                 continue
             }
+            if http.statusCode == 401 {
+                try? FileManager.default.removeItem(at: url)
+                try? await credentials.clear(for: server.absoluteString)
+                throw SyncError.authenticationRequired
+            }
             if let delay = rateLimitDelay(for: http), rateLimitRetries < 3 {
                 try? FileManager.default.removeItem(at: url)
                 rateLimitRetries += 1
@@ -1391,6 +2006,35 @@ final class SyncService {
               let seconds = TimeInterval(rawValue),
               seconds >= 0 else { return nil }
         return min(max(seconds, 0.25), 65)
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
+    static func isRetryableFailure(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return urlError.code != .cancelled
+        }
+        guard let syncError = error as? SyncError else { return false }
+        guard case .invalidResponse(let statusCode, _) = syncError,
+              let statusCode else { return false }
+        return statusCode == 408
+            || statusCode == 425
+            || statusCode == 429
+            || (500...599).contains(statusCode)
+    }
+
+    private func isGlobalOutboxFailure(_ error: Error) -> Bool {
+        guard let syncError = error as? SyncError else { return false }
+        switch syncError {
+        case .authenticationRequired, .credentialStorage:
+            return true
+        case .invalidResponse(let statusCode, _):
+            return statusCode == 401 || statusCode == 403
+        default:
+            return false
+        }
     }
 
     private func sleepForRateLimit(_ delay: TimeInterval) async throws {
@@ -1421,7 +2065,7 @@ final class SyncService {
 
     private func currentETag(
         resourceType: String,
-        resourceID: UUID,
+        resourceID: String,
         path: String,
         server: URL,
         userID: UUID
@@ -1440,7 +2084,7 @@ final class SyncService {
         if response.statusCode == 404 { return nil }
         try require(response, data: data, expectedStatus: [200])
         guard let etag = response.value(forHTTPHeaderField: "ETag")?.nilIfBlank else {
-            throw SyncError.missingResourceETag("\(resourceType) \(resourceID.uuidString)")
+            throw SyncError.missingResourceETag("\(resourceType) \(resourceID)")
         }
         stateStore.setETag(
             etag,
@@ -1457,9 +2101,13 @@ final class SyncService {
         to server: URL,
         path: String,
         method: String,
+        timeoutInterval: TimeInterval? = nil,
         expectedStatus: Set<Int>
     ) async throws -> Response {
-        let request = try jsonRequest(body, server: server, path: path, method: method)
+        var request = try jsonRequest(body, server: server, path: path, method: method)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         let (data, response) = try await urlSession.data(for: request)
         try require(response, data: data, expectedStatus: expectedStatus)
         return try decode(Response.self, from: data, context: path)
@@ -1524,6 +2172,17 @@ final class SyncService {
 
     private func jsonValue<T: Encodable>(from value: T) throws -> SyncJSONValue {
         try decoder.decode(SyncJSONValue.self, from: encoder.encode(value))
+    }
+
+    /// The stable local UUID is owner-only identity (`originId`) and must not
+    /// be duplicated into the public payload. Export archives continue to use
+    /// the complete `JournalEntrySnapshot` representation.
+    private func ownerSyncPayload(from snapshot: JournalEntrySnapshot) throws -> SyncJSONValue {
+        guard var object = try jsonValue(from: snapshot).objectValue else {
+            throw SyncError.invalidResponse(statusCode: nil, body: "Could not encode the record payload.")
+        }
+        object.removeValue(forKey: "id")
+        return .object(object)
     }
 
     private func serverBaseURL(_ rawValue: String) throws -> URL {
@@ -1612,8 +2271,8 @@ final class SyncService {
         }
     }
 
-    private func resourceETag(type: String, id: UUID, revision: Int64) -> String {
-        "\"\(type)-\(id.uuidString.lowercased())-r\(revision)\""
+    private func resourceETag(type: String, id: String, revision: Int64) -> String {
+        "\"\(type)-\(id)-r\(revision)\""
     }
 
     private func normalizedColor(_ value: String?) -> String? {
@@ -1732,7 +2391,7 @@ final class SyncService {
     }()
 }
 
-// MARK: - Legacy payload preservation and server/agent payload projection
+// MARK: - Owner and server/agent payload projection
 
 enum SyncV2PayloadMapper {
     static func entrySnapshot(
@@ -1745,15 +2404,22 @@ enum SyncV2PayloadMapper {
               let occurredAt = remote.occurredAt else {
             throw SyncService.SyncError.invalidResponse(
                 statusCode: nil,
-                body: "Public record \(remote.id.uuidString) is missing its payload or occurrence time."
+                body: "Public record \(remote.id) is missing its payload or occurrence time."
             )
         }
         let remoteTagIDs = remote.tagIDs ?? []
-        if let imported = try? decode(JournalEntrySnapshot.self, from: payload) {
-            guard imported.id == remote.id else {
+        var ownerPayload = payload
+        if var object = payload.objectValue,
+           object["id"] == nil,
+           let originID = remote.originID {
+            object["id"] = .string(originID.uuidString)
+            ownerPayload = .object(object)
+        }
+        if let imported = try? decode(JournalEntrySnapshot.self, from: ownerPayload) {
+            guard remote.originID == nil || imported.id == remote.originID else {
                 throw SyncService.SyncError.invalidResponse(
                     statusCode: nil,
-                    body: "Record \(remote.id.uuidString) contains a different payload ID."
+                    body: "Record \(remote.id) contains a different origin ID."
                 )
             }
             return JournalEntrySnapshot(
@@ -1787,7 +2453,7 @@ enum SyncV2PayloadMapper {
         let location = object["location"]?.objectValue
         let weather = object["weather"]?.objectValue
         return JournalEntrySnapshot(
-            id: remote.id,
+            id: remote.originID ?? UUID(),
             createdAt: remote.createdAt,
             updatedAt: remote.updatedAt,
             eventDate: occurredAt,
@@ -1822,11 +2488,6 @@ enum SyncV2PayloadMapper {
     static func tagSnapshot(from remote: SyncTagResource) -> JournalTagSnapshot? {
         if let value = remote.metadata.objectValue?["journalTag"],
            let snapshot = try? decode(JournalTagSnapshot.self, from: value),
-           snapshot.id == remote.id {
-            return snapshot
-        }
-        if let legacy = remote.metadata.objectValue?["legacyImport"]?.objectValue?["document"],
-           let snapshot = try? decode(JournalTagSnapshot.self, from: legacy),
            snapshot.id == remote.id {
             return snapshot
         }
@@ -2007,11 +2668,11 @@ final class SyncV2StateStore {
     }
 
     func cursor(server: URL, userID: UUID) -> String? {
-        defaults.string(forKey: "exeligmos.v2.cursor.\(namespace(server: server, userID: userID))")
+        defaults.string(forKey: "exeligmos.v3.anchored-cursor.\(namespace(server: server, userID: userID))")
     }
 
     func setCursor(_ cursor: String?, server: URL, userID: UUID) {
-        let key = "exeligmos.v2.cursor.\(namespace(server: server, userID: userID))"
+        let key = "exeligmos.v3.anchored-cursor.\(namespace(server: server, userID: userID))"
         if let cursor {
             defaults.set(cursor, forKey: key)
         } else {
@@ -2021,7 +2682,7 @@ final class SyncV2StateStore {
 
     func etag(
         resourceType: String,
-        resourceID: UUID,
+        resourceID: String,
         server: URL,
         userID: UUID
     ) -> String? {
@@ -2036,7 +2697,7 @@ final class SyncV2StateStore {
     func setETag(
         _ etag: String,
         resourceType: String,
-        resourceID: UUID,
+        resourceID: String,
         server: URL,
         userID: UUID
     ) {
@@ -2050,7 +2711,7 @@ final class SyncV2StateStore {
 
     func removeETag(
         resourceType: String,
-        resourceID: UUID,
+        resourceID: String,
         server: URL,
         userID: UUID
     ) {
@@ -2064,11 +2725,11 @@ final class SyncV2StateStore {
 
     private func etagKey(
         resourceType: String,
-        resourceID: UUID,
+        resourceID: String,
         server: URL,
         userID: UUID
     ) -> String {
-        "exeligmos.v2.etag.\(namespace(server: server, userID: userID)).\(resourceType).\(resourceID.uuidString)"
+        "exeligmos.v2.etag.\(namespace(server: server, userID: userID)).\(resourceType).\(resourceID)"
     }
 
     private func namespace(server: URL, userID: UUID) -> String {
@@ -2080,7 +2741,8 @@ final class SyncV2StateStore {
 // MARK: - Wire types
 
 struct SyncRecordResource: Decodable {
-    let id: UUID
+    let id: String
+    let originID: UUID?
     let userID: UUID
     let deviceID: UUID
     let visibility: String
@@ -2095,6 +2757,7 @@ struct SyncRecordResource: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, visibility, revision, createdAt, updatedAt, occurredAt, endedAt, payload, media
+        case originID = "originId"
         case userID = "userId"
         case deviceID = "deviceId"
         case tagIDs = "tagIds"
@@ -2316,10 +2979,11 @@ private struct SyncPendingMutationIDs {
     let tagUpserts: Set<UUID>
     let tagDeletes: Set<UUID>
 
-    init(commands: [SyncLocalCommand]) {
+    init(commands: [SyncLocalCommand], userID: UUID) {
         func ids(for type: SyncLocalCommandType) -> Set<UUID> {
             Set(commands.compactMap { command in
                 guard command.isPending,
+                      command.ownerUserID == nil || command.ownerUserID == userID,
                       command.type == type else { return nil }
                 return UUID(uuidString: command.subjectID)
             })
@@ -2336,7 +3000,7 @@ private struct SyncChange: Decodable {
     let changedAt: Date
     let resourceType: String
     let operation: String
-    let resourceID: UUID
+    let resourceID: String
     let revision: Int64
     let etag: String
     let resource: SyncJSONValue?
@@ -2361,7 +3025,8 @@ private struct SyncSourceInput: Encodable {
 }
 
 private struct SyncRecordInput: Encodable {
-    let id: UUID
+    let id: String
+    let originID: UUID
     let deviceID: UUID
     let visibility: String
     let occurredAt: Date
@@ -2374,6 +3039,7 @@ private struct SyncRecordInput: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case id, visibility, occurredAt, endedAt, payload, metadata, source
+        case originID = "originId"
         case deviceID = "deviceId"
         case tagIDs = "tagIds"
         case mediaIDs = "mediaIds"
@@ -2396,7 +3062,7 @@ private struct SyncMutationRequest: Encodable {
     let record: SyncRecordInput?
     let tag: SyncTagInput?
     let resourceType: String?
-    let resourceID: UUID?
+    let resourceID: String?
 
     enum CodingKeys: String, CodingKey {
         case kind, ifMatch, record, tag, resourceType
@@ -2408,7 +3074,7 @@ private struct SyncMutationRequest: Encodable {
 private struct SyncPreparedMutation {
     let request: SyncMutationRequest
     let resourceType: String
-    let resourceID: UUID
+    let resourceID: String
 }
 
 private struct SyncBatchRequest: Encodable {
@@ -2430,7 +3096,7 @@ private struct SyncMutationResult: Decodable {
     let clientMutationID: String
     let status: String
     let resourceType: String?
-    let resourceID: UUID?
+    let resourceID: String?
     let revision: Int64?
     let etag: String?
     let problem: SyncProblem?

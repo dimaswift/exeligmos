@@ -292,7 +292,7 @@ Copy the `secret` from the 201 response into the agent's secret store immediatel
 
 ```sh
 API_KEY='<exk_ secret returned by creation>'
-RECORD_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+RECORD_REQUEST_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 ```
 
 The agent can now create a public record. Public is the default visibility, so
@@ -303,8 +303,8 @@ curl --fail-with-body -sS \
   -X POST "$BASE_URL/v1/records" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: record-$RECORD_ID" \
-  -d "{\"id\":\"$RECORD_ID\",\"deviceId\":\"$DEVICE_ID\",\"occurredAt\":\"2026-07-14T18:00:00Z\",\"payload\":{\"label\":\"X-class solar flare\",\"class\":\"X1.2\"},\"source\":{\"kind\":\"agent\",\"provider\":\"noaa-swpc\",\"externalId\":\"example-flare-2026-07-14\"}}"
+  -H "Idempotency-Key: record-$RECORD_REQUEST_ID" \
+  -d "{\"deviceId\":\"$DEVICE_ID\",\"occurredAt\":\"2026-07-14T18:00:00Z\",\"payload\":{\"label\":\"X-class solar flare\",\"class\":\"X1.2\"},\"source\":{\"kind\":\"agent\",\"provider\":\"noaa-swpc\",\"externalId\":\"example-flare-2026-07-14\"}}"
 ```
 
 Fetch the user's records with the same key:
@@ -371,6 +371,18 @@ replacement with a new idempotency key. The secret is never returned again.
 
 ## Catalog, media, and synchronization
 
+Synchronization emits privacy-safe structured diagnostics at `info`/`warn`:
+
+- `sync_batch_received` records the account/device, client headers, mutation
+  kinds, IDs, ID lengths, and tag/media counts;
+- `sync_batch_completed` records each acknowledgement or stable problem code;
+- `sync_batch_rejected` records schema paths before authentication/processing.
+
+Record payloads, event labels, tag names, encryption envelopes, credentials,
+media bytes, and authorization/idempotency headers are never included in these
+diagnostic summaries. Filter the JSON server output by the `event` field while
+reproducing an upload.
+
 Tags are ordinary revisioned resources. Templates retain immutable historical
 versions: `PATCH /v1/templates/{templateId}` creates the next version, while a
 version query retrieves the exact earlier definition. Template variables are
@@ -397,13 +409,19 @@ resulting commands to the owner's other devices and, where public/subscribed,
 feed consumers. Missing rows in a collection snapshot never imply deletion;
 clients remove local data only after receiving an explicit delete tombstone.
 
+`GET /v1/sync/stats` returns owner-scoped record, event, tag, template, and media
+totals plus a command-feed cursor captured at the same starting boundary. A
+restoring client captures these statistics first, merges the bounded owner
+collection pages into local storage, and then requests `GET /v1/sync/changes`
+from that cursor. This makes the totals usable for progress while the command
+feed catches every write committed during the snapshot without replaying the
+entire retained history.
+
 `GET /v1/sync/changes` returns that commit-ordered, cursor-based owner command
 feed with full current resources for upserts and minimal tombstones for deletes.
-Before starting without a cursor, a client merges the owner collections it
-stores into its local data; the no-cursor feed is an anchor after that snapshot,
-not a replacement for it once older commands have been pruned. A cursor older
-than a retained high-water mark returns `410 cursor_expired`, requiring the same
-merge-only owner-resource reconciliation before restarting the feed. `POST
+A cursor older than a retained high-water mark returns `410 cursor_expired`;
+the client must capture fresh statistics, repeat the same merge-only owner
+snapshot, and resume from the fresh cursor. `POST
 /v1/sync/batches` accepts at most 20 record/event/tag/template mutations and
 supports either all-or-nothing atomic execution or ordered per-item results.
 `clientMutationId` receipts last 30 days, so a retry cannot silently apply a

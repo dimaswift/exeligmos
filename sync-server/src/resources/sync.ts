@@ -15,6 +15,7 @@ import {
 import { loadMediaResourcesForSync } from "./media.js";
 import {
   type CreateRecordInput,
+  assertRecordPublicId,
   createRecordInTransaction,
   deleteRecordInTransaction,
   loadRecordResourcesForSync,
@@ -96,6 +97,30 @@ export interface SyncChangePage {
   readonly hasMore: boolean;
 }
 
+export interface SyncResourceCount {
+  readonly total: number;
+}
+
+export interface SyncRecordCount extends SyncResourceCount {
+  readonly public: number;
+  readonly private: number;
+}
+
+export interface SyncMediaCount extends SyncResourceCount {
+  readonly byteLength: number;
+  readonly restorable: number;
+  readonly restorableByteLength: number;
+}
+
+export interface SyncStats {
+  readonly cursor: string;
+  readonly records: SyncRecordCount;
+  readonly events: SyncResourceCount;
+  readonly tags: SyncResourceCount;
+  readonly templates: SyncResourceCount;
+  readonly media: SyncMediaCount;
+}
+
 export interface UpsertRecordMutation {
   readonly kind: "upsertRecord";
   readonly clientMutationId: string;
@@ -168,6 +193,7 @@ interface ChangeRow extends QueryResultRow {
   readonly changed_at: Date | string;
   readonly entity_type: SyncResourceType;
   readonly entity_id: string;
+  readonly external_entity_id: string;
   readonly operation: "upsert" | "delete";
   readonly revision: string | number;
 }
@@ -175,6 +201,19 @@ interface ChangeRow extends QueryResultRow {
 interface SyncMetaRow extends QueryResultRow {
   readonly high_water: string | number;
   readonly last_pruned: string | number;
+}
+
+interface SyncStatsRow extends QueryResultRow {
+  readonly high_water: string | number;
+  readonly public_record_count: string | number;
+  readonly private_record_count: string | number;
+  readonly event_count: string | number;
+  readonly tag_count: string | number;
+  readonly template_count: string | number;
+  readonly media_count: string | number;
+  readonly media_byte_length: string | number;
+  readonly restorable_media_count: string | number;
+  readonly restorable_media_byte_length: string | number;
 }
 
 interface RevisionRow extends QueryResultRow {
@@ -221,6 +260,7 @@ interface VersionedResource {
 }
 
 interface ResourceStateRow extends QueryResultRow {
+  readonly public_id?: string;
   readonly deleted_at: Date | string | null;
   readonly revision: string | number;
 }
@@ -242,6 +282,91 @@ const MUTATION_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 
 export class SyncService {
   constructor(private readonly database: Database) {}
+
+  async stats(principal: Principal): Promise<SyncStats> {
+    const result = await this.database.query<SyncStatsRow>(
+      `SELECT
+         GREATEST(
+           COALESCE((
+             SELECT max(sequence) FROM change_log WHERE user_id = $1
+           ), 0),
+           COALESCE((
+             SELECT max(last_pruned_sequence)
+             FROM sync_change_retention
+             WHERE user_id = $1
+           ), 0)
+         ) AS high_water,
+         (SELECT count(*) FROM records
+          WHERE user_id = $1 AND visibility = 'public' AND deleted_at IS NULL)
+           AS public_record_count,
+         (SELECT count(*) FROM records
+          WHERE user_id = $1 AND visibility = 'private' AND deleted_at IS NULL)
+           AS private_record_count,
+         (SELECT count(*) FROM events
+          WHERE user_id = $1 AND deleted_at IS NULL) AS event_count,
+         (SELECT count(*) FROM tags
+          WHERE user_id = $1 AND deleted_at IS NULL) AS tag_count,
+         (SELECT count(*) FROM templates
+          WHERE user_id = $1 AND deleted_at IS NULL AND retired_at IS NULL)
+           AS template_count,
+         (SELECT count(*) FROM media_objects
+          WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL)
+           AS media_count,
+         (SELECT COALESCE(sum(byte_size), 0) FROM media_objects
+          WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL)
+           AS media_byte_length,
+         (SELECT count(*) FROM media_objects media
+          WHERE media.user_id = $1 AND media.visibility = 'public'
+            AND media.status = 'ready' AND media.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+              FROM record_media link
+              JOIN records record ON record.id = link.record_id
+              WHERE link.user_id = $1 AND link.media_id = media.id
+                AND record.user_id = $1 AND record.visibility = 'public'
+                AND record.deleted_at IS NULL
+            )) AS restorable_media_count,
+         (SELECT COALESCE(sum(media.byte_size), 0) FROM media_objects media
+          WHERE media.user_id = $1 AND media.visibility = 'public'
+            AND media.status = 'ready' AND media.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+              FROM record_media link
+              JOIN records record ON record.id = link.record_id
+              WHERE link.user_id = $1 AND link.media_id = media.id
+                AND record.user_id = $1 AND record.visibility = 'public'
+                AND record.deleted_at IS NULL
+            )) AS restorable_media_byte_length`,
+      [principal.userId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error("Synchronization statistics query returned no row");
+    const publicRecords = syncStatNumber(row.public_record_count, "public record count");
+    const privateRecords = syncStatNumber(row.private_record_count, "private record count");
+    return {
+      cursor: encodeSyncCursor(
+        syncCursorSignature(principal.userId, SYNC_RESOURCE_TYPES),
+        BigInt(row.high_water),
+      ),
+      records: {
+        total: publicRecords + privateRecords,
+        public: publicRecords,
+        private: privateRecords,
+      },
+      events: { total: syncStatNumber(row.event_count, "event count") },
+      tags: { total: syncStatNumber(row.tag_count, "tag count") },
+      templates: { total: syncStatNumber(row.template_count, "template count") },
+      media: {
+        total: syncStatNumber(row.media_count, "media count"),
+        byteLength: syncStatNumber(row.media_byte_length, "media byte length"),
+        restorable: syncStatNumber(row.restorable_media_count, "restorable media count"),
+        restorableByteLength: syncStatNumber(
+          row.restorable_media_byte_length,
+          "restorable media byte length",
+        ),
+      },
+    };
+  }
 
   async listChanges(
     principal: Principal,
@@ -311,8 +436,23 @@ export class SyncService {
              AND entity_type = ANY($3::text[])
            ORDER BY entity_type, entity_id, sequence DESC
          )
-         SELECT sequence, changed_at, entity_type, entity_id, operation, revision
+         SELECT
+           latest.sequence,
+           latest.changed_at,
+           latest.entity_type,
+           latest.entity_id,
+           CASE WHEN latest.entity_type = 'record'
+             THEN changed_record.public_id
+             ELSE latest.entity_id::text
+           END AS external_entity_id,
+           latest.operation,
+           latest.revision
          FROM latest
+         LEFT JOIN records changed_record
+           ON latest.entity_type = 'record'
+          AND changed_record.id = latest.entity_id
+         WHERE latest.entity_type <> 'record'
+            OR changed_record.id IS NOT NULL
          ORDER BY sequence ASC
          LIMIT $4`,
         [principal.userId, afterSequence.toString(), resourceTypes, limit + 1],
@@ -606,9 +746,18 @@ async function upsertRecord(
   mutation: UpsertRecordMutation,
   requestId: string,
 ): Promise<SyncMutationResult> {
+  if (mutation.record.id === undefined || mutation.record.originId === undefined) {
+    throw unprocessable(
+      "Synchronized records require both id and originId.",
+      "record_sync_identity_required",
+    );
+  }
+  assertRecordPublicId(mutation.record.id);
+  assertUuid(mutation.record.originId, "record originId");
   const state = await authoritativeRecordUpsertState(
     queryable,
     principal.userId,
+    mutation.record.originId,
     mutation.record.id,
   );
   const response =
@@ -622,10 +771,11 @@ async function upsertRecord(
       : await replaceRecordInTransaction(
           queryable,
           principal,
-          requiredResourceId(mutation.record.id),
+          state.publicId,
           mutation.record,
           state.etag,
           requestId,
+          true,
         );
   return succeededResult(mutation.clientMutationId, "record", response.body);
 }
@@ -638,39 +788,42 @@ async function upsertRecord(
 async function authoritativeRecordUpsertState(
   queryable: Queryable,
   userId: string,
-  resourceId: string | undefined,
+  originId: string,
+  publicId: string | undefined,
 ): Promise<
   | { readonly kind: "create" }
-  | { readonly kind: "replace"; readonly etag: string }
+  | { readonly kind: "replace"; readonly publicId: string; readonly etag: string }
 > {
-  if (resourceId === undefined) return { kind: "create" };
-  assertUuid(resourceId, "resource id");
+  // An origin is the stable client identity. Serialize the absent-row case so
+  // two devices cannot race to assign different aliases to the same origin.
+  await queryable.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+    [`record-origin:${userId}:${originId}`],
+  );
   const result = await queryable.query<ResourceStateRow>(
-    `SELECT revision, deleted_at
+    `SELECT public_id, revision, deleted_at
      FROM records
      WHERE user_id = $1 AND id = $2
      FOR UPDATE`,
-    [userId, resourceId],
+    [userId, originId],
   );
   const row = result.rows[0];
   if (row === undefined) return { kind: "create" };
-
-  let revision = Number(row.revision);
-  if (row.deleted_at !== null) {
-    const restored = await queryable.query<{
-      readonly revision: string | number;
-    }>(
-      `UPDATE records
-       SET deleted_at = NULL, updated_at = clock_timestamp()
-       WHERE user_id = $1 AND id = $2
-       RETURNING revision`,
-      [userId, resourceId],
-    );
-    revision = Number(restored.rows[0]?.revision ?? revision);
+  if (row.public_id === undefined) {
+    throw new Error("Stored record has no public identifier");
   }
+  if (publicId !== undefined && row.public_id !== publicId) {
+    throw unprocessable(
+      "The submitted id does not match the record originId's immutable id.",
+      "record_id_mismatch",
+    );
+  }
+
+  const revision = Number(row.revision);
   return {
     kind: "replace",
-    etag: syncResourceEtag("record", resourceId, revision),
+    publicId: row.public_id,
+    etag: syncResourceEtag("record", row.public_id, revision),
   };
 }
 
@@ -904,10 +1057,11 @@ async function loadDeletedRevision(
   resourceType: SyncMutationResourceType,
   resourceId: string,
 ): Promise<number> {
+  const idColumn = resourceType === "record" ? "public_id" : "id";
   const result = await queryable.query<RevisionRow>(
     `SELECT revision
      FROM ${tableForMutationResource(resourceType)}
-     WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL`,
+     WHERE user_id = $1 AND ${idColumn} = $2 AND deleted_at IS NOT NULL`,
     [userId, resourceId],
   );
   const row = result.rows[0];
@@ -1118,16 +1272,16 @@ function mapChange(
     changedAt: isoDate(row.changed_at),
     resourceType: row.entity_type,
     operation: row.operation,
-    resourceId: row.entity_id,
+    resourceId: row.external_entity_id,
     revision,
-    etag: syncResourceEtag(row.entity_type, row.entity_id, revision),
+    etag: syncResourceEtag(row.entity_type, row.external_entity_id, revision),
   } as const;
   const key = resourceKey(row.entity_type, row.entity_id);
   if (row.operation === "delete") {
     return {
       ...base,
       tombstone: {
-        id: row.entity_id,
+        id: row.external_entity_id,
         userId,
         resourceType: row.entity_type,
         revision,
@@ -1426,6 +1580,14 @@ function requiredIfMatch(value: string | undefined): string {
     throw new Error("Existing sync upsert has no If-Match value");
   }
   return value;
+}
+
+function syncStatNumber(value: string | number, name: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Synchronization ${name} is outside the JSON safe-integer range`);
+  }
+  return parsed;
 }
 
 function assertUuid(value: string, name: string): void {

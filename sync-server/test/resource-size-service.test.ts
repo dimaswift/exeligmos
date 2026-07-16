@@ -24,6 +24,7 @@ const userId = "e42b4fde-8baf-4b95-8bc8-5395b68d0dd2";
 const actorId = "0ce129e6-cbf7-4731-8829-7592f69fb31e";
 const deviceId = "2dca8eab-00a8-4e94-9bd2-2fcbfe17e890";
 const recordId = "2ea5377d-6251-459d-9f6e-3f48e07763a1";
+const recordPublicId = "Q7_xA";
 const eventId = "20a78723-c33e-4794-a036-5da69a15e8bf";
 
 const principal: Principal = {
@@ -90,9 +91,9 @@ test("record service rejects oversized payload and metadata on create and merged
     await assert.rejects(
       new RecordService(patchDatabase).patch(
         principal,
-        recordId,
+        recordPublicId,
         { visibility: "public", ...entry.patchInput },
-        resourceEtag("record", recordId, 1),
+        resourceEtag("record", recordPublicId, 1),
         `patch-${entry.expectedCode}`,
         "request-patch",
       ),
@@ -118,7 +119,13 @@ test("record service validates decoded private ciphertext size on create and pat
   await assert.rejects(
     new RecordService(createDatabase).create(
       principal,
-      { id: recordId, deviceId, visibility: "private", encryption },
+      {
+        id: recordPublicId,
+        originId: recordId,
+        deviceId,
+        visibility: "private",
+        encryption,
+      },
       "create-private-oversize",
       "request-create-private",
     ),
@@ -130,9 +137,9 @@ test("record service validates decoded private ciphertext size on create and pat
   await assert.rejects(
     new RecordService(patchDatabase).patch(
       principal,
-      recordId,
+      recordPublicId,
       { visibility: "private", encryption },
-      resourceEtag("record", recordId, 1),
+      resourceEtag("record", recordPublicId, 1),
       "patch-private-oversize",
       "request-patch-private",
     ),
@@ -225,6 +232,7 @@ class SizeGuardDatabase implements Database {
     const isPrivate = this.currentKind === "private";
     return {
       id: recordId,
+      public_id: recordPublicId,
       user_id: userId,
       device_id: deviceId,
       visibility: isPrivate ? "private" : "public",

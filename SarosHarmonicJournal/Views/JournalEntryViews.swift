@@ -14,6 +14,39 @@ enum JournalFeedTiming {
     static let nowThreshold: TimeInterval = 60
 }
 
+enum JournalEntrySyncState: Hashable {
+    case synced
+    case pending
+    case failed
+    case localOnly
+
+    var systemImage: String {
+        switch self {
+        case .synced: "checkmark.circle.fill"
+        case .pending: "arrow.triangle.2.circlepath"
+        case .failed: "exclamationmark.circle.fill"
+        case .localOnly: "circle.dashed"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .synced: .green
+        case .pending, .localOnly: .secondary
+        case .failed: .orange
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .synced: "Synchronized with server"
+        case .pending: "Waiting to synchronize"
+        case .failed: "Synchronization failed"
+        case .localOnly: "Stored locally only"
+        }
+    }
+}
+
 struct JournalEntryRow: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
@@ -21,6 +54,7 @@ struct JournalEntryRow: View {
     let entry: JournalEntry
     let tags: [JournalTag]
     var now = Date()
+    var syncState: JournalEntrySyncState? = nil
 
     private var context: JournalEventContext {
         entry.context
@@ -133,6 +167,12 @@ struct JournalEntryRow: View {
                     Text(remoteDeviceEmoji)
                         .font(.caption)
                 }
+                if let syncState {
+                    Image(systemName: syncState.systemImage)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(syncState.color)
+                        .accessibilityLabel(syncState.accessibilityLabel)
+                }
                 Spacer(minLength: 8)
                 Text(relativeEventLabel)
                     .font(.caption)
@@ -204,9 +244,10 @@ struct JournalEntryDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
 
     let entry: JournalEntry
     let tags: [JournalTag]
@@ -566,12 +607,20 @@ struct JournalEntryDetailView: View {
 
     private func deleteEntry() {
         audioPlayer.stop()
-        SyncLocalCommand.enqueue(
-            .entryDelete,
-            subjectID: entry.id.uuidString,
-            existing: syncCommands,
-            modelContext: modelContext
-        )
+        if entry.acknowledgedServerRevision != nil, entry.publicID != nil {
+            SyncLocalCommand.enqueue(
+                .entryDelete,
+                subjectID: entry.id.uuidString,
+                ownerUserID: entry.syncOwnerUserID,
+                remoteResourceID: entry.publicID,
+                existing: syncCommands,
+                modelContext: modelContext
+            )
+        } else {
+            for command in syncCommands where command.isPending && command.subjectID == entry.id.uuidString {
+                modelContext.delete(command)
+            }
+        }
         let mediaItems = entry.mediaItems
         modelContext.delete(entry)
         do {
@@ -590,9 +639,6 @@ struct JournalEntryCaptureView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
 
     let recordStartedAt: Date
     let existingDraft: JournalEntryDraft?
@@ -826,9 +872,6 @@ struct JournalEntryCaptureView: View {
             }
         }
         .navigationTitle(editingEntry == nil ? "Record" : "Edit record")
-        .refreshable {
-            await refreshFromRelay()
-        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") {
@@ -899,22 +942,6 @@ struct JournalEntryCaptureView: View {
     }
 
     @MainActor
-    private func refreshFromRelay() async {
-        guard syncServerURL.nilIfBlank != nil else { return }
-        do {
-            _ = try await services.syncService.synchronizeEntries(
-                with: syncServerURL,
-                modelContext: modelContext,
-                tags: tags,
-                entries: entries,
-                commands: syncCommands
-            )
-        } catch {
-            // Manual refresh should never trap the edit flow behind an alert.
-        }
-    }
-
-    @MainActor
     private func loadPhotos(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
         isLoadingPhoto = true
@@ -955,15 +982,19 @@ struct JournalEntryCaptureView: View {
                 mediaItems = savedMedia
             }
 
-            let resolvedContext = try services.sarosEventContextService.context(
-                for: eventDate,
-                harmonicDepth: JournalSettings.canonicalHarmonicDepth
-            )
+            guard let resolvedContext = context else {
+                throw SyncService.SyncError.invalidResponse(
+                    statusCode: nil,
+                    body: "The record's temporal context is not ready yet."
+                )
+            }
             let coordinate = locationProvider.coordinate
             let fallbackLatitude = coordinate?.latitude ?? initialLatitude
             let fallbackLongitude = coordinate?.longitude ?? initialLongitude
             let device = JournalDevice.current()
             if let editingEntry {
+                let ownerID = editingEntry.syncOwnerUserID ?? services.syncCoordinator.authenticatedUser?.id
+                editingEntry.syncOwnerUserID = ownerID
                 editingEntry.createdAt = recordStartedAt
                 editingEntry.updatedAt = Date()
                 editingEntry.eventDate = eventDate
@@ -983,10 +1014,16 @@ struct JournalEntryCaptureView: View {
                 editingEntry.weatherCode = weatherCode
                 editingEntry.weatherEmoji = weatherEmoji
                 editingEntry.temperatureC = temperatureC
+                let pendingCommands = try SyncLocalCommand.pending(
+                    forSubjectID: editingEntry.id.uuidString,
+                    modelContext: modelContext
+                )
                 SyncLocalCommand.enqueue(
                     .entryUpsert,
                     subjectID: editingEntry.id.uuidString,
-                    existing: syncCommands,
+                    ownerUserID: ownerID,
+                    remoteResourceID: editingEntry.publicID,
+                    existing: pendingCommands,
                     modelContext: modelContext
                 )
                 try modelContext.save()
@@ -1000,7 +1037,9 @@ struct JournalEntryCaptureView: View {
                 return
             }
 
+            let ownerID = services.syncCoordinator.authenticatedUser?.id
             let entry = JournalEntry(
+                syncOwnerUserID: ownerID,
                 createdAt: recordStartedAt,
                 updatedAt: Date(),
                 eventDate: eventDate,
@@ -1023,7 +1062,9 @@ struct JournalEntryCaptureView: View {
             SyncLocalCommand.enqueue(
                 .entryUpsert,
                 subjectID: entry.id.uuidString,
-                existing: syncCommands,
+                ownerUserID: ownerID,
+                remoteResourceID: entry.publicID,
+                existing: [],
                 modelContext: modelContext
             )
             if let existingDraft {
@@ -1418,8 +1459,9 @@ private struct JournalEntryEditView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
 
     let entry: JournalEntry
     let tags: [JournalTag]
@@ -1511,7 +1553,7 @@ private struct JournalEntryEditView: View {
 
     @MainActor
     private func refreshFromRelay() async {
-        guard syncServerURL.nilIfBlank != nil else { return }
+        guard syncServerURL.nilIfBlank != nil, services.syncCoordinator.isAuthenticated else { return }
         do {
             _ = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
@@ -4249,8 +4291,9 @@ struct TagsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
 
     @State private var draft: JournalTagDraft?
     @State private var errorMessage: String?
@@ -4345,7 +4388,7 @@ struct TagsView: View {
 
     @MainActor
     private func refreshFromRelay() async {
-        guard syncServerURL.nilIfBlank != nil else { return }
+        guard syncServerURL.nilIfBlank != nil, services.syncCoordinator.isAuthenticated else { return }
         do {
             _ = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
@@ -4365,7 +4408,9 @@ struct TagsView: View {
 
     private func saveTag(_ draft: JournalTagDraft) {
         var tagsToRepair = tags
+        let activeOwnerID = services.syncCoordinator.authenticatedUser?.id
         if let existing = tags.first(where: { $0.id == draft.id }) {
+            existing.syncOwnerUserID = existing.syncOwnerUserID ?? activeOwnerID
             existing.name = draft.name.nilIfBlank ?? "Saros \(draft.saros)"
             existing.emoji = draft.emoji.nilIfBlank ?? "◇"
             existing.anchorDate = draft.anchorDate
@@ -4379,6 +4424,7 @@ struct TagsView: View {
         } else {
             let tag = JournalTag(
                 id: draft.id,
+                syncOwnerUserID: activeOwnerID,
                 name: draft.name.nilIfBlank ?? "Saros \(draft.saros)",
                 emoji: draft.emoji.nilIfBlank ?? "◇",
                 anchorDate: draft.anchorDate,
@@ -4396,6 +4442,7 @@ struct TagsView: View {
         SyncLocalCommand.enqueue(
             .tagUpsert,
             subjectID: draft.id.uuidString,
+            ownerUserID: tagsToRepair.first(where: { $0.id == draft.id })?.syncOwnerUserID ?? activeOwnerID,
             existing: syncCommands,
             modelContext: modelContext
         )
@@ -4420,20 +4467,32 @@ struct TagsView: View {
     private func deleteTag(_ tag: JournalTag, save: Bool = true) {
         let compactID = tag.compactID
         for entry in entries where entry.tagIDs.contains(compactID) {
+            let ownerID = entry.syncOwnerUserID ?? services.syncCoordinator.authenticatedUser?.id
+            entry.syncOwnerUserID = ownerID
             entry.tagIDs = entry.tagIDs.filter { $0 != compactID }
             SyncLocalCommand.enqueue(
                 .entryUpsert,
                 subjectID: entry.id.uuidString,
+                ownerUserID: ownerID,
+                remoteResourceID: entry.publicID,
                 existing: syncCommands,
                 modelContext: modelContext
             )
         }
-        SyncLocalCommand.enqueue(
-            .tagDelete,
-            subjectID: tag.id.uuidString,
-            existing: syncCommands,
-            modelContext: modelContext
-        )
+        if tag.acknowledgedServerRevision != nil, tag.syncOwnerUserID != nil {
+            SyncLocalCommand.enqueue(
+                .tagDelete,
+                subjectID: tag.id.uuidString,
+                ownerUserID: tag.syncOwnerUserID,
+                remoteResourceID: tag.id.uuidString,
+                existing: syncCommands,
+                modelContext: modelContext
+            )
+        } else {
+            for command in syncCommands where command.isPending && command.subjectID == tag.id.uuidString {
+                modelContext.delete(command)
+            }
+        }
         modelContext.delete(tag)
         if save {
             do {

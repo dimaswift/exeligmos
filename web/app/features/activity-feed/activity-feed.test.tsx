@@ -174,7 +174,8 @@ describe("activity presentation", () => {
 
   it("keeps encrypted records opaque while retaining owner-safe metadata", () => {
     const privateRecord = {
-      id: "70000000-0000-4000-8000-000000000007",
+      id: "Prv07",
+      originId: "70000000-0000-4000-8000-000000000007",
       userId: actor.id,
       deviceId: "80000000-0000-4000-8000-000000000008",
       visibility: "private",
@@ -284,14 +285,27 @@ describe("activity presentation", () => {
   it("keeps record and event lanes independently paginated", () => {
     const markup = renderToStaticMarkup(
       <div>
-        <RecordLane items={[{ record }]} nextHref="?recordCursor=next" />
-        <EventLane items={[{ event }]} nextHref="?eventCursor=next" />
+        <RecordLane
+          items={[{ record }]}
+          nextHref="?recordCursor=next"
+          previousHref="?recordCursor=previous"
+        />
+        <EventLane
+          items={[{ event }]}
+          nextHref="?eventCursor=next"
+          previousHref="?eventCursor=previous"
+        />
       </div>,
     );
     expect(markup).toContain("Record snapshot");
     expect(markup).toContain("Event snapshot");
     expect(markup).toContain("?recordCursor=next");
     expect(markup).toContain("?eventCursor=next");
+    expect(markup).toContain("?recordCursor=previous");
+    expect(markup).toContain("?eventCursor=previous");
+    expect(markup.match(/rel="prev"/g)).toHaveLength(2);
+    expect(markup).toContain("Newer records");
+    expect(markup).toContain("Newer events");
     const labelledBy = [...markup.matchAll(/aria-labelledby="([^"]+-lane-title)"/g)].map(
       (match) => match[1],
     );

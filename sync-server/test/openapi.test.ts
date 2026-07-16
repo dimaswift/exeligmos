@@ -147,16 +147,32 @@ test("OpenAPI contract keeps private records opaque and events lightweight", asy
     "encryption",
     "id",
     "mediaIds",
+    "originId",
     "references",
     "visibility",
   ]);
   assert.deepEqual(array(privateInput.required, "private required fields"), [
     "id",
+    "originId",
     "deviceId",
     "visibility",
     "encryption",
   ]);
   assert.equal(privateInput.additionalProperties, false);
+
+  const recordPublicId = object(schemas.RecordPublicId, "RecordPublicId must exist");
+  assert.equal(recordPublicId.pattern, "^[A-Za-z0-9_-]{5}$");
+  assert.equal(recordPublicId.minLength, 5);
+  assert.equal(recordPublicId.maxLength, 5);
+
+  const publicRecordProjection = object(
+    schemas.PublicRecordProjection,
+    "PublicRecordProjection must exist",
+  );
+  assert.equal(
+    "originId" in object(publicRecordProjection.properties, "public projection properties"),
+    false,
+  );
 
   const privatePatch = object(schemas.PrivateRecordPatch, "PrivateRecordPatch must exist");
   assert.deepEqual(array(privatePatch.required, "private patch required fields"), [

@@ -11,6 +11,7 @@ import { createPostgresDatabase } from "../../src/db/database.js";
 import { runMigrations } from "../../src/db/migrate.js";
 import { registerProblemHandlers } from "../../src/http/problem.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
+import { generateRecordPublicId } from "../../src/resources/records.js";
 import { registerEventRoutes } from "../../src/routes/events.js";
 import { registerRecordRoutes } from "../../src/routes/records.js";
 import { registerSocialRoutes } from "../../src/routes/social.js";
@@ -71,15 +72,17 @@ test(
          VALUES ($1, 'Solar flare', '☀️', '#FFAA00') RETURNING id`,
         [sunId],
       );
-      const sunRecord = await sql.query<{ id: string }>(
+      const sunRecord = await sql.query<{ id: string; public_id: string }>(
         `INSERT INTO records (user_id, device_id, event_at, public_payload)
-         VALUES ($1, $2, now(), '{"text":"X flare"}'::jsonb) RETURNING id`,
+         VALUES ($1, $2, now(), '{"text":"X flare"}'::jsonb)
+         RETURNING id, public_id`,
         [sunId, sunDeviceId],
       );
-      const sunRecordId = required(sunRecord.rows[0]?.id);
+      const sunRecordOriginId = required(sunRecord.rows[0]?.id);
+      const sunRecordId = required(sunRecord.rows[0]?.public_id);
       await sql.query(
         "INSERT INTO record_tags (user_id, record_id, tag_id) VALUES ($1, $2, $3)",
-        [sunId, sunRecordId, required(tag.rows[0]?.id)],
+        [sunId, sunRecordOriginId, required(tag.rows[0]?.id)],
       );
       const sunEvent = await sql.query<{ id: string }>(
         `INSERT INTO events (user_id, device_id, starts_at, label, type)
@@ -159,12 +162,34 @@ test(
       assert.equal(referenced.statusCode, 201, referenced.body);
       assert.equal(referenced.json().references.length, 3);
 
-      const privateTarget = await sql.query<{ id: string }>(
+      const missingReference = await app.inject({
+        method: "POST",
+        url: "/v1/records",
+        headers: { "idempotency-key": `missing-reference-${randomUUID()}` },
+        payload: {
+          deviceId: ownerDeviceId,
+          occurredAt: new Date().toISOString(),
+          payload: { text: "Must roll back for a missing record alias" },
+          references: [{
+            targetType: "record",
+            targetUserId: ownerId,
+            targetId: generateRecordPublicId(),
+          }],
+        },
+      });
+      assert.equal(missingReference.statusCode, 422, missingReference.body);
+      assert.equal(missingReference.json().code, "invalid_references");
+      assert.equal(
+        missingReference.json().errors[0]?.path,
+        "/references/0/targetId",
+      );
+
+      const privateTarget = await sql.query<{ id: string; public_id: string }>(
         `INSERT INTO records (
            user_id, device_id, visibility, cipher_algorithm, crypto_version,
            key_version, nonce, ciphertext, encrypted_content_type
          ) VALUES ($1, $2, 'private', 'A256GCM', 1, 1, $3, $4,
-           'application/vnd.exeligmos.record+json') RETURNING id`,
+           'application/vnd.exeligmos.record+json') RETURNING id, public_id`,
         [ownerId, ownerDeviceId, Buffer.alloc(12, 1), Buffer.alloc(16, 2)],
       );
       const leaked = await app.inject({
@@ -178,7 +203,7 @@ test(
           references: [{
             targetType: "record",
             targetUserId: ownerId,
-            targetId: required(privateTarget.rows[0]?.id),
+            targetId: required(privateTarget.rows[0]?.public_id),
           }],
         },
       });

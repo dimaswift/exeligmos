@@ -8,7 +8,7 @@ import {
 } from "~/features/activity-feed";
 import {
   FeedQueryError,
-  feedCursorHref,
+  feedPageLinks,
   readFeedCursorQuery,
 } from "~/features/activity-stream/feed-query.server";
 import {
@@ -46,17 +46,23 @@ export async function loader({ request, url }: Route.LoaderArgs) {
         signal: request.signal,
       }),
     ]);
+    const eventLinks = feedPageLinks(
+      url,
+      "eventsCursor",
+      events.hasMore ? events.nextCursor : undefined,
+    );
+    const recordLinks = feedPageLinks(
+      url,
+      "recordsCursor",
+      records.hasMore ? records.nextCursor : undefined,
+    );
     return {
       events,
-      eventsNextHref:
-        events.hasMore && events.nextCursor !== undefined
-          ? feedCursorHref(url, "eventsCursor", events.nextCursor)
-          : null,
+      eventsNextHref: eventLinks.nextHref,
+      eventsPreviousHref: eventLinks.previousHref,
       records,
-      recordsNextHref:
-        records.hasMore && records.nextCursor !== undefined
-          ? feedCursorHref(url, "recordsCursor", records.nextCursor)
-          : null,
+      recordsNextHref: recordLinks.nextHref,
+      recordsPreviousHref: recordLinks.previousHref,
     };
   } catch (error) {
     if (error instanceof FeedQueryError || error instanceof RangeError) {
@@ -84,6 +90,7 @@ export default function PublicFeed({ loaderData }: Route.ComponentProps) {
             record,
           }))}
           nextHref={loaderData.recordsNextHref}
+          previousHref={loaderData.recordsPreviousHref}
           title="Public records"
         />
         <EventLane
@@ -94,6 +101,7 @@ export default function PublicFeed({ loaderData }: Route.ComponentProps) {
             event,
           }))}
           nextHref={loaderData.eventsNextHref}
+          previousHref={loaderData.eventsPreviousHref}
           title="Public events"
         />
       </ResourceLaneGrid>

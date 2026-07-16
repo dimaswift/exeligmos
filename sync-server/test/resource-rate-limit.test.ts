@@ -160,7 +160,7 @@ test("record routes invoke public, authenticated-read, and authenticated-write l
     assert.equal(ownerResponse.statusCode, 429);
     const writeResponse = await app.inject({
       method: "DELETE",
-      url: "/v1/records/2ea5377d-6251-459d-9f6e-3f48e07763a1",
+      url: "/v1/records/Q7_xA",
       headers: {
         authorization: "Bearer ignored",
         "if-match": '"record-r1"',

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import {
   Ajv2020,
@@ -51,6 +51,20 @@ import type { PublicUserSummary } from "./social.js";
 
 export type RecordVisibility = "public" | "private";
 
+export const RECORD_PUBLIC_ID_SCHEMA_PATTERN = "^[A-Za-z0-9_-]{5}$";
+const RECORD_PUBLIC_ID_PATTERN = new RegExp(RECORD_PUBLIC_ID_SCHEMA_PATTERN);
+const RECORD_PUBLIC_ID_ALLOCATION_ATTEMPTS = 64;
+
+export function generateRecordPublicId(): string {
+  return randomBytes(4).toString("base64url").slice(0, 5);
+}
+
+export function assertRecordPublicId(value: string, name = "record id"): void {
+  if (!RECORD_PUBLIC_ID_PATTERN.test(value)) {
+    throw invalidRequest(`${name} must be a five-character Base64URL identifier.`);
+  }
+}
+
 export interface SourceReference {
   readonly kind: "client" | "agent" | "import" | "server";
   readonly provider: string;
@@ -76,6 +90,7 @@ export interface CiphertextEnvelope {
 
 export interface PublicRecordInput {
   readonly id?: string;
+  readonly originId?: string;
   readonly deviceId: string;
   readonly visibility?: "public";
   readonly occurredAt: string;
@@ -91,6 +106,7 @@ export interface PublicRecordInput {
 
 export interface PrivateRecordInput {
   readonly id: string;
+  readonly originId: string;
   readonly deviceId: string;
   readonly visibility: "private";
   readonly encryption: CiphertextEnvelope;
@@ -147,6 +163,8 @@ export interface MediaObject {
 
 interface RecordCommon {
   readonly id: string;
+  /** Owner-only UUID used for storage identity and crypto profile v1. */
+  readonly originId: string;
   readonly userId: string;
   readonly deviceId: string;
   readonly revision: number;
@@ -244,6 +262,7 @@ export interface PublicRecordListQuery {
 
 interface RecordRow extends QueryResultRow {
   readonly id: string;
+  readonly public_id: string;
   readonly user_id: string;
   readonly device_id: string;
   readonly visibility: RecordVisibility;
@@ -288,6 +307,7 @@ interface CountRow extends QueryResultRow {
 
 const RECORD_COLUMNS = `
   r.id,
+  r.public_id,
   r.user_id,
   r.device_id,
   r.visibility,
@@ -608,7 +628,7 @@ export class RecordService {
           await patchPrivateRecord(
             queryable,
             principal.userId,
-            recordId,
+            current.id,
             current,
             input,
           );
@@ -616,7 +636,7 @@ export class RecordService {
           await patchPublicRecord(
             queryable,
             principal.userId,
-            recordId,
+            current.id,
             current,
             input,
           );
@@ -626,7 +646,7 @@ export class RecordService {
           principal,
           "record.update",
           "record",
-          recordId,
+          current.id,
           requestId,
         );
         return this.updatedResponse(queryable, principal.userId, recordId);
@@ -734,19 +754,32 @@ export async function createRecordInTransaction(
   assertApiKeyDevice(principal, input.deviceId);
   await assertActiveOwnedDevice(queryable, principal.userId, input.deviceId);
   const visibility = input.visibility ?? "public";
-  const id = input.id ?? randomUUID();
+  const internalId = input.originId ?? randomUUID();
+  if (!isUuid(internalId)) {
+    throw invalidRequest("originId must be a UUID.");
+  }
+  if (input.id !== undefined) {
+    assertRecordPublicId(input.id);
+  }
+  if (visibility === "private" && input.originId === undefined) {
+    throw unprocessable(
+      "Private records require a client-generated originId for crypto profile v1.",
+      "private_record_origin_id_required",
+    );
+  }
+  let publicId: string;
   if (visibility === "private") {
-    await createPrivateRecord(
+    publicId = await createPrivateRecord(
       queryable,
       principal.userId,
-      id,
+      internalId,
       input as PrivateRecordInput,
     );
   } else {
-    await createPublicRecord(
+    publicId = await createPublicRecord(
       queryable,
       principal.userId,
-      id,
+      internalId,
       input as PublicRecordInput,
     );
   }
@@ -755,10 +788,10 @@ export async function createRecordInTransaction(
     principal,
     "record.create",
     "record",
-    id,
+    internalId,
     requestId,
   );
-  const row = await loadRecord(queryable, id, principal.userId, false);
+  const row = await loadRecord(queryable, publicId, principal.userId, false);
   if (row === undefined) {
     throw new Error("Created record could not be reloaded");
   }
@@ -766,8 +799,8 @@ export async function createRecordInTransaction(
   return {
     status: 201,
     headers: {
-      location: `/v1/records/${id}`,
-      etag: resourceEtag("record", id, resource.revision),
+      location: `/v1/records/${publicId}`,
+      etag: resourceEtag("record", publicId, resource.revision),
     },
     body: resource,
   };
@@ -781,9 +814,15 @@ export async function replaceRecordInTransaction(
   input: ReplaceRecordInput,
   ifMatch: string,
   requestId: string,
+  includeDeleted = false,
 ): Promise<MutationResponse<RecordResource>> {
   assertApiKeyDevice(principal, input.deviceId);
-  const current = await lockRecord(queryable, principal.userId, recordId);
+  const current = await lockRecord(
+    queryable,
+    principal.userId,
+    recordId,
+    includeDeleted,
+  );
   if (current === undefined) {
     throw notFound("record");
   }
@@ -795,6 +834,15 @@ export async function replaceRecordInTransaction(
     throw unprocessable(
       "The body id must match the record path id.",
       "record_id_mismatch",
+    );
+  }
+  if (
+    input.originId !== undefined &&
+    input.originId.toLowerCase() !== current.id.toLowerCase()
+  ) {
+    throw unprocessable(
+      "The body originId must match the record's immutable originId.",
+      "record_origin_id_mismatch",
     );
   }
   const visibility = input.visibility ?? "public";
@@ -809,14 +857,14 @@ export async function replaceRecordInTransaction(
     await replacePrivateRecord(
       queryable,
       principal.userId,
-      recordId,
+      current.id,
       input as PrivateRecordInput,
     );
   } else {
     await replacePublicRecord(
       queryable,
       principal.userId,
-      recordId,
+      current.id,
       input as PublicRecordInput,
     );
   }
@@ -825,7 +873,7 @@ export async function replaceRecordInTransaction(
     principal,
     "record.replace",
     "record",
-    recordId,
+    current.id,
     requestId,
   );
   const row = await loadRecord(queryable, recordId, principal.userId, false);
@@ -866,13 +914,13 @@ export async function deleteRecordInTransaction(
            nonce = NULL,
            ciphertext = NULL,
            encrypted_content_type = NULL
-       WHERE user_id = $1 AND id = $2`,
-      [principal.userId, recordId],
+      WHERE user_id = $1 AND id = $2`,
+      [principal.userId, current.id],
     );
   } else {
     await queryable.query(
       "UPDATE records SET deleted_at = clock_timestamp() WHERE user_id = $1 AND id = $2",
-      [principal.userId, recordId],
+      [principal.userId, current.id],
     );
   }
   await writeMutationAudit(
@@ -880,7 +928,7 @@ export async function deleteRecordInTransaction(
     principal,
     "record.delete",
     "record",
-    recordId,
+    current.id,
     requestId,
   );
   return { status: 204, headers: {}, body: null };
@@ -908,7 +956,8 @@ export async function loadRecordResourcesForSync(
 
 export function mapRecordRow(row: RecordRow): RecordResource {
   const common: RecordCommon = {
-    id: row.id,
+    id: row.public_id,
+    originId: row.id,
     userId: row.user_id,
     deviceId: row.device_id,
     revision: Number(row.revision),
@@ -1011,9 +1060,9 @@ export function publicProjection(
 async function createPublicRecord(
   queryable: Queryable,
   userId: string,
-  id: string,
+  internalId: string,
   input: PublicRecordInput,
-): Promise<void> {
+): Promise<string> {
   const content = await publicContent(queryable, userId, input);
   assertEndAfterStart(input.occurredAt, input.endedAt);
   const tagIds = normalizedIds(input.tagIds ?? [], "tagIds");
@@ -1024,74 +1073,126 @@ async function createPublicRecord(
   const metadata = input.metadata ?? {};
   const sourceMetadata = source?.metadata ?? {};
   assertPublicRecordDocumentSizes(content.payload, metadata, sourceMetadata);
-  await queryable.query(
-    `INSERT INTO records (
-       id, user_id, device_id, visibility, event_at, end_at, public_payload,
-       metadata, template_id, template_version, source_kind, source_provider,
-       source_external_id, source_url, source_metadata
-     ) VALUES (
-       $1, $2, $3, 'public', $4::timestamptz, $5::timestamptz, $6::jsonb,
-       $7::jsonb, $8, $9, $10, $11, $12, $13, $14::jsonb
-     )`,
-    [
-      id,
-      userId,
-      input.deviceId,
-      requiredDate(input.occurredAt, "occurredAt"),
-      nullableDate(input.endedAt, "endedAt"),
-      JSON.stringify(content.payload),
-      JSON.stringify(metadata),
-      content.templateId,
-      content.templateVersion,
-      source?.kind ?? null,
-      source?.provider ?? null,
-      source?.externalId ?? null,
-      source?.url ?? null,
-      JSON.stringify(sourceMetadata),
-    ],
+  const publicId = await insertWithRecordPublicId(
+    input.id,
+    async (candidate) =>
+      queryable.query(
+        `INSERT INTO records (
+           id, public_id, user_id, device_id, visibility, event_at, end_at,
+           public_payload, metadata, template_id, template_version, source_kind,
+           source_provider, source_external_id, source_url, source_metadata
+         ) VALUES (
+           $1, $2, $3, $4, 'public', $5::timestamptz, $6::timestamptz,
+           $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb
+         )
+         ON CONFLICT (public_id) DO NOTHING
+         RETURNING id`,
+        [
+          internalId,
+          candidate,
+          userId,
+          input.deviceId,
+          requiredDate(input.occurredAt, "occurredAt"),
+          nullableDate(input.endedAt, "endedAt"),
+          JSON.stringify(content.payload),
+          JSON.stringify(metadata),
+          content.templateId,
+          content.templateVersion,
+          source?.kind ?? null,
+          source?.provider ?? null,
+          source?.externalId ?? null,
+          source?.url ?? null,
+          JSON.stringify(sourceMetadata),
+        ],
+      ),
   );
-  await replaceAssociations(queryable, userId, id, tagIds, mediaIds, true);
+  await replaceAssociations(queryable, userId, internalId, tagIds, mediaIds, true);
   await replaceResourceReferences(
     queryable,
     userId,
     "record",
-    id,
+    internalId,
     input.references ?? [],
   );
+  return publicId;
 }
 
 async function createPrivateRecord(
   queryable: Queryable,
   userId: string,
-  id: string,
+  internalId: string,
   input: PrivateRecordInput,
-): Promise<void> {
-  if (input.id !== id) {
+): Promise<string> {
+  if (input.originId !== internalId) {
     throw unprocessable(
-      "Private record id must be client generated.",
-      "private_record_id_required",
+      "Private record originId must be client generated.",
+      "private_record_origin_id_required",
     );
   }
   await assertEncryptionProfile(queryable, userId);
   const encryption = validateEncryption(input.encryption);
   const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds");
   await assertMediaIds(queryable, userId, mediaIds, "private");
-  await queryable.query(
-    `INSERT INTO records (
-       id, user_id, device_id, visibility, cipher_algorithm, crypto_version,
-       key_version, nonce, ciphertext, encrypted_content_type
-     ) VALUES ($1, $2, $3, 'private', 'A256GCM', 1, 1, $4, $5,
-       'application/vnd.exeligmos.record+json')`,
-    [id, userId, input.deviceId, encryption.nonce, encryption.ciphertext],
+  const publicId = await insertWithRecordPublicId(
+    input.id,
+    async (candidate) =>
+      queryable.query(
+        `INSERT INTO records (
+           id, public_id, user_id, device_id, visibility, cipher_algorithm,
+           crypto_version, key_version, nonce, ciphertext, encrypted_content_type
+         ) VALUES ($1, $2, $3, $4, 'private', 'A256GCM', 1, 1, $5, $6,
+           'application/vnd.exeligmos.record+json')
+         ON CONFLICT (public_id) DO NOTHING
+         RETURNING id`,
+        [
+          internalId,
+          candidate,
+          userId,
+          input.deviceId,
+          encryption.nonce,
+          encryption.ciphertext,
+        ],
+      ),
   );
-  await replaceAssociations(queryable, userId, id, [], mediaIds, false);
+  await replaceAssociations(queryable, userId, internalId, [], mediaIds, false);
   await replaceResourceReferences(
     queryable,
     userId,
     "record",
-    id,
+    internalId,
     input.references ?? [],
   );
+  return publicId;
+}
+
+async function insertWithRecordPublicId(
+  requestedId: string | undefined,
+  insert: (candidate: string) => Promise<{ readonly rowCount: number | null }>,
+): Promise<string> {
+  if (requestedId !== undefined) {
+    assertRecordPublicId(requestedId);
+  }
+  for (let attempt = 0; attempt < RECORD_PUBLIC_ID_ALLOCATION_ATTEMPTS; attempt += 1) {
+    const candidate = requestedId ?? generateRecordPublicId();
+    const result = await insert(candidate);
+    if (result.rowCount === 1) {
+      return candidate;
+    }
+    if (requestedId !== undefined) {
+      throw recordIdCollision(requestedId);
+    }
+  }
+  throw new Error("Could not allocate a unique record public identifier");
+}
+
+function recordIdCollision(id: string): HttpProblem {
+  return new HttpProblem({
+    status: 409,
+    code: "record_id_collision",
+    title: "Conflict",
+    type: "urn:exeligmos:problem:record-id-collision",
+    detail: `Record ID ${id} is already allocated. Generate a new ID and retry.`,
+  });
 }
 
 async function replacePublicRecord(
@@ -1112,6 +1213,7 @@ async function replacePublicRecord(
   assertPublicRecordDocumentSizes(content.payload, metadata, sourceMetadata);
   await queryable.query(
     `UPDATE records SET
+       deleted_at = NULL,
        device_id = $3,
        event_at = $4::timestamptz,
        end_at = $5::timestamptz,
@@ -1165,9 +1267,14 @@ async function replacePrivateRecord(
   await assertMediaIds(queryable, userId, mediaIds, "private");
   await queryable.query(
     `UPDATE records SET
+       deleted_at = NULL,
        device_id = $3,
+       cipher_algorithm = 'A256GCM',
+       crypto_version = 1,
+       key_version = 1,
        nonce = $4,
        ciphertext = $5,
+       encrypted_content_type = 'application/vnd.exeligmos.record+json',
        updated_at = clock_timestamp()
      WHERE user_id = $1 AND id = $2`,
     [userId, id, input.deviceId, encryption.nonce, encryption.ciphertext],
@@ -1527,14 +1634,16 @@ async function lockRecord(
   queryable: Queryable,
   userId: string,
   recordId: string,
+  includeDeleted = false,
 ): Promise<RecordRow | undefined> {
   const result = await queryable.query<RecordRow>(
     `SELECT ${RECORD_COLUMNS}
      FROM records r
      JOIN users author ON author.id = r.user_id
-     WHERE r.user_id = $1 AND r.id = $2 AND r.deleted_at IS NULL
+     WHERE r.user_id = $1 AND r.public_id = $2
+       AND ($3::boolean OR r.deleted_at IS NULL)
      FOR UPDATE OF r`,
-    [userId, recordId],
+    [userId, recordId, includeDeleted],
   );
   return result.rows[0];
 }
@@ -1546,7 +1655,7 @@ async function loadRecord(
   publicOnly: boolean,
 ): Promise<RecordRow | undefined> {
   const values: unknown[] = [recordId];
-  const where = ["r.id = $1", "r.deleted_at IS NULL"];
+  const where = ["r.public_id = $1", "r.deleted_at IS NULL"];
   if (userId !== undefined) {
     values.push(userId);
     where.push(`r.user_id = $${values.length}`);

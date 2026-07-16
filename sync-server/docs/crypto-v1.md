@@ -23,8 +23,9 @@ The profile uses:
 
 All integers inside associated-data JSON are ordinary JSON integers except
 `revision`, which is a decimal string to avoid cross-language 64-bit precision
-loss. UUIDs are lowercase canonical strings. Strings are UTF-8. Base64 in the
-OpenAPI envelope is standard padded RFC 4648 base64.
+loss. UUIDs are lowercase canonical strings. A record's five-character API
+`id` is not cryptographic input; the owner-only UUID `originId` is. Strings are
+UTF-8. Base64 in the OpenAPI envelope is standard padded RFC 4648 base64.
 
 ## Onboarding and recovery
 
@@ -78,7 +79,7 @@ HKDF `info` values are exact UTF-8 strings:
 ```text
 recordKey = HKDF-Expand-SHA256(
   userPrk,
-  "exeligmos/record-key/v1/key-version/1/" + lowercaseRecordUuid,
+  "exeligmos/record-key/v1/key-version/1/" + lowercaseRecordOriginUuid,
   32
 )
 
@@ -139,7 +140,9 @@ The request's clear `mediaIds` must be the same IDs as the encrypted `media`
 array, sorted lexicographically by lowercase UUID. Clients must reject a
 decrypted record if those sets differ.
 
-The JCS-canonical record associated-data object is:
+The JCS-canonical record associated-data object is below. For compatibility
+with crypto profile v1, its `recordId` member contains the owner-only
+`originId` UUID, not the five-character API `id`.
 
 ```json
 {
@@ -154,11 +157,16 @@ The JCS-canonical record associated-data object is:
 }
 ```
 
-For creation, the client generates the record UUID and encrypts for revision
-`"1"`. For replacement or patching, it encrypts a complete fresh document for
+For creation, the client generates both a five-character Base64URL record `id`
+and a UUID `originId`, then encrypts for revision `"1"` using `originId` as the
+AAD `recordId`. For replacement or patching, it encrypts a complete fresh document for
 the expected next revision and sends the current ETag in `If-Match`. Every
 private mutation must carry a fresh envelope, including device or media-link
 changes. Visibility is immutable.
+
+If the server rejects a newly generated five-character `id` because it
+collides, the client may generate a replacement `id` and retry without
+re-encrypting: the unchanged `originId` is the cryptographic identity.
 
 Deletion is the exception because a tombstone has no encrypted document. The
 client sends the current ETag and no replacement envelope. The server increments
@@ -211,7 +219,7 @@ copied into production encryption.
 mnemonic:
   abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
 userId:   00000000-0000-4000-8000-000000000001
-recordId: 00000000-0000-4000-8000-000000000002
+originId: 00000000-0000-4000-8000-000000000002
 deviceId: 00000000-0000-4000-8000-000000000004
 revision: 1
 nonce hex: 000102030405060708090a0b

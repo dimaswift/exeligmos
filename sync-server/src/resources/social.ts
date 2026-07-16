@@ -396,10 +396,16 @@ export class PublicActivityService {
 
       const sequenceBoundary = latestSnapshot ? highWater : afterSequence;
       const values: unknown[] = [sequenceBoundary.toString(), resourceTypes];
-      const joins = ["JOIN users actor ON actor.id = activity.actor_user_id"];
+      const joins = [
+        "JOIN users actor ON actor.id = activity.actor_user_id",
+        `LEFT JOIN records activity_record
+           ON activity.resource_type = 'record'
+          AND activity_record.id = activity.resource_id`,
+      ];
       const where = [
         `activity.sequence ${latestSnapshot ? "<=" : ">"} $1::bigint`,
         "activity.resource_type = ANY($2::text[])",
+        "(activity.resource_type <> 'record' OR activity_record.id IS NOT NULL)",
         "(activity.operation = 'delete' OR actor.status = 'active')",
       ];
       if (subscriberUserId !== undefined) {
@@ -429,7 +435,10 @@ export class PublicActivityService {
            actor.login AS actor_login,
            actor.display_name AS actor_display_name,
            activity.resource_type,
-           activity.resource_id,
+           CASE WHEN activity.resource_type = 'record'
+             THEN activity_record.public_id
+             ELSE activity.resource_id::text
+           END AS resource_id,
            activity.operation,
            activity.revision
          FROM public_activity activity

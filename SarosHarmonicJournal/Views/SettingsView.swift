@@ -3,14 +3,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var syncCoordinator: SyncCoordinator
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
-    @Query(sort: \SyncLocalCommand.createdAt, order: .forward) private var syncCommands: [SyncLocalCommand]
+    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
+    private var syncCommands: [SyncLocalCommand]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
-    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = ""
+    @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
     @AppStorage(JournalSettings.deviceIDKey) private var deviceID = ""
     @AppStorage(JournalSettings.deviceNameKey) private var deviceName = ""
     @AppStorage(JournalSettings.deviceEmojiKey) private var deviceEmoji = ""
@@ -29,6 +31,7 @@ struct SettingsView: View {
     @State private var syncAuthMode = SyncAuthMode.signIn
     @State private var authenticatedUser: SyncAuthenticatedUser?
     @State private var serverConnectionState = SyncServerConnectionState.idle
+    @State private var serverStats: SyncAccountStats?
 
     var body: some View {
         Form {
@@ -146,7 +149,7 @@ struct SettingsView: View {
                 TextField("Emoji", text: $deviceEmoji)
                     .frame(maxWidth: 90)
 
-                TextField("https://journal.example.com", text: $syncServerURL)
+                TextField(JournalSettings.defaultSyncServerURL, text: $syncServerURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -166,6 +169,8 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    recordSyncSummary
 
                     Button("Sign out", role: .destructive) {
                         Task { await signOut() }
@@ -223,7 +228,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Test server", systemImage: "network.badge.shield.half.filled")
                 }
-                .disabled(isSyncing)
+                .disabled(isSyncing || authenticatedUser == nil)
 
                 Button {
                     Task { await syncWithServer() }
@@ -277,6 +282,9 @@ struct SettingsView: View {
         .onChange(of: deviceEmoji) { _, _ in
             scheduleDeviceProfileUpdate()
         }
+        .onChange(of: lastSyncAt) { _, _ in
+            Task { await refreshRecordStats() }
+        }
         .alert("Settings error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -286,6 +294,7 @@ struct SettingsView: View {
 
     @MainActor
     private func testSyncServer() async {
+        guard syncCoordinator.isAuthenticated else { return }
         isSyncing = true
         defer { isSyncing = false }
 
@@ -307,27 +316,38 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            let user: SyncAuthenticatedUser
             switch syncAuthMode {
             case .signIn:
-                user = try await services.syncService.login(
-                    to: syncServerURL,
+                try await syncCoordinator.loginAndMerge(
+                    serverURL: syncServerURL,
                     login: syncLogin,
-                    password: syncPassword
+                    password: syncPassword,
+                    modelContext: modelContext,
+                    tags: tags,
+                    entries: entries,
+                    commands: syncCommands
                 )
             case .register:
-                user = try await services.syncService.register(
-                    on: syncServerURL,
+                try await syncCoordinator.registerAndMerge(
+                    serverURL: syncServerURL,
                     login: syncLogin,
                     password: syncPassword,
                     displayName: syncDisplayName,
-                    inviteCode: syncInviteCode
+                    inviteCode: syncInviteCode,
+                    modelContext: modelContext,
+                    tags: tags,
+                    entries: entries,
+                    commands: syncCommands
                 )
+            }
+            guard let user = syncCoordinator.authenticatedUser else {
+                throw SyncService.SyncError.authenticationRequired
             }
             authenticatedUser = user
             syncPassword = ""
             serverConnectionState = .ready
             syncMessage = "Signed in as @\(user.login). The session is securely bound to this device."
+            Task { await refreshRecordStats() }
         } catch {
             setServerFailure(error)
         }
@@ -339,8 +359,9 @@ struct SettingsView: View {
         defer { isSyncing = false }
 
         do {
-            try await services.syncService.logout(from: syncServerURL)
+            try await syncCoordinator.signOut(serverURL: syncServerURL)
             authenticatedUser = nil
+            serverStats = nil
             serverConnectionState = .ready
             syncMessage = "Signed out. Local journal data remains on this device."
         } catch {
@@ -356,26 +377,21 @@ struct SettingsView: View {
             serverConnectionState = .idle
             return
         }
-        do {
-            switch try await services.syncService.authenticationState(for: syncServerURL) {
-            case .signedOut:
-                authenticatedUser = nil
-            case .signedIn(let user):
-                authenticatedUser = user
-                syncLogin = user.login
-            }
-        } catch {
-            authenticatedUser = nil
-            serverConnectionState = .error(error.localizedDescription)
-        }
+        await syncCoordinator.restoreAuthentication(for: syncServerURL)
+        authenticatedUser = syncCoordinator.authenticatedUser
+        syncLogin = authenticatedUser?.login ?? syncLogin
+        await refreshRecordStats()
     }
 
     @MainActor
     private func syncWithServer() async {
+        guard let userID = syncCoordinator.authenticatedUser?.id else { return }
         isSyncing = true
         defer { isSyncing = false }
 
         do {
+            SyncLocalCommand.retryFailed(syncCommands, userID: userID)
+            try modelContext.save()
             let summary = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
                 modelContext: modelContext,
@@ -385,6 +401,7 @@ struct SettingsView: View {
             )
             serverConnectionState = .ready
             syncMessage = "Synced \(summary.uploadedRecordCount) local and \(summary.restoredRecordCount) server records, \(summary.restoredEntityCount) tags, and \(summary.uploadedMediaCount + summary.restoredMediaCount) media files."
+            await refreshRecordStats()
         } catch {
             setServerFailure(error)
         }
@@ -413,13 +430,60 @@ struct SettingsView: View {
         return "Last sync: \(elapsed.compactDuration) ago"
     }
 
+    @ViewBuilder
+    private var recordSyncSummary: some View {
+        let userID = authenticatedUser?.id
+        let localCount = entries.filter { entry in
+            entry.syncOwnerUserID == nil || entry.syncOwnerUserID == userID
+        }.count
+        let pending = syncCommands.filter { command in
+            command.isPending
+                && (command.ownerUserID == nil || command.ownerUserID == userID)
+                && (command.type == .entryUpsert || command.type == .entryDelete)
+        }
+        let failedCount = pending.filter(\.requiresManualRetry).count
+        let serverCount = serverStats?.records.total
+        let isInSync = serverCount == localCount && pending.isEmpty
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Label("Records", systemImage: "externaldrive.connected.to.line.below")
+                Spacer()
+                Text("\(localCount) local / \(serverCount.map { String($0) } ?? "—") server")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                if isInSync {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityLabel("Local and server records are synchronized")
+                }
+            }
+            if !pending.isEmpty {
+                Text(failedCount > 0
+                    ? "\(pending.count) pending, \(failedCount) need manual retry"
+                    : "\(pending.count) waiting to upload")
+                    .font(.caption)
+                    .foregroundStyle(failedCount > 0 ? .orange : .secondary)
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshRecordStats() async {
+        guard authenticatedUser != nil, syncServerURL.nilIfBlank != nil else {
+            serverStats = nil
+            return
+        }
+        serverStats = try? await services.syncService.accountStats(from: syncServerURL)
+    }
+
     private func scheduleDeviceProfileUpdate() {
         deviceUpdateTask?.cancel()
         deviceUpdateTask = Task {
             try? await Task.sleep(nanoseconds: 650_000_000)
             guard !Task.isCancelled,
                   syncServerURL.nilIfBlank != nil,
-                  authenticatedUser != nil else { return }
+                  syncCoordinator.isAuthenticated else { return }
             try? await services.syncService.registerChannel(to: syncServerURL)
         }
     }

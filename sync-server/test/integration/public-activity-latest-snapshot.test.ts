@@ -150,12 +150,13 @@ test(
       assertAscending(followingPage.data);
       assert.ok(followingPage.data.every((item) => item.actor.id === targetId));
 
-      const liveRecordId = randomUUID();
-      await sql.query(
+      const liveRecord = await sql.query<{ public_id: string }>(
         `INSERT INTO records (id, user_id, device_id, event_at, public_payload)
-         VALUES ($1, $2, $3, now(), '{"text":"live"}'::jsonb)`,
-        [liveRecordId, targetId, targetDeviceId],
+         VALUES ($1, $2, $3, now(), '{"text":"live"}'::jsonb)
+         RETURNING public_id`,
+        [randomUUID(), targetId, targetDeviceId],
       );
+      const liveRecordId = required(liveRecord.rows[0]?.public_id);
       const followingResume = await app.inject({
         method: "GET",
         url: `/v1/activity?cursor=${encodeURIComponent(followingPage.nextCursor)}`,
@@ -165,6 +166,21 @@ test(
         followingResume.json<ActivityPage>().data.map((item) => item.resourceId),
         [liveRecordId],
       );
+
+      const orphanCursor = followingResume.json<ActivityPage>().nextCursor;
+      await sql.query(
+        `INSERT INTO public_activity (
+           actor_user_id, resource_type, resource_id, operation, revision
+         ) VALUES ($1, 'record', $2, 'upsert', 1)`,
+        [targetId, randomUUID()],
+      );
+      const orphanFiltered = await app.inject({
+        method: "GET",
+        url: `/v1/activity?cursor=${encodeURIComponent(orphanCursor)}`,
+      });
+      assert.equal(orphanFiltered.statusCode, 200, orphanFiltered.body);
+      assert.deepEqual(orphanFiltered.json<ActivityPage>().data, []);
+      assert.equal(orphanFiltered.json<ActivityPage>().hasMore, false);
     } finally {
       try {
         await sql.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [

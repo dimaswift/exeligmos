@@ -9,6 +9,7 @@ import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
 import { runMigrations } from "../../src/db/migrate.js";
 import { HttpProblem } from "../../src/http/problem.js";
+import { generateRecordPublicId } from "../../src/resources/records.js";
 import { type SyncBatchInput, SyncService } from "../../src/resources/sync.js";
 import { testConfig } from "../helpers.js";
 
@@ -105,7 +106,8 @@ test(
 
       const tagId = randomUUID();
       const templateId = randomUUID();
-      const recordId = randomUUID();
+      const recordId = generateRecordPublicId();
+      const recordOriginId = randomUUID();
       const catalogBatch = await service.applyBatch(
         principal,
         {
@@ -137,6 +139,7 @@ test(
               clientMutationId: "sync-record-create-1",
               record: {
                 id: recordId,
+                originId: recordOriginId,
                 deviceId: owner.deviceId,
                 occurredAt: "2026-07-15T01:30:00Z",
                 payload: { text: "Catalog-linked record" },
@@ -159,6 +162,26 @@ test(
           ["record", "succeeded"],
         ],
       );
+      const ownerStats = await service.stats(principal);
+      assert.ok(ownerStats.cursor.length > 1);
+      assert.deepEqual({ ...ownerStats, cursor: "<cursor>" }, {
+        cursor: "<cursor>",
+        records: { total: 1, public: 1, private: 0 },
+        events: { total: 1 },
+        tags: { total: 1 },
+        templates: { total: 1 },
+        media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+      });
+      const otherStats = await service.stats(otherPrincipal);
+      assert.ok(otherStats.cursor.length > 1);
+      assert.deepEqual({ ...otherStats, cursor: "<cursor>" }, {
+        cursor: "<cursor>",
+        records: { total: 0, public: 0, private: 0 },
+        events: { total: 0 },
+        tags: { total: 0 },
+        templates: { total: 0 },
+        media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+      });
 
       const authoritativeRecordUpsert = await service.applyBatch(
         principal,
@@ -170,6 +193,7 @@ test(
               clientMutationId: "sync-record-authoritative-upsert-1",
               record: {
                 id: recordId,
+                originId: recordOriginId.toUpperCase(),
                 deviceId: owner.deviceId,
                 occurredAt: "2026-07-14T23:00:00Z",
                 payload: { text: "Local client is authoritative" },
@@ -190,7 +214,7 @@ test(
         public_payload: { readonly text?: string };
       }>(
         "SELECT event_at, public_payload FROM records WHERE user_id = $1 AND id = $2",
-        [owner.userId, recordId],
+        [owner.userId, recordOriginId],
       );
       assert.equal(
         overwrittenRecord.rows[0]?.public_payload.text,
@@ -199,6 +223,56 @@ test(
       assert.equal(
         overwrittenRecord.rows[0]?.event_at.toISOString(),
         "2026-07-14T23:00:00.000Z",
+      );
+
+      const mismatchedAlias = await service.applyBatch(
+        principal,
+        {
+          deviceId: owner.deviceId,
+          mutations: [{
+            kind: "upsertRecord",
+            clientMutationId: "sync-record-alias-mismatch-1",
+            record: {
+              id: generateRecordPublicId(),
+              originId: recordOriginId,
+              deviceId: owner.deviceId,
+              occurredAt: "2026-07-14T22:00:00Z",
+              payload: { text: "Must not replace through another alias" },
+            },
+          }],
+        },
+        "sync-record-alias-mismatch-batch-1",
+        "sync-record-alias-mismatch-request",
+      );
+      assert.equal(mismatchedAlias.body.results[0]?.status, "failed");
+      assert.equal(
+        mismatchedAlias.body.results[0]?.problem?.code,
+        "record_id_mismatch",
+      );
+
+      const collidedAlias = await service.applyBatch(
+        principal,
+        {
+          deviceId: owner.deviceId,
+          mutations: [{
+            kind: "upsertRecord",
+            clientMutationId: "sync-record-alias-collision-1",
+            record: {
+              id: recordId,
+              originId: randomUUID(),
+              deviceId: owner.deviceId,
+              occurredAt: "2026-07-14T22:00:00Z",
+              payload: { text: "Must be rejected as an alias collision" },
+            },
+          }],
+        },
+        "sync-record-alias-collision-batch-1",
+        "sync-record-alias-collision-request",
+      );
+      assert.equal(collidedAlias.body.results[0]?.status, "failed");
+      assert.equal(
+        collidedAlias.body.results[0]?.problem?.code,
+        "record_id_collision",
       );
 
       const catalogFeed = await service.listChanges(principal, {
@@ -216,6 +290,23 @@ test(
           `record:${recordId}`,
         ]),
       );
+
+      const recordCursorPage = await service.listChanges(principal, {
+        resourceTypes: ["record"],
+      });
+      const orphanCursor = recordCursorPage.nextCursor;
+      await sql.query(
+        `INSERT INTO change_log (
+           user_id, entity_type, entity_id, operation, revision
+         ) VALUES ($1, 'record', $2, 'upsert', 1)`,
+        [owner.userId, randomUUID()],
+      );
+      const orphanFilteredPage = await service.listChanges(principal, {
+        resourceTypes: ["record"],
+        cursor: orphanCursor,
+      });
+      assert.deepEqual(orphanFilteredPage.data, []);
+      assert.equal(orphanFilteredPage.hasMore, false);
 
       const atomicEventId = randomUUID();
       const atomicMutationId = "sync-atomic-event-create-1";
@@ -399,6 +490,13 @@ test(
           error.status === 410 &&
           error.code === "cursor_expired",
       );
+
+      const postPruneStats = await service.stats(principal);
+      const postPrunePage = await service.listChanges(principal, {
+        cursor: postPruneStats.cursor,
+      });
+      assert.deepEqual(postPrunePage.data, []);
+      assert.equal(postPrunePage.hasMore, false);
     } finally {
       await database.close();
       if (userIds.length > 0) {

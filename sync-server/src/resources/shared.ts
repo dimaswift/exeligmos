@@ -218,7 +218,11 @@ export function invalidRequest(detail: string, code = "invalid_request"): HttpPr
   });
 }
 
-export function unprocessable(detail: string, code = "invalid_resource"): HttpProblem {
+export function unprocessable(
+  detail: string,
+  code = "invalid_resource",
+  path = "/",
+): HttpProblem {
   const normalizedCode = code
     .replaceAll(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replaceAll(/[^A-Za-z0-9_]/g, "_")
@@ -230,7 +234,7 @@ export function unprocessable(detail: string, code = "invalid_resource"): HttpPr
     type: `urn:exeligmos:problem:${normalizedCode.replaceAll("_", "-")}`,
     detail,
     extensions: {
-      errors: [{ path: "/", code: normalizedCode, message: detail }],
+      errors: [{ path, code: normalizedCode, message: detail }],
     },
   });
 }

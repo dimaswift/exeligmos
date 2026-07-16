@@ -9,7 +9,7 @@ import {
 } from "~/features/activity-feed";
 import {
   FeedQueryError,
-  feedCursorHref,
+  feedPageLinks,
   readFeedCursorQuery,
 } from "~/features/activity-stream/feed-query.server";
 import {
@@ -40,16 +40,22 @@ export async function loader({ context, request, url }: Route.LoaderArgs) {
       },
       signal: request.signal,
     });
+    const eventLinks = feedPageLinks(
+      url,
+      "eventsCursor",
+      snapshot.events.hasMore ? snapshot.events.nextCursor : undefined,
+    );
+    const recordLinks = feedPageLinks(
+      url,
+      "recordsCursor",
+      snapshot.records.hasMore ? snapshot.records.nextCursor : undefined,
+    );
     return {
-      eventsNextHref:
-        snapshot.events.hasMore && snapshot.events.nextCursor !== undefined
-          ? feedCursorHref(url, "eventsCursor", snapshot.events.nextCursor)
-          : null,
+      eventsNextHref: eventLinks.nextHref,
+      eventsPreviousHref: eventLinks.previousHref,
       owner: boundary.auth.user,
-      recordsNextHref:
-        snapshot.records.hasMore && snapshot.records.nextCursor !== undefined
-          ? feedCursorHref(url, "recordsCursor", snapshot.records.nextCursor)
-          : null,
+      recordsNextHref: recordLinks.nextHref,
+      recordsPreviousHref: recordLinks.previousHref,
       snapshot,
     };
   } catch (error) {
@@ -79,6 +85,7 @@ export default function Feed({ loaderData }: Route.ComponentProps) {
             record,
           }))}
           nextHref={loaderData.recordsNextHref}
+          previousHref={loaderData.recordsPreviousHref}
           referenceHref={referenceHref}
           title="My records"
         />
@@ -90,6 +97,7 @@ export default function Feed({ loaderData }: Route.ComponentProps) {
             event,
           }))}
           nextHref={loaderData.eventsNextHref}
+          previousHref={loaderData.eventsPreviousHref}
           referenceHref={referenceHref}
           title="My events"
         />

@@ -24,7 +24,10 @@ info:
     authenticated ciphertext envelope and intentionally cannot render, index,
     or embed their plaintext.
 
-    All timestamps are RFC 3339 instants. All user-owned identifiers are UUIDs.
+    All timestamps are RFC 3339 instants. Record API identifiers are globally
+    unique five-character Base64URL strings; their owner-only `originId` UUIDs
+    remain the storage and cryptographic identities. Other user-owned identifiers
+    are UUIDs.
     Collection order is stable and cursor based. Cursors are opaque and must
     never be parsed or constructed by clients.
 
@@ -1546,6 +1549,48 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/sync/stats:
+    get:
+      operationId: getSyncStats
+      tags: [Synchronization]
+      summary: Count the authenticated user's restorable resources
+      description: |
+        Returns a lightweight owner-only snapshot for restore planning and
+        progress indicators. `media.restorable` counts distinct ready public
+        media objects attached to active public records; it is the media total
+        a plaintext client can recover through the record collection. Capture
+        `cursor` before paging those collections, then resume the change feed
+        from it so writes concurrent with the snapshot are not missed.
+      x-required-scopes: [sync:read]
+      responses:
+        '200':
+          description: Current active resource and media-byte totals.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncStats'
+              example:
+                cursor: eyJ2IjoxLCJraW5kIjoic3luYy1jaGFuZ2VzIiwic2VxIjoiNDgxMiJ9
+                records: { total: 728, public: 728, private: 0 }
+                events: { total: 0 }
+                tags: { total: 14 }
+                templates: { total: 2 }
+                media:
+                  total: 1936
+                  byteLength: 4096432128
+                  restorable: 1936
+                  restorableByteLength: 4096432128
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/sync/changes:
     get:
       operationId: getSyncChanges
@@ -1733,8 +1778,9 @@ paths:
       tags: [Records]
       summary: Create a public or private record
       description: |
-        `visibility` defaults to `public` when omitted. Client-generated UUIDs
-        are accepted for offline creation. Reusing the same Idempotency-Key with
+        `visibility` defaults to `public` when omitted. Client-generated
+        five-character IDs and owner-only UUID `originId` values are accepted
+        for offline creation. Reusing the same Idempotency-Key with
         an identical body returns the original result; reuse with a different
         body returns `409`. If `source.provider` and `source.externalId` are
         present, their pair is unique for the authenticated user, providing a
@@ -1756,7 +1802,8 @@ paths:
               publicSolarFlare:
                 summary: Public agent-created record using a template
                 value:
-                  id: 2ea5377d-6251-459d-9f6e-3f48e07763a1
+                  id: Q7_xA
+                  originId: 2ea5377d-6251-459d-9f6e-3f48e07763a1
                   deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
                   occurredAt: '2026-07-14T16:42:00Z'
                   visibility: public
@@ -1776,7 +1823,8 @@ paths:
               privateCiphertext:
                 summary: End-to-end encrypted private record
                 value:
-                  id: 2e49357d-6251-459d-9f6e-3f48e07763a2
+                  id: P9-bC
+                  originId: 2e49357d-6251-459d-9f6e-3f48e07763a2
                   deviceId: 8f7bb69e-a087-4338-bcf2-03dbefd03b74
                   visibility: private
                   encryption:
@@ -2602,8 +2650,7 @@ components:
       in: path
       required: true
       schema:
-        type: string
-        format: uuid
+        $ref: '#/components/schemas/RecordPublicId'
     EventId:
       name: eventId
       in: path
@@ -2693,7 +2740,7 @@ components:
         type: string
         minLength: 3
         maxLength: 200
-      example: '"record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"'
+      example: '"record-aB_9Z-r4"'
     VisibilityFilter:
       name: visibility
       in: query
@@ -2765,7 +2812,7 @@ components:
       description: Strong opaque validator for the returned resource revision.
       schema:
         type: string
-      example: '"record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"'
+      example: '"record-aB_9Z-r4"'
     RequestId:
       description: Server-assigned request correlation identifier.
       schema:
@@ -3561,6 +3608,19 @@ components:
       type: string
       enum: [public, private]
       description: Chosen when the record is created and immutable thereafter.
+    RecordPublicId:
+      type: string
+      minLength: 5
+      maxLength: 5
+      pattern: '^[A-Za-z0-9_-]{5}$'
+      description: Globally unique, case-sensitive Base64URL record identifier.
+    ResourceIdentifier:
+      description: >-
+        Record resources use RecordPublicId; all other resource types use UUIDs.
+      oneOf:
+        - $ref: '#/components/schemas/RecordPublicId'
+        - type: string
+          format: uuid
     SourceKind:
       type: string
       enum: [client, agent, import, server]
@@ -3609,8 +3669,7 @@ components:
           type: string
           format: uuid
         targetId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
       additionalProperties: false
     ResourceReferenceInput:
       type: object
@@ -3629,8 +3688,7 @@ components:
           type: string
           format: uuid
         targetId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
       additionalProperties: false
     ResourceReferenceList:
       type: array
@@ -3763,9 +3821,11 @@ components:
       required: [deviceId, occurredAt]
       properties:
         id:
+          $ref: '#/components/schemas/RecordPublicId'
+        originId:
           type: string
           format: uuid
-          description: Optional stable client-generated UUID for offline creation.
+          description: Optional owner-only storage identity for offline creation.
         deviceId:
           type: string
           format: uuid
@@ -3832,15 +3892,17 @@ components:
       additionalProperties: false
     PrivateRecordInput:
       type: object
-      required: [id, deviceId, visibility, encryption]
+      required: [id, originId, deviceId, visibility, encryption]
       description: |
-        The client-generated ID is required because the authenticated
-        ciphertext binds it before upload. No occurrence time, source, label,
+        The client-generated owner-only originId is required because the
+        authenticated ciphertext binds it before upload. No occurrence time, source, label,
         tags, semantic metadata, or media description is accepted outside
         ciphertext. Opaque private-media IDs are exposed only so the server can
         authorize downloads and retain media that is still attached.
       properties:
         id:
+          $ref: '#/components/schemas/RecordPublicId'
+        originId:
           type: string
           format: uuid
           description: Required client-generated UUID used by crypto profile v1.
@@ -3885,6 +3947,7 @@ components:
       type: object
       required:
         - id
+        - originId
         - userId
         - deviceId
         - visibility
@@ -3894,9 +3957,14 @@ components:
         - references
       properties:
         id:
+          $ref: '#/components/schemas/RecordPublicId'
+          readOnly: true
+        originId:
           type: string
           format: uuid
           readOnly: true
+          description: >-
+            Owner-only immutable UUID used for storage identity and crypto profile v1.
         userId:
           type: string
           format: uuid
@@ -3929,6 +3997,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/RecordCommon'
         - type: object
+          description: Authenticated owner representation of a record whose visibility is public.
           required:
             - visibility
             - author
@@ -4097,7 +4166,7 @@ components:
       type: object
       description: |
         Anonymous public representation. It omits the creating device and all
-        owner-only media URLs while preserving explicitly public content.
+        owner-only UUID origin and media URLs while preserving explicitly public content.
       required:
         - id
         - userId
@@ -4115,8 +4184,7 @@ components:
         - updatedAt
       properties:
         id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/RecordPublicId'
         userId:
           type: string
           format: uuid
@@ -4412,8 +4480,7 @@ components:
         resourceType:
           $ref: '#/components/schemas/PublicActivityResourceType'
         resourceId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
         operation:
           type: string
           enum: [upsert, delete]
@@ -4882,6 +4949,47 @@ components:
           type: string
           format: uri-reference
       additionalProperties: false
+    SyncResourceCount:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+      additionalProperties: false
+    SyncStats:
+      type: object
+      required: [cursor, records, events, tags, templates, media]
+      properties:
+        cursor:
+          type: string
+          minLength: 2
+          description: Opaque all-resource change cursor captured with these totals.
+        records:
+          type: object
+          required: [total, public, private]
+          properties:
+            total: { type: integer, format: int64, minimum: 0 }
+            public: { type: integer, format: int64, minimum: 0 }
+            private: { type: integer, format: int64, minimum: 0 }
+          additionalProperties: false
+        events:
+          $ref: '#/components/schemas/SyncResourceCount'
+        tags:
+          $ref: '#/components/schemas/SyncResourceCount'
+        templates:
+          $ref: '#/components/schemas/SyncResourceCount'
+        media:
+          type: object
+          required: [total, byteLength, restorable, restorableByteLength]
+          properties:
+            total: { type: integer, format: int64, minimum: 0 }
+            byteLength: { type: integer, format: int64, minimum: 0 }
+            restorable: { type: integer, format: int64, minimum: 0 }
+            restorableByteLength: { type: integer, format: int64, minimum: 0 }
+          additionalProperties: false
+      additionalProperties: false
     SyncResourceType:
       type: string
       enum: [record, event, tag, template, device, media, user, subscription]
@@ -4893,8 +5001,7 @@ components:
       required: [id, userId, resourceType, revision, deletedAt]
       properties:
         id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
         userId:
           type: string
           format: uuid
@@ -4941,8 +5048,7 @@ components:
         operation:
           $ref: '#/components/schemas/ChangeOperation'
         resourceId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
         revision:
           type: integer
           format: int64
@@ -5078,8 +5184,7 @@ components:
           type: string
           enum: [record, event, tag, template]
         resourceId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
         ifMatch:
           type: string
           minLength: 3
@@ -5131,8 +5236,7 @@ components:
         resourceType:
           $ref: '#/components/schemas/SyncResourceType'
         resourceId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/ResourceIdentifier'
         revision:
           type: integer
           format: int64

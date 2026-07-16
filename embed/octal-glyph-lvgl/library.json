@@ -1,0 +1,28 @@
+{
+  "name": "octal-glyph-lvgl",
+  "version": "0.1.0",
+  "description": "LVGL widget that renders OctalGlyphs (radial core-ring + digit-arm glyphs) at a specified depth (3-8) and color, on a fixed 120x120px canvas. Core ring is live-drawn (lv_draw_arc); each digit arm is a pre-rendered PROGMEM sprite (baked offline, see tools/bake_sprites.py) composited with lv_draw_image -- no ThorVG, no vector-graphics module, no triangulation, no runtime shape math, no dependency beyond LVGL itself. Reusable on any LVGL 9 target (ESP32, simulator, etc).",
+  "keywords": ["lvgl", "gui", "widget", "glyph", "graphics"],
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "authors": [
+    {
+      "name": "Exeligmos"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": "*",
+  "dependencies": {
+    "lvgl/lvgl": "^9.2.0"
+  },
+  "build": {
+    "srcDir": "src",
+    "flags": ["-I src"]
+  },
+  "export": {
+    "include": ["src", "tools", "examples", "library.json", "library.properties", "README.md"]
+  }
+}

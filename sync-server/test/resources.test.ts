@@ -33,6 +33,7 @@ const actorId = "0ce129e6-cbf7-4731-8829-7592f69fb31e";
 const deviceId = "2dca8eab-00a8-4e94-9bd2-2fcbfe17e890";
 const otherDeviceId = "8f7bb69e-a087-4338-bcf2-03dbefd03b74";
 const recordId = "2ea5377d-6251-459d-9f6e-3f48e07763a1";
+const recordPublicId = "Q7_xA";
 
 const apiKeyPrincipal: Principal = {
   kind: "api_key",
@@ -124,7 +125,8 @@ test("JSON Mustache rendering supports sections and typed exact variables", () =
 
 test("anonymous projection strips owner-only record and media fields", () => {
   const ownerRecord: PublicRecordResource = {
-    id: recordId,
+    id: recordPublicId,
+    originId: recordId,
     userId,
     author: { id: userId, login: "owner", displayName: "Owner" },
     deviceId,
@@ -157,6 +159,7 @@ test("anonymous projection strips owner-only record and media fields", () => {
 
   const projection = publicProjection(ownerRecord);
   assert.equal("deviceId" in projection, false);
+  assert.equal("originId" in projection, false);
   assert.equal("userId" in projection.media[0]!, false);
   assert.equal("deviceId" in projection.media[0]!, false);
   assert.equal("contentUrl" in projection.media[0]!, false);

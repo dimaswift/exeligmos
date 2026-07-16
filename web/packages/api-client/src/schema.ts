@@ -540,6 +540,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sync/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the authenticated user's restorable resources
+         * @description Returns a lightweight owner-only snapshot for restore planning and
+         *     progress indicators. `media.restorable` counts distinct ready public
+         *     media objects attached to active public records; it is the media total
+         *     a plaintext client can recover through the record collection. Capture
+         *     `cursor` before paging those collections, then resume the change feed
+         *     from it so writes concurrent with the snapshot are not missed.
+         */
+        get: operations["getSyncStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sync/changes": {
         parameters: {
             query?: never;
@@ -610,8 +635,9 @@ export interface paths {
         put?: never;
         /**
          * Create a public or private record
-         * @description `visibility` defaults to `public` when omitted. Client-generated UUIDs
-         *     are accepted for offline creation. Reusing the same Idempotency-Key with
+         * @description `visibility` defaults to `public` when omitted. Client-generated
+         *     five-character IDs and owner-only UUID `originId` values are accepted
+         *     for offline creation. Reusing the same Idempotency-Key with
          *     an identical body returns the original result; reuse with a different
          *     body returns `409`. If `source.provider` and `source.externalId` are
          *     present, their pair is unique for the authenticated user, providing a
@@ -1193,6 +1219,10 @@ export interface components {
          * @enum {string}
          */
         RecordVisibility: "public" | "private";
+        /** @description Globally unique, case-sensitive Base64URL record identifier. */
+        RecordPublicId: string;
+        /** @description Record resources use RecordPublicId; all other resource types use UUIDs. */
+        ResourceIdentifier: components["schemas"]["RecordPublicId"] | string;
         /** @enum {string} */
         SourceKind: "client" | "agent" | "import" | "server";
         SourceReference: {
@@ -1217,8 +1247,7 @@ export interface components {
             targetType: "user" | "record" | "event";
             /** Format: uuid */
             targetUserId: string;
-            /** Format: uuid */
-            targetId: string;
+            targetId: components["schemas"]["ResourceIdentifier"];
         };
         ResourceReferenceInput: {
             /** @default reference */
@@ -1227,8 +1256,7 @@ export interface components {
             targetType: "user" | "record" | "event";
             /** Format: uuid */
             targetUserId: string;
-            /** Format: uuid */
-            targetId: string;
+            targetId: components["schemas"]["ResourceIdentifier"];
         };
         /** @default [] */
         ResourceReferenceList: components["schemas"]["ResourceReferenceInput"][];
@@ -1295,11 +1323,12 @@ export interface components {
             contentType: "application/vnd.exeligmos.record+json";
         };
         PublicRecordInput: {
+            id?: components["schemas"]["RecordPublicId"];
             /**
              * Format: uuid
-             * @description Optional stable client-generated UUID for offline creation.
+             * @description Optional owner-only storage identity for offline creation.
              */
-            id?: string;
+            originId?: string;
             /** Format: uuid */
             deviceId: string;
             /**
@@ -1331,18 +1360,19 @@ export interface components {
             render: components["schemas"]["TemplateRenderRequest"];
         });
         /**
-         * @description The client-generated ID is required because the authenticated
-         *     ciphertext binds it before upload. No occurrence time, source, label,
+         * @description The client-generated owner-only originId is required because the
+         *     authenticated ciphertext binds it before upload. No occurrence time, source, label,
          *     tags, semantic metadata, or media description is accepted outside
          *     ciphertext. Opaque private-media IDs are exposed only so the server can
          *     authorize downloads and retain media that is still attached.
          */
         PrivateRecordInput: {
+            id: components["schemas"]["RecordPublicId"];
             /**
              * Format: uuid
              * @description Required client-generated UUID used by crypto profile v1.
              */
-            id: string;
+            originId: string;
             /** Format: uuid */
             deviceId: string;
             /**
@@ -1358,8 +1388,12 @@ export interface components {
         CreateRecordRequest: components["schemas"]["PublicRecordInput"] | components["schemas"]["PrivateRecordInput"];
         ReplaceRecordRequest: components["schemas"]["PublicRecordInput"] | components["schemas"]["PrivateRecordInput"];
         RecordCommon: {
-            /** Format: uuid */
-            readonly id: string;
+            readonly id: components["schemas"]["RecordPublicId"];
+            /**
+             * Format: uuid
+             * @description Owner-only immutable UUID used for storage identity and crypto profile v1.
+             */
+            readonly originId: string;
             /** Format: uuid */
             readonly userId: string;
             /** Format: uuid */
@@ -1449,11 +1483,10 @@ export interface components {
         };
         /**
          * @description Anonymous public representation. It omits the creating device and all
-         *     owner-only media URLs while preserving explicitly public content.
+         *     owner-only UUID origin and media URLs while preserving explicitly public content.
          */
         PublicRecordProjection: {
-            /** Format: uuid */
-            id: string;
+            id: components["schemas"]["RecordPublicId"];
             /** Format: uuid */
             userId: string;
             author: components["schemas"]["PublicUserSummary"];
@@ -1604,8 +1637,7 @@ export interface components {
             publishedAt: string;
             actor: components["schemas"]["PublicUserSummary"];
             resourceType: components["schemas"]["PublicActivityResourceType"];
-            /** Format: uuid */
-            resourceId: string;
+            resourceId: components["schemas"]["ResourceIdentifier"];
             /** @enum {string} */
             operation: "upsert" | "delete";
             /** Format: int64 */
@@ -1813,13 +1845,41 @@ export interface components {
             /** Format: uri-reference */
             publicContentUrl: string;
         };
+        SyncResourceCount: {
+            /** Format: int64 */
+            total: number;
+        };
+        SyncStats: {
+            /** @description Opaque all-resource change cursor captured with these totals. */
+            cursor: string;
+            records: {
+                /** Format: int64 */
+                total: number;
+                /** Format: int64 */
+                public: number;
+                /** Format: int64 */
+                private: number;
+            };
+            events: components["schemas"]["SyncResourceCount"];
+            tags: components["schemas"]["SyncResourceCount"];
+            templates: components["schemas"]["SyncResourceCount"];
+            media: {
+                /** Format: int64 */
+                total: number;
+                /** Format: int64 */
+                byteLength: number;
+                /** Format: int64 */
+                restorable: number;
+                /** Format: int64 */
+                restorableByteLength: number;
+            };
+        };
         /** @enum {string} */
         SyncResourceType: "record" | "event" | "tag" | "template" | "device" | "media" | "user" | "subscription";
         /** @enum {string} */
         ChangeOperation: "upsert" | "delete";
         Tombstone: {
-            /** Format: uuid */
-            id: string;
+            id: components["schemas"]["ResourceIdentifier"];
             /** Format: uuid */
             userId: string;
             resourceType: components["schemas"]["SyncResourceType"];
@@ -1836,8 +1896,7 @@ export interface components {
             changedAt: string;
             resourceType: components["schemas"]["SyncResourceType"];
             operation: components["schemas"]["ChangeOperation"];
-            /** Format: uuid */
-            resourceId: string;
+            resourceId: components["schemas"]["ResourceIdentifier"];
             /** Format: int64 */
             revision: number;
             etag: string;
@@ -1866,7 +1925,7 @@ export interface components {
              */
             kind: "upsertRecord";
             clientMutationId: components["schemas"]["MutationId"];
-            /** @description Required when replacing an existing record. */
+            /** @description Optional compatibility hint. Record synchronization is client-authoritative: an active or deleted relay copy with the same ID is replaced by the submitted local record even when this value is absent or stale. */
             ifMatch?: string;
             record: components["schemas"]["CreateRecordRequest"];
         };
@@ -1912,8 +1971,7 @@ export interface components {
             clientMutationId: components["schemas"]["MutationId"];
             /** @enum {string} */
             resourceType: "record" | "event" | "tag" | "template";
-            /** Format: uuid */
-            resourceId: string;
+            resourceId: components["schemas"]["ResourceIdentifier"];
             ifMatch: string;
         };
         SyncMutation: components["schemas"]["UpsertRecordMutation"] | components["schemas"]["UpsertEventMutation"] | components["schemas"]["UpsertTagMutation"] | components["schemas"]["UpsertTemplateMutation"] | components["schemas"]["DeleteMutation"];
@@ -1933,8 +1991,7 @@ export interface components {
             clientMutationId: components["schemas"]["MutationId"];
             status: components["schemas"]["MutationStatus"];
             resourceType?: components["schemas"]["SyncResourceType"];
-            /** Format: uuid */
-            resourceId?: string;
+            resourceId?: components["schemas"]["ResourceIdentifier"];
             /** Format: int64 */
             revision?: number;
             etag?: string;
@@ -2098,7 +2155,7 @@ export interface components {
     parameters: {
         ApiKeyId: string;
         DeviceId: string;
-        RecordId: string;
+        RecordId: components["schemas"]["RecordPublicId"];
         EventId: string;
         TagId: string;
         TemplateId: string;
@@ -2125,7 +2182,7 @@ export interface components {
         IdempotencyKey: string;
         /**
          * @description Strong ETag of the revision being mutated.
-         * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+         * @example "record-aB_9Z-r4"
          */
         IfMatch: string;
         VisibilityFilter: components["schemas"]["RecordVisibility"];
@@ -2157,7 +2214,7 @@ export interface components {
     headers: {
         /**
          * @description Strong opaque validator for the returned resource revision.
-         * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+         * @example "record-aB_9Z-r4"
          */
         ETag: string;
         /** @description Server-assigned request correlation identifier. */
@@ -2758,7 +2815,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
             };
@@ -2794,7 +2851,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
             };
@@ -2980,7 +3037,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3023,7 +3080,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3213,7 +3270,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3255,7 +3312,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3511,7 +3568,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3610,6 +3667,56 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getSyncStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current active resource and media-byte totals. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "cursor": "eyJ2IjoxLCJraW5kIjoic3luYy1jaGFuZ2VzIiwic2VxIjoiNDgxMiJ9",
+                     *       "records": {
+                     *         "total": 728,
+                     *         "public": 728,
+                     *         "private": 0
+                     *       },
+                     *       "events": {
+                     *         "total": 0
+                     *       },
+                     *       "tags": {
+                     *         "total": 14
+                     *       },
+                     *       "templates": {
+                     *         "total": 2
+                     *       },
+                     *       "media": {
+                     *         "total": 1936,
+                     *         "byteLength": 4096432128,
+                     *         "restorable": 1936,
+                     *         "restorableByteLength": 4096432128
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SyncStats"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["ServiceUnavailable"];
         };
@@ -3858,7 +3965,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3911,7 +4018,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -3954,7 +4061,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -4205,7 +4312,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -4249,7 +4356,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**
@@ -4466,7 +4573,7 @@ export interface operations {
             header: {
                 /**
                  * @description Strong ETag of the revision being mutated.
-                 * @example "record-2ea5377d-6251-459d-9f6e-3f48e07763a1-r4"
+                 * @example "record-aB_9Z-r4"
                  */
                 "If-Match": components["parameters"]["IfMatch"];
                 /**

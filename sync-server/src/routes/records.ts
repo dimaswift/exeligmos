@@ -17,6 +17,7 @@ import {
   type CreateRecordInput,
   type OwnerRecordListQuery,
   type PublicRecordListQuery,
+  RECORD_PUBLIC_ID_SCHEMA_PATTERN,
   RecordService,
   type ReplaceRecordInput,
   type UpdateRecordInput,
@@ -278,6 +279,12 @@ async function withPreconditionHeader<Result>(
 }
 
 const uuid = { type: "string", format: "uuid" };
+const recordId = {
+  type: "string",
+  minLength: 5,
+  maxLength: 5,
+  pattern: RECORD_PUBLIC_ID_SCHEMA_PATTERN,
+};
 const dateTime = { type: "string", format: "date-time" };
 const jsonObject = { type: "object", additionalProperties: true };
 const metadataObject = {
@@ -310,7 +317,7 @@ const referencesSchema = {
       },
       targetType: { type: "string", enum: ["user", "record", "event"] },
       targetUserId: uuid,
-      targetId: uuid,
+      targetId: { anyOf: [uuid, recordId] },
     },
     additionalProperties: false,
   },
@@ -365,7 +372,8 @@ const renderSchema = {
   additionalProperties: false,
 };
 const publicInputProperties = {
-  id: uuid,
+  id: recordId,
+  originId: uuid,
   deviceId: uuid,
   visibility: { const: "public" },
   occurredAt: dateTime,
@@ -394,9 +402,10 @@ const publicRecordInputSchema = {
 };
 const privateRecordInputSchema = {
   type: "object",
-  required: ["id", "deviceId", "visibility", "encryption"],
+  required: ["id", "originId", "deviceId", "visibility", "encryption"],
   properties: {
-    id: uuid,
+    id: recordId,
+    originId: uuid,
     deviceId: uuid,
     visibility: { const: "private" },
     encryption: encryptionSchema,
@@ -443,7 +452,7 @@ const updateRecordSchema = { oneOf: [publicPatchSchema, privatePatchSchema] };
 const recordPathSchema = {
   type: "object",
   required: ["recordId"],
-  properties: { recordId: uuid },
+  properties: { recordId },
   additionalProperties: false,
 };
 const idempotencyHeaderProperty = {

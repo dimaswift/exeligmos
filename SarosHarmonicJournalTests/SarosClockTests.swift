@@ -752,6 +752,7 @@ final class SyncServiceV2Tests: XCTestCase {
         XCTAssertNotEqual(command.id, originalID)
         XCTAssertEqual(command.attemptCount, 1)
         XCTAssertNil(command.sentAt)
+        XCTAssertTrue(command.requiresManualRetry)
     }
 
     func testPendingCommandsUploadTagsBeforeRecords() {
@@ -772,12 +773,104 @@ final class SyncServiceV2Tests: XCTestCase {
         )
         sent.markSent()
 
-        let ordered = SyncLocalCommand.pendingInPushOrder([record, sent, tag])
+        let ordered = SyncLocalCommand.pendingInPushOrder([record, sent, tag], userID: UUID())
 
         XCTAssertEqual(ordered.map(\.type), [.tagUpsert, .entryUpsert])
     }
 
-    func testLegacyEntryPayloadPreservesIdentityAndTimestamps() throws {
+    func testFailedCommandsWaitForExplicitRetry() {
+        let userID = UUID()
+        let command = SyncLocalCommand(
+            type: .entryUpsert,
+            subjectID: UUID().uuidString,
+            ownerUserID: userID
+        )
+        command.prepareRetry(afterServerRejection: SyncService.SyncError.invalidResponse(
+            statusCode: 422,
+            body: "Rejected"
+        ))
+
+        XCTAssertTrue(SyncLocalCommand.pendingInPushOrder([command], userID: userID).isEmpty)
+
+        SyncLocalCommand.retryFailed([command], userID: userID)
+
+        XCTAssertEqual(command.attemptCount, 0)
+        XCTAssertNil(command.lastError)
+        XCTAssertEqual(
+            SyncLocalCommand.pendingInPushOrder([command], userID: userID).map(\.id),
+            [command.id]
+        )
+    }
+
+    func testTransientFailuresUseBoundedAutomaticBackoff() {
+        let command = SyncLocalCommand(type: .entryUpsert, subjectID: UUID().uuidString)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        command.markTransientFailure(URLError(.notConnectedToInternet), now: now)
+
+        XCTAssertFalse(command.requiresManualRetry)
+        XCTAssertFalse(command.isEligibleForAutomaticSync(at: now.addingTimeInterval(4.9)))
+        XCTAssertTrue(command.isEligibleForAutomaticSync(at: now.addingTimeInterval(5)))
+
+        command.markTransientFailure(URLError(.timedOut), now: now.addingTimeInterval(5))
+
+        XCTAssertFalse(command.isEligibleForAutomaticSync(at: now.addingTimeInterval(14.9)))
+        XCTAssertTrue(command.isEligibleForAutomaticSync(at: now.addingTimeInterval(15)))
+    }
+
+    func testOnlyTransientSyncFailuresRetryAutomatically() {
+        XCTAssertTrue(SyncService.isRetryableFailure(URLError(.notConnectedToInternet)))
+        XCTAssertTrue(SyncService.isRetryableFailure(SyncService.SyncError.invalidResponse(
+            statusCode: 503,
+            body: "Unavailable"
+        )))
+        XCTAssertTrue(SyncService.isRetryableFailure(SyncService.SyncError.invalidResponse(
+            statusCode: 429,
+            body: "Rate limited"
+        )))
+        XCTAssertFalse(SyncService.isRetryableFailure(SyncService.SyncError.invalidResponse(
+            statusCode: 422,
+            body: "Invalid record"
+        )))
+        XCTAssertFalse(SyncService.isRetryableFailure(URLError(.cancelled)))
+    }
+
+    func testRecordPublicIDsUseFiveBase64URLCharacters() {
+        let generated = (0..<256).map { _ in JournalRecordPublicID.generate() }
+
+        XCTAssertTrue(generated.allSatisfy { $0.count == JournalRecordPublicID.length })
+        XCTAssertTrue(generated.allSatisfy { id in
+            id.allSatisfy { JournalRecordPublicID.alphabet.contains($0) }
+        })
+        XCTAssertTrue(generated.allSatisfy { JournalRecordPublicID.normalized($0) == $0 })
+        XCTAssertNil(JournalRecordPublicID.normalized("too-long"))
+        XCTAssertNil(JournalRecordPublicID.normalized("abc+="))
+    }
+
+    func testPendingCommandsAreScopedToTheAuthenticatedOwner() {
+        let currentUser = UUID()
+        let anotherUser = UUID()
+        let current = SyncLocalCommand(
+            type: .entryUpsert,
+            subjectID: UUID().uuidString,
+            ownerUserID: currentUser
+        )
+        let unclaimed = SyncLocalCommand(type: .tagUpsert, subjectID: UUID().uuidString)
+        let foreign = SyncLocalCommand(
+            type: .entryUpsert,
+            subjectID: UUID().uuidString,
+            ownerUserID: anotherUser
+        )
+
+        let ordered = SyncLocalCommand.pendingInPushOrder(
+            [foreign, current, unclaimed],
+            userID: currentUser
+        )
+
+        XCTAssertEqual(Set(ordered.map(\.id)), Set([current.id, unclaimed.id]))
+    }
+
+    func testOwnerPayloadWithoutEmbeddedIDRestoresIdentityAndTimestamps() throws {
         let recordID = UUID()
         let deviceID = UUID()
         let createdAt = Date(timeIntervalSince1970: 1_700_000_000.123)
@@ -807,8 +900,11 @@ final class SyncServiceV2Tests: XCTestCase {
             weatherEmoji: "☀️",
             temperatureC: 21
         )
+        var ownerPayload = try XCTUnwrap(try jsonValue(original).objectValue)
+        XCTAssertNotNil(ownerPayload.removeValue(forKey: "id"))
         let remote = SyncRecordResource(
-            id: recordID,
+            id: "Ab-_1",
+            originID: recordID,
             userID: UUID(),
             deviceID: deviceID,
             visibility: "public",
@@ -817,7 +913,7 @@ final class SyncServiceV2Tests: XCTestCase {
             updatedAt: updatedAt,
             occurredAt: eventDate,
             endedAt: endDate,
-            payload: try jsonValue(original),
+            payload: .object(ownerPayload),
             tagIDs: [],
             media: []
         )
@@ -841,7 +937,8 @@ final class SyncServiceV2Tests: XCTestCase {
         let deviceID = UUID()
         let occurredAt = Date(timeIntervalSince1970: 1_750_000_000)
         let remote = SyncRecordResource(
-            id: recordID,
+            id: "Sun_1",
+            originID: recordID,
             userID: UUID(),
             deviceID: deviceID,
             visibility: "public",
