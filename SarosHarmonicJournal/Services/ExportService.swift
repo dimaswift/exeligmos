@@ -151,6 +151,10 @@ struct JournalEntrySnapshot: Codable, Identifiable {
     let temperatureC: Int?
 }
 
+// Snapshots contain immutable value types and are safe to move to utility
+// tasks for JSON projection without carrying SwiftData model instances.
+extension JournalEntrySnapshot: @unchecked Sendable {}
+
 final class ExportService {
     func makeArchive(entities: [TrackedEntity], records: [JournalRecord], groups: [ThreadGroup] = []) -> JournalExportArchive {
         JournalExportArchive(

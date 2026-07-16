@@ -7,7 +7,6 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
     private var syncCommands: [SyncLocalCommand]
 
@@ -32,6 +31,7 @@ struct SettingsView: View {
     @State private var authenticatedUser: SyncAuthenticatedUser?
     @State private var serverConnectionState = SyncServerConnectionState.idle
     @State private var serverStats: SyncAccountStats?
+    @State private var localRecordCount = 0
 
     var body: some View {
         Form {
@@ -113,7 +113,7 @@ struct SettingsView: View {
                             eclipseService: services.eclipseService,
                             moonPhaseService: services.moonPhaseService,
                             harmonicDepth: harmonicDepth,
-                            recentEntries: entries
+                            recentEntries: notificationEntries()
                         )
                         diagnosticMessage = "Notification schedule refreshed."
                     }
@@ -259,6 +259,7 @@ struct SettingsView: View {
             deviceID = device.id
             deviceName = device.name
             deviceEmoji = device.emoji
+            refreshLocalRecordCount()
         }
         .task(id: syncServerURL) {
             try? await Task.sleep(nanoseconds: 400_000_000)
@@ -271,7 +272,7 @@ struct SettingsView: View {
                     eclipseService: services.eclipseService,
                     moonPhaseService: services.moonPhaseService,
                     harmonicDepth: newDepth,
-                    recentEntries: entries
+                    recentEntries: notificationEntries()
                 )
                 diagnosticMessage = "Glyph depth updated and notification schedule refreshed."
             }
@@ -284,6 +285,9 @@ struct SettingsView: View {
         }
         .onChange(of: lastSyncAt) { _, _ in
             Task { await refreshRecordStats() }
+        }
+        .onChange(of: syncCommands.map(\.id)) { _, _ in
+            refreshLocalRecordCount()
         }
         .alert("Settings error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {}
@@ -324,7 +328,7 @@ struct SettingsView: View {
                     password: syncPassword,
                     modelContext: modelContext,
                     tags: tags,
-                    entries: entries,
+                    entries: localEntries(),
                     commands: syncCommands
                 )
             case .register:
@@ -336,7 +340,7 @@ struct SettingsView: View {
                     inviteCode: syncInviteCode,
                     modelContext: modelContext,
                     tags: tags,
-                    entries: entries,
+                    entries: localEntries(),
                     commands: syncCommands
                 )
             }
@@ -396,7 +400,7 @@ struct SettingsView: View {
                 with: syncServerURL,
                 modelContext: modelContext,
                 tags: tags,
-                entries: entries,
+                entries: localEntries(),
                 commands: syncCommands
             )
             serverConnectionState = .ready
@@ -433,9 +437,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var recordSyncSummary: some View {
         let userID = authenticatedUser?.id
-        let localCount = entries.filter { entry in
-            entry.syncOwnerUserID == nil || entry.syncOwnerUserID == userID
-        }.count
+        let localCount = localRecordCount
         let pending = syncCommands.filter { command in
             command.isPending
                 && (command.ownerUserID == nil || command.ownerUserID == userID)
@@ -470,11 +472,33 @@ struct SettingsView: View {
 
     @MainActor
     private func refreshRecordStats() async {
+        refreshLocalRecordCount()
         guard authenticatedUser != nil, syncServerURL.nilIfBlank != nil else {
             serverStats = nil
             return
         }
         serverStats = try? await services.syncService.accountStats(from: syncServerURL)
+    }
+
+    @MainActor
+    private func refreshLocalRecordCount() {
+        localRecordCount = (try? modelContext.fetchCount(FetchDescriptor<JournalEntry>())) ?? 0
+    }
+
+    @MainActor
+    private func localEntries() -> [JournalEntry] {
+        (try? modelContext.fetch(FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+        ))) ?? []
+    }
+
+    @MainActor
+    private func notificationEntries() -> [JournalEntry] {
+        var descriptor = FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+        )
+        descriptor.fetchLimit = 128
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func scheduleDeviceProfileUpdate() {

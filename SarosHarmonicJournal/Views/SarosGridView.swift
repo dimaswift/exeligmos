@@ -1223,7 +1223,7 @@ private class TimelineCurrentTimeTicker: ObservableObject {
 
 private struct SarosSpikeWaveTimelineView: View {
     @EnvironmentObject private var services: AppServices
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var allEntries: [JournalEntry]
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     let flip: SarosGridNearestFlip
@@ -1252,6 +1252,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @State private var isEdgeLoading = false
     @State private var selectedEntry: JournalEntry?
     @State private var selectedDetailEntry: JournalEntry?
+    @State private var allEntries: [JournalEntry] = []
     @State private var showingSegmentEvents: SarosSpikeWaveSegment?
     @State private var dateJump: SarosSpikeDateJump?
     @AppStorage("timelineShowEvents") private var timelineShowEvents = true
@@ -1306,6 +1307,10 @@ private struct SarosSpikeWaveTimelineView: View {
             start: displayInterval.start.addingTimeInterval(-Self.loadPaddingDuration),
             end: displayInterval.end.addingTimeInterval(Self.loadPaddingDuration)
         )
+    }
+
+    private var entryWindowID: String {
+        "\(Int(displayInterval.start.timeIntervalSince1970))-\(Int(displayInterval.end.timeIntervalSince1970))"
     }
 
     private var effectiveZoom: CGFloat {
@@ -1871,6 +1876,9 @@ private struct SarosSpikeWaveTimelineView: View {
             .task(id: pulseTaskID) {
                 await loadPulseTicks()
             }
+            .task(id: entryWindowID) {
+                loadTimelineEntries()
+            }
             .sheet(item: $dateJump) { request in
                 SarosSpikeDateJumpSheet(initialDate: request.date) { selectedDate in
                     jump(to: selectedDate, proxy: scrollProxy)
@@ -1890,6 +1898,33 @@ private struct SarosSpikeWaveTimelineView: View {
             let segmentEntries = allEntries.filter { segment.interval.contains($0.eventDate) }
             SegmentEventsSheet(segment: segment, entries: segmentEntries, tags: tags)
         }
+    }
+
+    @MainActor
+    private func loadTimelineEntries() {
+        let start = displayInterval.start
+        let end = displayInterval.end
+        let startsInWindow = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate { entry in
+                entry.eventDate >= start && entry.eventDate <= end
+            },
+            sortBy: [SortDescriptor(\JournalEntry.eventDate)]
+        )
+        // Period records may begin before the visible window, so include only
+        // those whose effective end overlaps its leading edge.
+        let periodRecords = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate { entry in
+                entry.eventDate < start && (entry.endDate ?? entry.eventDate) >= start
+            },
+            sortBy: [SortDescriptor(\JournalEntry.eventDate)]
+        )
+        let windowEntries = (try? modelContext.fetch(startsInWindow)) ?? []
+        let overlappingPeriods = (try? modelContext.fetch(periodRecords)) ?? []
+        allEntries = Array(
+            Dictionary(
+                uniqueKeysWithValues: (windowEntries + overlappingPeriods).map { ($0.id, $0) }
+            ).values
+        ).sorted { $0.eventDate > $1.eventDate }
     }
 
     private static let tetrasarosDuration = SarosPulseCalculator.averageDuration(for: .giga) * 8

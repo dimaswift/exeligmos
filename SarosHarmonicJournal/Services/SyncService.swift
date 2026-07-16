@@ -598,7 +598,7 @@ final class SyncService {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await authorizedData(request, server: server)
         try require(response, data: data, expectedStatus: [200])
-        return try decode(SyncAccountStats.self, from: data, context: "sync statistics")
+        return try await decodeInBackground(SyncAccountStats.self, from: data, context: "sync statistics")
     }
 
     @MainActor
@@ -680,7 +680,10 @@ final class SyncService {
 
         while true {
             var components = URLComponents(url: try endpoint(server, path: "/v1/sync/changes"), resolvingAgainstBaseURL: false)
-            var queryItems = [URLQueryItem(name: "limit", value: "200")]
+            // Keep each main-actor SwiftData commit small. Payload decoding is
+            // detached, and a 25-command page prevents a reconnect backlog
+            // from monopolizing UI time when it is projected locally.
+            var queryItems = [URLQueryItem(name: "limit", value: "25")]
             if let cursor {
                 queryItems.append(URLQueryItem(name: "cursor", value: cursor))
             }
@@ -716,7 +719,11 @@ final class SyncService {
                 continue
             }
             try require(response, data: data, expectedStatus: [200])
-            let page = try decode(SyncChangePage.self, from: data, context: "sync change page")
+            let page = try await decodeInBackground(
+                SyncChangePage.self,
+                from: data,
+                context: "sync change page"
+            )
             var pagePending = currentPendingMutationIDs(
                 modelContext: modelContext,
                 userID: user.id,
@@ -797,12 +804,14 @@ final class SyncService {
                     rekeyUnacknowledgedPublicIDCollision(
                         remote,
                         ownerID: user.id,
+                        modelContext: modelContext,
                         entryByPublicID: &entryByPublicID,
                         commands: commands
                     )
                     let existing = localEntry(
                         for: remote,
                         ownerID: user.id,
+                        modelContext: modelContext,
                         entryByID: entryByID,
                         entryByPublicID: entryByPublicID
                     )
@@ -875,7 +884,12 @@ final class SyncService {
                     progress?(.restoredRecord)
 
                 case ("record", "delete"):
-                    guard let existing = entryByPublicID[change.resourceID] else {
+                    guard let existing = localEntry(
+                        publicID: change.resourceID,
+                        ownerID: user.id,
+                        modelContext: modelContext,
+                        entryByPublicID: entryByPublicID
+                    ) else {
                         continue
                     }
                     guard existing.syncOwnerUserID == user.id,
@@ -916,6 +930,7 @@ final class SyncService {
     private func localEntry(
         for remote: SyncRecordResource,
         ownerID: UUID,
+        modelContext: ModelContext,
         entryByID: [UUID: JournalEntry],
         entryByPublicID: [String: JournalEntry]
     ) -> JournalEntry? {
@@ -924,7 +939,39 @@ final class SyncService {
            originMatch.syncOwnerUserID == nil || originMatch.syncOwnerUserID == ownerID {
             return originMatch
         }
-        guard let publicMatch = entryByPublicID[remote.id],
+        if let originID = remote.originID {
+            var descriptor = FetchDescriptor<JournalEntry>(
+                predicate: #Predicate { $0.id == originID }
+            )
+            descriptor.fetchLimit = 1
+            if let originMatch = try? modelContext.fetch(descriptor).first,
+               originMatch.syncOwnerUserID == nil || originMatch.syncOwnerUserID == ownerID {
+                return originMatch
+            }
+        }
+        return localEntry(
+            publicID: remote.id,
+            ownerID: ownerID,
+            modelContext: modelContext,
+            entryByPublicID: entryByPublicID
+        )
+    }
+
+    private func localEntry(
+        publicID: String,
+        ownerID: UUID,
+        modelContext: ModelContext,
+        entryByPublicID: [String: JournalEntry]
+    ) -> JournalEntry? {
+        if let publicMatch = entryByPublicID[publicID],
+           publicMatch.syncOwnerUserID == nil || publicMatch.syncOwnerUserID == ownerID {
+            return publicMatch
+        }
+        var descriptor = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate { $0.publicID == publicID }
+        )
+        descriptor.fetchLimit = 1
+        guard let publicMatch = try? modelContext.fetch(descriptor).first,
               publicMatch.syncOwnerUserID == nil || publicMatch.syncOwnerUserID == ownerID else {
             return nil
         }
@@ -954,10 +1001,16 @@ final class SyncService {
     private func rekeyUnacknowledgedPublicIDCollision(
         _ remote: SyncRecordResource,
         ownerID: UUID,
+        modelContext: ModelContext,
         entryByPublicID: inout [String: JournalEntry],
         commands: [SyncLocalCommand]
     ) {
-        guard let local = entryByPublicID[remote.id],
+        guard let local = localEntry(
+            publicID: remote.id,
+            ownerID: ownerID,
+            modelContext: modelContext,
+            entryByPublicID: entryByPublicID
+        ),
               local.syncOwnerUserID == nil || local.syncOwnerUserID == ownerID,
               local.acknowledgedServerRevision == nil,
               remote.originID != local.id else { return }
@@ -1051,7 +1104,7 @@ final class SyncService {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             let (data, response) = try await authorizedData(request, server: server)
             try require(response, data: data, expectedStatus: [200])
-            let page = try decode(
+            let page = try await decodeInBackground(
                 SyncCollectionPage<SyncTagResource>.self,
                 from: data,
                 context: "tag collection snapshot"
@@ -1128,7 +1181,7 @@ final class SyncService {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             let (data, response) = try await authorizedData(request, server: server)
             try require(response, data: data, expectedStatus: [200])
-            let page = try decode(
+            let page = try await decodeInBackground(
                 SyncCollectionPage<SyncRecordResource>.self,
                 from: data,
                 context: "record collection snapshot"
@@ -1143,12 +1196,14 @@ final class SyncService {
                 rekeyUnacknowledgedPublicIDCollision(
                     remote,
                     ownerID: user.id,
+                    modelContext: modelContext,
                     entryByPublicID: &entryByPublicID,
                     commands: commands
                 )
                 let existing = localEntry(
                     for: remote,
                     ownerID: user.id,
+                    modelContext: modelContext,
                     entryByID: entryByID,
                     entryByPublicID: entryByPublicID
                 )
@@ -1259,7 +1314,10 @@ final class SyncService {
         entryByID: inout [UUID: JournalEntry],
         entryByPublicID: inout [String: JournalEntry]
     ) {
-        guard let entry = entryByID.removeValue(forKey: id) else { return }
+        let indexed = entryByID.removeValue(forKey: id)
+        var descriptor = FetchDescriptor<JournalEntry>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        guard let entry = indexed ?? (try? modelContext.fetch(descriptor).first) else { return }
         if let publicID = entry.publicID {
             entryByPublicID.removeValue(forKey: publicID)
         }
@@ -1293,6 +1351,12 @@ final class SyncService {
         var recordCount = 0
         var mediaCount = 0
         var transientFailure: Error?
+        var successfulAcknowledgements: [(
+            command: SyncLocalCommand,
+            attemptedID: UUID,
+            resourceType: String,
+            mutation: SyncMutationResult
+        )] = []
 
         commandLoop: for command in pending {
             // `enqueue` rotates this ID whenever the local subject is saved
@@ -1311,9 +1375,9 @@ final class SyncService {
                         continue
                     }
                     let publicID = entry.publicID ?? JournalRecordPublicID.generate()
-                    entry.publicID = publicID
-                    entry.syncOwnerUserID = entry.syncOwnerUserID ?? user.id
-                    command.ownerUserID = command.ownerUserID ?? user.id
+                    if entry.publicID == nil { entry.publicID = publicID }
+                    if entry.syncOwnerUserID == nil { entry.syncOwnerUserID = user.id }
+                    if command.ownerUserID == nil { command.ownerUserID = user.id }
                     let snapshot = JournalEntrySnapshot(entry: entry)
                     var mediaIDs: [UUID] = []
                     for item in snapshot.mediaItems {
@@ -1331,7 +1395,7 @@ final class SyncService {
                             mediaCount += 1
                         }
                     }
-                    let payload = try ownerSyncPayload(from: snapshot)
+                    let payload = try await ownerSyncPayload(from: snapshot)
                     let record = SyncRecordInput(
                         id: publicID,
                         originID: snapshot.id,
@@ -1414,8 +1478,8 @@ final class SyncService {
                     guard tag.syncOwnerUserID == nil || tag.syncOwnerUserID == user.id else {
                         continue
                     }
-                    tag.syncOwnerUserID = tag.syncOwnerUserID ?? user.id
-                    command.ownerUserID = command.ownerUserID ?? user.id
+                    if tag.syncOwnerUserID == nil { tag.syncOwnerUserID = user.id }
+                    if command.ownerUserID == nil { command.ownerUserID = user.id }
                     let snapshot = JournalTagSnapshot(tag: tag)
                     let input = SyncTagInput(
                         id: tag.id,
@@ -1495,14 +1559,24 @@ final class SyncService {
 
                 guard let prepared else { continue }
                 let batch = SyncBatchRequest(deviceID: deviceID, atomic: false, mutations: [prepared.request])
-                var request = try jsonRequest(batch, server: server, path: "/v1/sync/batches", method: "POST")
+                let batchData = try await encodeInBackground(batch)
+                var request = try jsonRequest(
+                    encodedBody: batchData,
+                    server: server,
+                    path: "/v1/sync/batches",
+                    method: "POST"
+                )
                 request.setValue("sync-\(attemptedCommandID.uuidString)", forHTTPHeaderField: "Idempotency-Key")
                 let (data, response) = try await authorizedData(request, server: server)
                 guard command.id == attemptedCommandID else {
                     continue commandLoop
                 }
                 try require(response, data: data, expectedStatus: [200])
-                let result = try decode(SyncBatchResponse.self, from: data, context: "sync mutation result")
+                let result = try await decodeInBackground(
+                    SyncBatchResponse.self,
+                    from: data,
+                    context: "sync mutation result"
+                )
                 guard let mutation = result.results.first,
                       mutation.clientMutationID == attemptedCommandID.uuidString else {
                     throw SyncError.invalidResponse(statusCode: nil, body: "Mutation acknowledgement is missing.")
@@ -1575,23 +1649,12 @@ final class SyncService {
                         userID: user.id
                     )
                 }
-                command.markSent()
-                if prepared.resourceType == "record" {
-                    if command.type == .entryUpsert,
-                       let entry = entryByStringID[command.subjectID] {
-                        entry.syncOwnerUserID = user.id
-                        entry.acknowledgedServerRevision = mutation.revision
-                    }
-                    recordCount += 1
-                    progress?(.uploadedRecord)
-                } else {
-                    if command.type == .tagUpsert,
-                       let tag = tagByStringID[command.subjectID] {
-                        tag.syncOwnerUserID = user.id
-                        tag.acknowledgedServerRevision = mutation.revision
-                    }
-                    entityCount += 1
-                }
+                successfulAcknowledgements.append((
+                    command: command,
+                    attemptedID: attemptedCommandID,
+                    resourceType: prepared.resourceType,
+                    mutation: mutation
+                ))
             } catch {
                 if isCancellation(error) { throw error }
                 if isGlobalOutboxFailure(error) {
@@ -1627,6 +1690,30 @@ final class SyncService {
             }
         }
 
+        // Publish one SwiftData transaction after the network pass instead of
+        // mutating observed rows after every HTTP response. This prevents a
+        // long outbox from forcing the feed to redraw once per upload.
+        for acknowledgement in successfulAcknowledgements
+        where acknowledgement.command.id == acknowledgement.attemptedID {
+            let command = acknowledgement.command
+            command.markSent()
+            if acknowledgement.resourceType == "record" {
+                if command.type == .entryUpsert,
+                   let entry = entryByStringID[command.subjectID] {
+                    entry.syncOwnerUserID = user.id
+                    entry.acknowledgedServerRevision = acknowledgement.mutation.revision
+                }
+                recordCount += 1
+                progress?(.uploadedRecord)
+            } else {
+                if command.type == .tagUpsert,
+                   let tag = tagByStringID[command.subjectID] {
+                    tag.syncOwnerUserID = user.id
+                    tag.acknowledgedServerRevision = acknowledgement.mutation.revision
+                }
+                entityCount += 1
+            }
+        }
         try modelContext.save()
         if let transientFailure { throw transientFailure }
         return SyncPushSummary(
@@ -2127,6 +2214,26 @@ final class SyncService {
         return request
     }
 
+    private func jsonRequest(
+        encodedBody: Data,
+        server: URL,
+        path: String,
+        method: String
+    ) throws -> URLRequest {
+        var request = URLRequest(url: try endpoint(server, path: path))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = encodedBody
+        return request
+    }
+
+    private func encodeInBackground<T: Encodable & Sendable>(_ value: T) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            try Self.makeEncoder().encode(value)
+        }.value
+    }
+
     private func require(
         _ response: URLResponse,
         data: Data,
@@ -2162,6 +2269,23 @@ final class SyncService {
         }
     }
 
+    private func decodeInBackground<T: Decodable & Sendable>(
+        _ type: T.Type,
+        from data: Data,
+        context: String
+    ) async throws -> T {
+        do {
+            return try await Task.detached(priority: .utility) {
+                try Self.makeDecoder().decode(type, from: data)
+            }.value
+        } catch {
+            throw SyncError.invalidResponse(
+                statusCode: nil,
+                body: "Could not decode \(context): \(error.localizedDescription)"
+            )
+        }
+    }
+
     private func decodeValue<T: Decodable>(
         _ type: T.Type,
         from value: SyncJSONValue,
@@ -2177,12 +2301,15 @@ final class SyncService {
     /// The stable local UUID is owner-only identity (`originId`) and must not
     /// be duplicated into the public payload. Export archives continue to use
     /// the complete `JournalEntrySnapshot` representation.
-    private func ownerSyncPayload(from snapshot: JournalEntrySnapshot) throws -> SyncJSONValue {
-        guard var object = try jsonValue(from: snapshot).objectValue else {
-            throw SyncError.invalidResponse(statusCode: nil, body: "Could not encode the record payload.")
-        }
-        object.removeValue(forKey: "id")
-        return .object(object)
+    private func ownerSyncPayload(from snapshot: JournalEntrySnapshot) async throws -> SyncJSONValue {
+        try await Task.detached(priority: .utility) {
+            let data = try Self.makeEncoder().encode(snapshot)
+            guard case .object(var object) = try Self.makeDecoder().decode(SyncJSONValue.self, from: data) else {
+                throw SyncError.invalidResponse(statusCode: nil, body: "Could not encode the record payload.")
+            }
+            object.removeValue(forKey: "id")
+            return .object(object)
+        }.value
     }
 
     private func serverBaseURL(_ rawValue: String) throws -> URL {
@@ -2334,7 +2461,9 @@ final class SyncService {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
-    private var encoder: JSONEncoder {
+    private var encoder: JSONEncoder { Self.makeEncoder() }
+
+    private static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
             var container = encoder.singleValueContainer()
@@ -2343,13 +2472,15 @@ final class SyncService {
         return encoder
     }
 
-    private var decoder: JSONDecoder {
+    private var decoder: JSONDecoder { Self.makeDecoder() }
+
+    private static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             if let string = try? container.decode(String.self),
-               let date = Self.iso8601WithFractionalSeconds.date(from: string)
-                    ?? Self.iso8601.date(from: string) {
+               let date = iso8601WithFractionalSeconds.date(from: string)
+                    ?? iso8601.date(from: string) {
                 return date
             }
             if let value = try? container.decode(Double.self) {
@@ -2740,7 +2871,7 @@ final class SyncV2StateStore {
 
 // MARK: - Wire types
 
-struct SyncRecordResource: Decodable {
+struct SyncRecordResource: Decodable, Sendable {
     let id: String
     let originID: UUID?
     let userID: UUID
@@ -2764,7 +2895,7 @@ struct SyncRecordResource: Decodable {
     }
 }
 
-struct SyncTagResource: Decodable {
+struct SyncTagResource: Decodable, Sendable {
     let id: UUID
     let userID: UUID
     let name: String
@@ -2782,7 +2913,7 @@ struct SyncTagResource: Decodable {
     }
 }
 
-struct SyncMediaResource: Codable {
+struct SyncMediaResource: Codable, Sendable {
     let id: UUID
     let userID: UUID
     let deviceID: UUID
@@ -2802,7 +2933,7 @@ struct SyncMediaResource: Codable {
     }
 }
 
-enum SyncJSONValue: Codable, Hashable {
+enum SyncJSONValue: Codable, Hashable, Sendable {
     case object([String: SyncJSONValue])
     case array([SyncJSONValue])
     case string(String)
@@ -2961,13 +3092,13 @@ private struct SyncDeviceInput: Encodable {
     let metadata: SyncJSONValue
 }
 
-private struct SyncChangePage: Decodable {
+private struct SyncChangePage: Decodable, Sendable {
     let data: [SyncChange]
     let nextCursor: String
     let hasMore: Bool
 }
 
-private struct SyncCollectionPage<Resource: Decodable>: Decodable {
+private struct SyncCollectionPage<Resource: Decodable & Sendable>: Decodable, Sendable {
     let data: [Resource]
     let nextCursor: String?
     let hasMore: Bool
@@ -2995,7 +3126,7 @@ private struct SyncPendingMutationIDs {
     }
 }
 
-private struct SyncChange: Decodable {
+private struct SyncChange: Decodable, Sendable {
     let sequence: Int64
     let changedAt: Date
     let resourceType: String
@@ -3077,7 +3208,7 @@ private struct SyncPreparedMutation {
     let resourceID: String
 }
 
-private struct SyncBatchRequest: Encodable {
+private struct SyncBatchRequest: Encodable, @unchecked Sendable {
     let deviceID: UUID
     let atomic: Bool
     let mutations: [SyncMutationRequest]
@@ -3088,11 +3219,11 @@ private struct SyncBatchRequest: Encodable {
     }
 }
 
-private struct SyncBatchResponse: Decodable {
+private struct SyncBatchResponse: Decodable, Sendable {
     let results: [SyncMutationResult]
 }
 
-private struct SyncMutationResult: Decodable {
+private struct SyncMutationResult: Decodable, Sendable {
     let clientMutationID: String
     let status: String
     let resourceType: String?
@@ -3108,7 +3239,7 @@ private struct SyncMutationResult: Decodable {
     }
 }
 
-private struct SyncProblem: Codable {
+private struct SyncProblem: Codable, Sendable {
     let status: Int?
     let detail: String?
     let code: String?
@@ -3127,7 +3258,7 @@ private struct SyncProblem: Codable {
     }
 }
 
-private struct SyncProblemField: Codable {
+private struct SyncProblemField: Codable, Sendable {
     let path: String
     let code: String
     let message: String

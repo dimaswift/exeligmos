@@ -1458,7 +1458,6 @@ private struct JournalEntryEditView: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
     private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
@@ -1555,6 +1554,9 @@ private struct JournalEntryEditView: View {
     private func refreshFromRelay() async {
         guard syncServerURL.nilIfBlank != nil, services.syncCoordinator.isAuthenticated else { return }
         do {
+            let entries = (try? modelContext.fetch(FetchDescriptor<JournalEntry>(
+                sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+            ))) ?? []
             _ = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
                 modelContext: modelContext,

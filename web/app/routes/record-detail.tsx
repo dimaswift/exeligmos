@@ -2,9 +2,8 @@ import type { Route } from "./+types/record-detail";
 import { RecordDetailView } from "~/features/record-detail/record-detail";
 import { readOwnerRecord } from "~/features/activity-stream/snapshots.server";
 import { readRequestAuth } from "~/lib/auth-boundary.server";
+import { isRecordPublicId } from "~/lib/record-id";
 import { throwRouteError } from "~/lib/route-errors.server";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const meta: Route.MetaFunction = ({ loaderData }) => [
   {
@@ -16,7 +15,7 @@ export const meta: Route.MetaFunction = ({ loaderData }) => [
 ];
 
 export async function loader({ context, params, request }: Route.LoaderArgs) {
-  if (!UUID.test(params.recordId)) {
+  if (!isRecordPublicId(params.recordId)) {
     throw new Response("Record not found.", { status: 404, statusText: "Not Found" });
   }
   try {

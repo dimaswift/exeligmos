@@ -37,10 +37,8 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query private var entries: [JournalEntry]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
-    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
-    private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
     @AppStorage(JournalSettings.onboardingCompletedKey) private var onboardingCompleted = false
@@ -54,7 +52,19 @@ struct RootView: View {
     @State private var sharedMediaCaptureRequest: SharedMediaCaptureRequest?
     @State private var isConsumingSharedMediaImport = false
     @State private var futureNotificationRefreshTask: Task<Void, Never>?
+    @State private var feedEntryLimit = JournalFeedQueryPolicy.pageSize
     private let activityCompletionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    init() {
+        var descriptor = FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+        )
+        // Root only needs a recent window for notification scheduling. Keeping
+        // the whole journal live here made every insert invalidate and decode
+        // every record, even when the feed tab was not visible.
+        descriptor.fetchLimit = JournalFeedQueryPolicy.notificationWindowSize
+        _entries = Query(descriptor)
+    }
 
     var body: some View {
         Group {
@@ -131,10 +141,7 @@ struct RootView: View {
                 if syncCoordinator.isAuthenticated {
                     syncCoordinator.scheduleAutomaticSync(
                         serverURL: syncServerURL,
-                        modelContext: modelContext,
-                        tags: tags,
-                        entries: entries,
-                        commands: syncCommands
+                        modelContext: modelContext
                     )
                 }
             }
@@ -155,7 +162,7 @@ struct RootView: View {
         .onChange(of: pulseSaros) { _, _ in
             refreshSarosEventNotifications()
         }
-        .onChange(of: entries.count) { _, _ in
+        .onChange(of: entries.map { "\($0.id.uuidString):\($0.updatedAt.timeIntervalSince1970)" }) { _, _ in
             scheduleFutureEntryNotificationRefresh()
         }
         .onChange(of: lastSyncAt) { _, _ in
@@ -181,7 +188,14 @@ struct RootView: View {
     private func screen(for tab: AppTab) -> some View {
         switch tab {
         case .feed:
-            FeedView(feedMode: $feedMode, isActive: selectedTab == .feed)
+            FeedView(
+                feedMode: $feedMode,
+                isActive: selectedTab == .feed,
+                entryLimit: feedEntryLimit,
+                loadOlder: {
+                    feedEntryLimit += JournalFeedQueryPolicy.pageSize
+                }
+            )
         case .timeline:
             SarosCurrentWaveTimelineView()
         case .saros:
@@ -620,12 +634,11 @@ private struct FeedView: View {
     @EnvironmentObject private var services: AppServices
     @EnvironmentObject private var syncCoordinator: SyncCoordinator
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
+    @Query private var entries: [JournalEntry]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @Query(sort: \JournalEntryDraft.updatedAt, order: .reverse) private var entryDrafts: [JournalEntryDraft]
-    @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
-    private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
+    @AppStorage(JournalSettings.lastSyncAtKey) private var lastSyncAt = 0.0
 
     @State private var selectedRarity: FlipRarity?
     @State private var selectedDirection: JournalWaveDirection?
@@ -640,43 +653,119 @@ private struct FeedView: View {
     @State private var captureRequest: FeedCaptureRequest?
     @State private var isFilterPresented = false
     @State private var now = Date()
+    @State private var analyticsEntries: [JournalEntry] = []
+    @State private var isLoadingAnalyticsEntries = false
     @Binding var feedMode: FeedMode
     let isActive: Bool
+    let entryLimit: Int
+    let loadOlder: () -> Void
 
     private let feedClock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    private var hasActiveFilters: Bool {
+        selectedRarity != nil
+            || selectedDirection != nil
+            || selectedExtremum != nil
+            || dateFilterMode != .all
+            || selectedSaros != nil
+            || selectedSynodicBin != nil
+            || selectedAnomalisticBin != nil
+            || selectedDraconicBin != nil
+    }
+
+    private var requiresCompleteJournal: Bool {
+        hasActiveFilters || feedMode.isEchoMode
+    }
+
+    private var analyticsQueryID: String {
+        let latestEntryFingerprint: String
+        if let latest = entries.first {
+            latestEntryFingerprint = latest.id.uuidString
+                + ":"
+                + String(latest.updatedAt.timeIntervalSince1970)
+        } else {
+            latestEntryFingerprint = "empty"
+        }
+        let parts: [String] = [
+            feedMode.rawValue,
+            selectedRarity?.rawValue ?? "-",
+            selectedDirection?.rawValue ?? "-",
+            selectedExtremum?.rawValue ?? "-",
+            dateFilterMode.rawValue,
+            String(Int(selectedDate.timeIntervalSince1970 / 86_400)),
+            selectedSaros.map { String($0) } ?? "-",
+            selectedSynodicBin.map { String($0) } ?? "-",
+            selectedAnomalisticBin.map { String($0) } ?? "-",
+            selectedDraconicBin.map { String($0) } ?? "-",
+            String(lastSyncAt),
+            latestEntryFingerprint
+        ]
+        return parts.joined(separator: "|")
+    }
+
+    private var sourceEntries: [JournalEntry] {
+        requiresCompleteJournal ? analyticsEntries : entries
+    }
+
+    init(
+        feedMode: Binding<FeedMode>,
+        isActive: Bool,
+        entryLimit: Int,
+        loadOlder: @escaping () -> Void
+    ) {
+        _feedMode = feedMode
+        self.isActive = isActive
+        self.entryLimit = entryLimit
+        self.loadOlder = loadOlder
+        var descriptor = FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+        )
+        descriptor.fetchLimit = entryLimit
+        _entries = Query(descriptor)
+    }
 
     private var filteredModeEntries: [JournalEntry] {
         let modeEntries = switch feedMode {
         case .past:
-            entries
+            sourceEntries
                 .filter { $0.eventDate <= now.addingTimeInterval(JournalFeedTiming.nowThreshold) }
-                .sorted { $0.eventDate > $1.eventDate }
         case .future:
-            entries
+            sourceEntries
                 .filter { $0.eventDate > now.addingTimeInterval(JournalFeedTiming.nowThreshold) }
                 .sorted { $0.eventDate < $1.eventDate }
         case .solarEchoes, .duplexEchoes, .simplexEchoes, .nihilEchoes:
             [JournalEntry]()
         }
 
-        return modeEntries.filter(entryMatchesFilters)
+        let filtered = requiresCompleteJournal ? modeEntries : modeEntries.filter(entryMatchesFilters)
+        return Array(filtered.prefix(entryLimit))
     }
 
     private func entryMatchesFilters(_ entry: JournalEntry) -> Bool {
+        let needsContext = selectedRarity != nil
+            || selectedDirection != nil
+            || selectedExtremum != nil
+            || selectedSaros != nil
+        let matchesContext: Bool
+        if needsContext {
             let context = entry.context
             let closestRarity = context.closestSpike?.rarity.baseRarity ?? .common
             let matchesRarity = selectedRarity.map { closestRarity == $0.baseRarity } ?? true
             let matchesDirection = selectedDirection.map { context.waveSignature.direction == $0 } ?? true
             let matchesExtremum = selectedExtremum.map { context.extremum == $0 } ?? true
             let matchesSaros = selectedSaros.map { context.sarosNumbers.contains($0) } ?? true
-            let matchesMoon = matchesMoonFilters(entry.eventDate)
-            let matchesDate = switch dateFilterMode {
-            case .all:
-                true
-            case .day:
-                Calendar.current.isDate(entry.eventDate, inSameDayAs: selectedDate)
-            }
-            return matchesRarity && matchesDirection && matchesExtremum && matchesSaros && matchesMoon && matchesDate
+            matchesContext = matchesRarity && matchesDirection && matchesExtremum && matchesSaros
+        } else {
+            matchesContext = true
+        }
+        let matchesMoon = matchesMoonFilters(entry.eventDate)
+        let matchesDate = switch dateFilterMode {
+        case .all:
+            true
+        case .day:
+            Calendar.current.isDate(entry.eventDate, inSameDayAs: selectedDate)
+        }
+        return matchesContext && matchesMoon && matchesDate
     }
 
     private var entryGroups: [FeedEntryGroup] {
@@ -716,7 +805,7 @@ private struct FeedView: View {
     }
 
     private func solarEchoGroups() -> [FeedEntryGroup] {
-        guard let oldestDate = entries.map(\.eventDate).min() else { return [] }
+        guard let oldestDate = sourceEntries.map(\.eventDate).min() else { return [] }
 
         var groups: [FeedEntryGroup] = []
         let calendar = Calendar.current
@@ -732,7 +821,7 @@ private struct FeedView: View {
             targetDate = nextTarget
 
             if targetDate.addingTimeInterval(-halfWindow) < oldestDate,
-               entries.allSatisfy({ $0.eventDate > targetDate.addingTimeInterval(halfWindow) }) {
+               sourceEntries.allSatisfy({ $0.eventDate > targetDate.addingTimeInterval(halfWindow) }) {
                 break
             }
 
@@ -762,7 +851,7 @@ private struct FeedView: View {
     }
 
     private func lunarEchoGroups(for series: LunarEchoSeries) -> [FeedEntryGroup] {
-        let candidateEntries = entries.filter { $0.eventDate < now && entryMatchesFilters($0) }
+        let candidateEntries = sourceEntries.filter { $0.eventDate < now }
         guard let oldestDate = candidateEntries.map(\.eventDate).min() else { return [] }
 
         var groups: [FeedEntryGroup] = []
@@ -821,11 +910,10 @@ private struct FeedView: View {
         halfWindow: TimeInterval,
         matchKind: String
     ) -> [FeedEntryGroupItem] {
-        (candidateEntries ?? entries)
+        (candidateEntries ?? sourceEntries)
             .filter { entry in
                 entry.eventDate < now
                     && abs(entry.eventDate.timeIntervalSince(targetDate)) <= halfWindow
-                    && (candidateEntries != nil || entryMatchesFilters(entry))
             }
             .sorted {
                 let lhsDistance = abs($0.eventDate.timeIntervalSince(targetDate))
@@ -851,8 +939,9 @@ private struct FeedView: View {
         }
     }
 
-    private var entrySyncStates: [UUID: JournalEntrySyncState] {
-        var states: [UUID: JournalEntrySyncState] = Dictionary(uniqueKeysWithValues: entries.map { entry in
+    private func entrySyncStates(for groups: [FeedEntryGroup]) -> [UUID: JournalEntrySyncState] {
+        let visibleEntries = groups.flatMap(\.items).map(\.entry)
+        var states: [UUID: JournalEntrySyncState] = Dictionary(uniqueKeysWithValues: visibleEntries.map { entry in
             (
                 entry.id,
                 entry.publicID != nil && entry.acknowledgedServerRevision != nil
@@ -861,7 +950,7 @@ private struct FeedView: View {
             )
         })
         guard let userID = syncCoordinator.authenticatedUser?.id else { return states }
-        for command in syncCommands where command.isPending
+        for command in pendingSyncCommands() where command.isPending
             && (command.ownerUserID == nil || command.ownerUserID == userID)
             && (command.type == .entryUpsert || command.type == .entryDelete) {
             guard let id = UUID(uuidString: command.subjectID) else { continue }
@@ -874,8 +963,9 @@ private struct FeedView: View {
     }
 
     var body: some View {
+        let groups = entryGroups
         List {
-            if !isActive || captureRequest != nil || selectedEntry != nil {
+            if !isActive {
                 Color.clear
                     .frame(height: 1)
                     .listRowBackground(Color.clear)
@@ -887,17 +977,25 @@ private struct FeedView: View {
                         description: Text("Records are being checkpointed in the background.")
                     )
                 }
-            } else if entries.isEmpty {
+            } else if isLoadingAnalyticsEntries {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Searching complete journal…")
+                        Spacer()
+                    }
+                }
+            } else if sourceEntries.isEmpty {
                 Section {
                     ContentUnavailableView("No entries yet", systemImage: "rectangle.stack")
                 }
-            } else if entryGroups.isEmpty {
+            } else if groups.isEmpty {
                 Section {
                     ContentUnavailableView("No matching entries", systemImage: "line.3.horizontal.decrease.circle")
                 }
             } else {
-                let syncStates = entrySyncStates
-                ForEach(entryGroups) { group in
+                let syncStates = entrySyncStates(for: groups)
+                ForEach(groups) { group in
                     Section {
                         ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
                             TimelineView(.periodic(from: now, by: 60)) { timeline in
@@ -931,6 +1029,12 @@ private struct FeedView: View {
                             .textCase(nil)
                     }
                 }
+                if !feedMode.isEchoMode && filteredModeEntries.count == entryLimit {
+                    Section {
+                        Button("Load older records", action: loadOlder)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
             }
         }
         .navigationTitle("Feed")
@@ -940,6 +1044,9 @@ private struct FeedView: View {
         }
         .onReceive(feedClock) { date in
             now = date
+        }
+        .task(id: analyticsQueryID) {
+            await loadAnalyticsEntries()
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -1008,11 +1115,15 @@ private struct FeedView: View {
     private func refreshFromRelay() async {
         guard syncServerURL.nilIfBlank != nil, services.syncCoordinator.isAuthenticated else { return }
         do {
+            let syncCommands = pendingSyncCommands()
+            let syncEntries = (try? modelContext.fetch(FetchDescriptor<JournalEntry>(
+                sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+            ))) ?? []
             _ = try await services.syncService.synchronizeEntries(
                 with: syncServerURL,
                 modelContext: modelContext,
                 tags: tags,
-                entries: entries,
+                entries: syncEntries,
                 commands: syncCommands
             )
         } catch {}
@@ -1052,6 +1163,10 @@ private struct FeedView: View {
         entry.endDate = Date()
         entry.updatedAt = Date()
         entry.version += 1
+        let syncCommands = (try? SyncLocalCommand.pending(
+            forSubjectID: entry.id.uuidString,
+            modelContext: modelContext
+        )) ?? []
         SyncLocalCommand.enqueue(
             .entryUpsert,
             subjectID: entry.id.uuidString,
@@ -1062,6 +1177,48 @@ private struct FeedView: View {
         )
         try? modelContext.save()
     }
+
+    @MainActor
+    private func loadAnalyticsEntries() async {
+        guard requiresCompleteJournal else {
+            analyticsEntries = []
+            isLoadingAnalyticsEntries = false
+            return
+        }
+        isLoadingAnalyticsEntries = true
+        analyticsEntries = []
+        var matched: [JournalEntry] = []
+        var offset = 0
+        while !Task.isCancelled {
+            var descriptor = FetchDescriptor<JournalEntry>(
+                sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
+            )
+            descriptor.fetchLimit = JournalFeedQueryPolicy.analyticsBatchSize
+            descriptor.fetchOffset = offset
+            guard let batch = try? modelContext.fetch(descriptor), !batch.isEmpty else { break }
+            matched.append(contentsOf: batch.filter(entryMatchesFilters))
+            offset += batch.count
+            if batch.count < JournalFeedQueryPolicy.analyticsBatchSize { break }
+            await Task.yield()
+        }
+        guard !Task.isCancelled else { return }
+        analyticsEntries = matched
+        isLoadingAnalyticsEntries = false
+    }
+
+    @MainActor
+    private func pendingSyncCommands() -> [SyncLocalCommand] {
+        (try? modelContext.fetch(FetchDescriptor<SyncLocalCommand>(
+            predicate: #Predicate { $0.sentAt == nil },
+            sortBy: [SortDescriptor(\SyncLocalCommand.createdAt)]
+        ))) ?? []
+    }
+}
+
+private enum JournalFeedQueryPolicy {
+    static let pageSize = 200
+    static let notificationWindowSize = 128
+    static let analyticsBatchSize = 100
 }
 
 private enum FeedMode: String, CaseIterable, Identifiable {
@@ -1073,6 +1230,13 @@ private enum FeedMode: String, CaseIterable, Identifiable {
     case nihilEchoes
 
     var id: String { rawValue }
+
+    var isEchoMode: Bool {
+        switch self {
+        case .past, .future: false
+        case .solarEchoes, .duplexEchoes, .simplexEchoes, .nihilEchoes: true
+        }
+    }
 
     var title: String {
         switch self {
@@ -2140,8 +2304,6 @@ private struct SyncProgressView: View {
 private struct AutoSyncObserver: View {
     @EnvironmentObject private var syncCoordinator: SyncCoordinator
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
-    @Query(sort: \JournalEntry.eventDate, order: .reverse) private var entries: [JournalEntry]
     @Query(filter: #Predicate<SyncLocalCommand> { $0.sentAt == nil }, sort: \SyncLocalCommand.createdAt, order: .forward)
     private var syncCommands: [SyncLocalCommand]
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
@@ -2192,10 +2354,7 @@ private struct AutoSyncObserver: View {
 
         syncCoordinator.scheduleAutomaticSync(
             serverURL: syncServerURL,
-            modelContext: modelContext,
-            tags: tags,
-            entries: entries,
-            commands: syncCommands
+            modelContext: modelContext
         )
         lastCheckedFingerprint = fingerprint
     }

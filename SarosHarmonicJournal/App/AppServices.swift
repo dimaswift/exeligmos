@@ -152,10 +152,7 @@ final class SyncCoordinator: ObservableObject {
 
     func scheduleAutomaticSync(
         serverURL: String,
-        modelContext: ModelContext,
-        tags: [JournalTag],
-        entries: [JournalEntry],
-        commands: [SyncLocalCommand]
+        modelContext: ModelContext
     ) {
         guard let user = authenticatedUser else { return }
         guard syncTask == nil else {
@@ -164,13 +161,14 @@ final class SyncCoordinator: ObservableObject {
             resyncRequested = true
             return
         }
+        let inputs = automaticSyncInputs(modelContext: modelContext, userID: user.id)
         beginMerge(
             serverURL: serverURL,
             user: user,
             modelContext: modelContext,
-            tags: tags,
-            entries: entries,
-            commands: commands,
+            tags: inputs.tags,
+            entries: inputs.entries,
+            commands: inputs.commands,
             presentsProgress: false,
             presentsInitialProgress: progress == nil
         )
@@ -196,8 +194,9 @@ final class SyncCoordinator: ObservableObject {
         pendingProgress = .zero
         resyncRequested = false
         let isInitial = !defaults.bool(forKey: initialRestoreKey)
-        progress = SyncProgressPresentation(phase: .preparing, isInitialRestore: isInitial)
-        if presentsProgress || (isInitial && presentsInitialProgress) {
+        let reportsProgress = presentsProgress || (isInitial && presentsInitialProgress)
+        if reportsProgress {
+            progress = SyncProgressPresentation(phase: .preparing, isInitialRestore: isInitial)
             isProgressPresented = true
         }
 
@@ -233,13 +232,16 @@ final class SyncCoordinator: ObservableObject {
         syncTask = Task { [weak self] in
             guard let self else { return }
             do {
+                let progressHandler: ((SyncTransferEvent) -> Void)? = reportsProgress
+                    ? { [weak self] event in self?.consume(event) }
+                    : nil
                 _ = try await service.synchronizeEntries(
                     with: serverURL,
                     modelContext: modelContext,
                     tags: retained.tags,
                     entries: retained.entries,
                     commands: scopedCommands,
-                    progress: { [weak self] event in self?.consume(event) }
+                    progress: progressHandler
                 )
                 guard !Task.isCancelled else { return }
                 transientSyncFailureCount = 0
@@ -262,21 +264,27 @@ final class SyncCoordinator: ObservableObject {
                     return
                 }
                 defaults.set(true, forKey: initialRestoreKey)
-                flushProgressDeltas()
-                progress?.phase = .complete
-                progress?.detail = progress?.skippedPrivateRecords == 0
-                    ? "Your local journal and server are merged."
-                    : "Public records were restored. Private records remain encrypted on the server."
+                if reportsProgress {
+                    flushProgressDeltas()
+                    progress?.phase = .complete
+                    progress?.detail = progress?.skippedPrivateRecords == 0
+                        ? "Your local journal and server are merged."
+                        : "Public records were restored. Private records remain encrypted on the server."
+                }
             } catch {
                 guard !Task.isCancelled else { return }
-                flushProgressDeltas()
-                progress?.phase = .failed
-                progress?.detail = error.localizedDescription
+                if reportsProgress {
+                    flushProgressDeltas()
+                    progress?.phase = .failed
+                    progress?.detail = error.localizedDescription
+                }
                 let shouldRunAgain = resyncRequested
                 resyncRequested = false
                 if SyncService.isRetryableFailure(error) {
                     let delay = nextTransientRetryDelay()
-                    progress?.detail = "\(error.localizedDescription) Retrying in \(Int(delay)) seconds."
+                    if reportsProgress {
+                        progress?.detail = "\(error.localizedDescription) Retrying in \(Int(delay)) seconds."
+                    }
                     syncTask = nil
                     scheduleTransientRetry(
                         after: delay,
@@ -307,20 +315,14 @@ final class SyncCoordinator: ObservableObject {
         modelContext: ModelContext
     ) {
         guard authenticatedUser?.id == user.id else { return }
-        let tags = (try? modelContext.fetch(FetchDescriptor<JournalTag>(
-            sortBy: [SortDescriptor(\JournalTag.createdAt)]
-        ))) ?? []
-        let entries = (try? modelContext.fetch(FetchDescriptor<JournalEntry>(
-            sortBy: [SortDescriptor(\JournalEntry.eventDate, order: .reverse)]
-        ))) ?? []
-        let commands = currentCommands(modelContext: modelContext, fallback: [])
+        let inputs = automaticSyncInputs(modelContext: modelContext, userID: user.id)
         beginMerge(
             serverURL: serverURL,
             user: user,
             modelContext: modelContext,
-            tags: tags,
-            entries: entries,
-            commands: commands,
+            tags: inputs.tags,
+            entries: inputs.entries,
+            commands: inputs.commands,
             presentsProgress: false,
             presentsInitialProgress: false
         )
@@ -372,6 +374,33 @@ final class SyncCoordinator: ObservableObject {
         (try? modelContext.fetch(FetchDescriptor<SyncLocalCommand>(
             sortBy: [SortDescriptor(\SyncLocalCommand.createdAt)]
         ))) ?? fallback
+    }
+
+    /// Routine relay passes must scale with the outbox, not with the journal.
+    /// Remote changes that are not represented here are resolved by indexed
+    /// SwiftData lookups inside `SyncService`.
+    private func automaticSyncInputs(
+        modelContext: ModelContext,
+        userID: UUID
+    ) -> (tags: [JournalTag], entries: [JournalEntry], commands: [SyncLocalCommand]) {
+        let commands = (try? modelContext.fetch(FetchDescriptor<SyncLocalCommand>(
+            predicate: #Predicate { $0.sentAt == nil },
+            sortBy: [SortDescriptor(\SyncLocalCommand.createdAt)]
+        ))) ?? []
+        let tags = (try? modelContext.fetch(FetchDescriptor<JournalTag>(
+            sortBy: [SortDescriptor(\JournalTag.createdAt)]
+        ))) ?? []
+        let entryIDs = Set(commands.compactMap { command -> UUID? in
+            guard command.type == .entryUpsert,
+                  command.ownerUserID == nil || command.ownerUserID == userID else { return nil }
+            return UUID(uuidString: command.subjectID)
+        })
+        let entries = entryIDs.compactMap { id -> JournalEntry? in
+            var descriptor = FetchDescriptor<JournalEntry>(predicate: #Predicate { $0.id == id })
+            descriptor.fetchLimit = 1
+            return try? modelContext.fetch(descriptor).first
+        }
+        return (tags, entries, commands)
     }
 
     private func consume(_ event: SyncTransferEvent) {
