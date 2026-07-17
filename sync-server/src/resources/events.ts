@@ -157,7 +157,8 @@ const EVENT_COLUMNS = `
   jsonb_build_object(
     'id', author.id,
     'login', author.login,
-    'displayName', author.display_name
+    'displayName', author.display_name,
+    'sarosAnchor', author.saros_anchor
   ) AS author,
   ${referenceProjectionSql("e", "event")}
 `;

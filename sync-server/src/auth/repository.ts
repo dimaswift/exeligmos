@@ -9,6 +9,7 @@ export interface AuthUser {
   readonly id: string;
   readonly login: string;
   readonly displayName: string;
+  readonly sarosAnchor: number;
   readonly role: AccountRole;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -101,6 +102,7 @@ interface AccountRow extends QueryResultRow {
   readonly id: string;
   readonly login: string;
   readonly display_name: string;
+  readonly saros_anchor: number;
   readonly password_hash: string;
   readonly role: AccountRole;
   readonly status: AccountStatus;
@@ -158,7 +160,7 @@ export class PostgresAuthRepository implements AuthRepository {
         `INSERT INTO users (
            id, login, display_name, password_hash, created_at, updated_at
          ) VALUES ($1, $2, $3, $4, $5, $5)
-         RETURNING id, login, display_name, password_hash, role, status,
+         RETURNING id, login, display_name, saros_anchor, password_hash, role, status,
                    created_at, updated_at`,
         [
           input.userId,
@@ -192,7 +194,7 @@ export class PostgresAuthRepository implements AuthRepository {
 
   async findAccountByLogin(login: string): Promise<PasswordAccount | undefined> {
     const result = await this.database.query<AccountRow>(
-      `SELECT id, login, display_name, password_hash, role, status,
+      `SELECT id, login, display_name, saros_anchor, password_hash, role, status,
               created_at, updated_at
        FROM users
        WHERE lower(login) = lower($1)
@@ -284,7 +286,7 @@ export class PostgresAuthRepository implements AuthRepository {
       await lockTokenFamily(client, initialSession.token_family_id);
       const result = await client.query<RefreshSessionRow>(
         `SELECT
-           u.id, u.login, u.display_name, u.password_hash, u.role, u.status,
+           u.id, u.login, u.display_name, u.saros_anchor, u.password_hash, u.role, u.status,
            u.created_at, u.updated_at,
            s.id AS session_id, s.user_id, s.device_id, s.token_family_id,
            s.expires_at AS session_expires_at, s.revoked_at, s.revoke_reason
@@ -460,6 +462,7 @@ function mapUser(row: AccountRow): AuthUser {
     id: row.id,
     login: row.login,
     displayName: row.display_name,
+    sarosAnchor: row.saros_anchor,
     role: row.role,
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),

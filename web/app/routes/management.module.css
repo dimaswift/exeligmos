@@ -1,0 +1,496 @@
+.page {
+  display: grid;
+  gap: var(--space-5);
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: var(--space-4);
+}
+.header h1,
+.header p,
+.panel h2,
+.item h2,
+.item p {
+  margin: 0;
+}
+.header p {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+.panel,
+.item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+.panel {
+  padding: var(--space-4);
+}
+.panel h2 {
+  margin-bottom: var(--space-3);
+  font-size: 1rem;
+}
+.recordComposer {
+  padding: var(--space-3) var(--space-4);
+}
+.composerHeading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.composerHeading h2,
+.composerHeading p,
+.recordsToolbar h2,
+.recordsToolbar p {
+  margin: 0;
+}
+.composerHeading h2 {
+  font-size: 0.95rem;
+}
+.composerHeading p {
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+.form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.form label,
+.fieldset {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+.form input,
+.form select,
+.form textarea {
+  width: 100%;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+}
+.form small {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+.form textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+.recordForm {
+  grid-template-columns: minmax(5rem, 0.35fr) minmax(13rem, 1.2fr) repeat(2, minmax(12rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+.recordForm textarea {
+  min-height: 4.75rem;
+}
+.recordForm .emojiInput {
+  font-size: 1.1rem;
+}
+.temporalHint {
+  padding: 0.5rem 0.65rem;
+  margin: 0;
+  border-left: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent), transparent 94%);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+.wide,
+.actions,
+.fieldset {
+  grid-column: 1 / -1;
+}
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.button,
+.danger,
+.summary {
+  width: fit-content;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  text-decoration: none;
+}
+.danger {
+  border-color: color-mix(in srgb, var(--color-danger), transparent 45%);
+  color: var(--color-danger);
+}
+.list {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recordsToolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-1);
+}
+.recordsToolbar h2 {
+  font-size: 1rem;
+}
+.recordsToolbar p {
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+.dateFilter {
+  display: flex;
+  align-items: end;
+  gap: var(--space-2);
+}
+.dateFilter label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.67rem;
+}
+.dateFilter input {
+  min-height: 2.05rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  color-scheme: dark;
+  font: inherit;
+}
+.compactButton {
+  display: inline-flex;
+  min-height: 2.05rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+.compactButton:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+.clearFilter {
+  align-self: center;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-decoration: none;
+}
+.recordList {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recordItem {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+}
+.recordRow {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1fr) auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 0.7rem var(--space-3);
+}
+.recordIdentity {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+.recordEmoji {
+  overflow: hidden;
+  font-size: 1.6rem;
+  line-height: 1;
+  text-align: center;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.recordCopy {
+  min-width: 0;
+}
+.recordTitleLine {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.recordTitleLine h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-accent-strong);
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recordTitleLine > span {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+.recordExcerpt {
+  overflow: hidden;
+  margin: 0.18rem 0 0;
+  color: var(--color-text);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recordFacts {
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  white-space: nowrap;
+}
+.recordFacts > * + *::before {
+  margin-right: 0.45rem;
+  color: var(--color-border-strong);
+  content: "·";
+}
+.compactSaros {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.phaseGlyph {
+  display: grid;
+  width: 2.6rem;
+  height: 2.6rem;
+  place-items: center;
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--color-border);
+}
+.compactSpikes {
+  display: flex;
+  gap: 0.2rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.compactSpikes li {
+  display: grid;
+  min-width: 2.15rem;
+  grid-template-rows: 1.5rem auto;
+  place-items: center;
+  padding: 0.2rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+}
+.compactSpikes .closestSpike {
+  border-color: color-mix(in srgb, var(--color-accent), transparent 40%);
+  background: color-mix(in srgb, var(--color-accent), transparent 92%);
+  color: var(--color-accent-strong);
+}
+.noSaros {
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+}
+.recordControls {
+  display: flex;
+  min-height: 2rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0.35rem var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-canvas), transparent 30%);
+}
+.recordDetails {
+  font-size: 0.68rem;
+}
+.recordDetails summary {
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.recordDetails[open] {
+  flex: 1 0 100%;
+}
+.recordDetails > .recordForm {
+  margin: var(--space-3) 0 var(--space-2);
+}
+.deleteForm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  color: var(--color-text-muted);
+}
+.recordId {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+.privateNote {
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+}
+.item {
+  padding: var(--space-4);
+}
+.itemHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: start;
+}
+.identity {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+.emoji {
+  font-size: 1.8rem;
+}
+.meta {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+.item details {
+  margin-top: var(--space-3);
+}
+.item summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: 0.75rem;
+}
+.item details > .form,
+.item details > form {
+  margin-top: var(--space-3);
+}
+.tagChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.tagChoice {
+  display: flex !important;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0.35rem !important;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+.tagChoice input {
+  width: auto;
+}
+.notice,
+.error {
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+.notice {
+  background: color-mix(in srgb, var(--color-accent), transparent 88%);
+  color: var(--color-accent-strong);
+}
+.error {
+  background: color-mix(in srgb, var(--color-danger), transparent 88%);
+  color: var(--color-danger);
+}
+.empty {
+  padding: var(--space-5);
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+@media (max-width: 42rem) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+  .form > *,
+  .wide,
+  .actions,
+  .fieldset {
+    grid-column: 1;
+  }
+  .recordsToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dateFilter {
+    align-items: end;
+  }
+  .dateFilter label {
+    flex: 1;
+  }
+  .recordRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .compactSaros {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--color-border);
+  }
+  .recordFacts {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .recordId {
+    width: 100%;
+    margin-left: 0;
+  }
+  .deleteForm {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 42.01rem) and (max-width: 72rem) {
+  .recordForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .recordRow {
+    grid-template-columns: minmax(16rem, 1fr) auto;
+  }
+  .compactSaros {
+    grid-column: 1;
+  }
+  .recordRow > .compactButton {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}

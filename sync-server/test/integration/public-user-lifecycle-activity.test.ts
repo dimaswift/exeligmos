@@ -98,7 +98,7 @@ test(
       assert.deepEqual(disabled.json().data, [{
         sequence: disabled.json().data[0]?.sequence,
         publishedAt: disabled.json().data[0]?.publishedAt,
-        actor: { id: targetId, login: targetLogin, displayName: "Sun" },
+        actor: { id: targetId, login: targetLogin, displayName: "Sun", sarosAnchor: 141 },
         resourceType: "user",
         resourceId: targetId,
         operation: "delete",

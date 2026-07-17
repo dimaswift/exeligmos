@@ -215,6 +215,15 @@ test("owner and security routes share authenticated read and write limits", asyn
     assert.equal((await app.inject({ method: "GET", url: "/v1/me" })).statusCode, 429);
     assert.equal(
       (await app.inject({
+        method: "PATCH",
+        url: "/v1/me",
+        headers: { "if-match": '"user-r1"' },
+        payload: { sarosAnchor: 141 },
+      })).statusCode,
+      429,
+    );
+    assert.equal(
+      (await app.inject({
         method: "POST",
         url: "/v1/devices",
         headers: { "idempotency-key": "device-create-1" },
@@ -222,7 +231,7 @@ test("owner and security routes share authenticated read and write limits", asyn
       })).statusCode,
       429,
     );
-    assert.deepEqual(limiter.calls, ["read", "write"]);
+    assert.deepEqual(limiter.calls, ["read", "write", "write"]);
   } finally {
     await app.close();
   }

@@ -68,11 +68,12 @@ const refreshTokenSchema = {
 const userSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["id", "login", "displayName", "createdAt", "updatedAt"],
+  required: ["id", "login", "displayName", "sarosAnchor", "createdAt", "updatedAt"],
   properties: {
     id: { type: "string", format: "uuid" },
     login: loginNameSchema,
     displayName: { type: "string", minLength: 1, maxLength: 120 },
+    sarosAnchor: { type: "integer", minimum: 1, maximum: 180 },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
   },

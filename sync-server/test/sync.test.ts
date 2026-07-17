@@ -91,11 +91,19 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
     assert.ok(stats.cursor.length > 1);
     assert.deepEqual({ ...stats, cursor: "<cursor>" }, {
       cursor: "<cursor>",
-      records: { total: 0, public: 0, private: 0 },
+      records: { total: 0, public: 0, private: 0, pastTera: 0, pastGiga: 0, pastMega: 0 },
       events: { total: 0 },
       tags: { total: 0 },
       templates: { total: 0 },
-      media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+      media: {
+        total: 0,
+        byteLength: 0,
+        photo: 0,
+        video: 0,
+        audio: 0,
+        restorable: 0,
+        restorableByteLength: 0,
+      },
     });
 
     const first = await app.inject({ method: "GET", url: "/v1/sync/changes" });
@@ -208,15 +216,23 @@ class EmptySyncDatabase implements Database {
       return result<Row>([]);
     }
     if (text.includes("AS public_record_count")) {
+      assert.match(text, /event_at >= now\(\)/);
+      assert.doesNotMatch(text, /occurred_at/);
       return result<Row>([{
         high_water: "0",
         public_record_count: "0",
         private_record_count: "0",
+        past_tera_record_count: "0",
+        past_giga_record_count: "0",
+        past_mega_record_count: "0",
         event_count: "0",
         tag_count: "0",
         template_count: "0",
         media_count: "0",
         media_byte_length: "0",
+        photo_media_count: "0",
+        video_media_count: "0",
+        audio_media_count: "0",
         restorable_media_count: "0",
         restorable_media_byte_length: "0",
       }]);

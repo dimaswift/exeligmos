@@ -55,6 +55,7 @@ test("OpenAPI advertises 429 and 503 on every implemented limited resource opera
   const paths = object(contract.paths);
   const limited: readonly (readonly [string, string])[] = [
     ["/v1/me", "get"],
+    ["/v1/me", "patch"],
     ["/v1/me/encryption-profile", "get"],
     ["/v1/me/encryption-profile", "post"],
     ["/v1/api-keys", "get"],

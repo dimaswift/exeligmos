@@ -73,6 +73,7 @@ test(
       userId = registered.user.id;
       assert.equal(registered.user.login, login);
       assert.equal(registered.user.displayName, "Integration User");
+      assert.equal(registered.user.sarosAnchor, 141);
       assert.equal(registered.tokenType, "Bearer");
       assert.match(registered.refreshToken, /^exr_[A-Za-z0-9_-]{43}$/);
 

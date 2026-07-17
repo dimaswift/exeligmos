@@ -320,6 +320,49 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateCurrentUser
+      tags: [Authentication]
+      summary: Update authenticated user preferences
+      description: |
+        JWT-only. Updates the Saros-series anchor used by temporal clocks and
+        record presentation. Supply the strong ETag returned by `GET /v1/me`.
+      security:
+        - JwtBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User preferences updated.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/me/encryption-profile:
     get:
       operationId: getEncryptionProfile
@@ -1574,13 +1617,22 @@ paths:
                 $ref: '#/components/schemas/SyncStats'
               example:
                 cursor: eyJ2IjoxLCJraW5kIjoic3luYy1jaGFuZ2VzIiwic2VxIjoiNDgxMiJ9
-                records: { total: 728, public: 728, private: 0 }
+                records:
+                  total: 728
+                  public: 728
+                  private: 0
+                  pastTera: 48
+                  pastGiga: 7
+                  pastMega: 1
                 events: { total: 0 }
                 tags: { total: 14 }
                 templates: { total: 2 }
                 media:
                   total: 1936
                   byteLength: 4096432128
+                  photo: 1712
+                  video: 62
+                  audio: 162
                   restorable: 1936
                   restorableByteLength: 4096432128
         '401':
@@ -1646,6 +1698,7 @@ paths:
                         id: e42b4fde-8baf-4b95-8bc8-5395b68d0dd2
                         login: sun
                         displayName: Sun
+                        sarosAnchor: 141
                       deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
                       visibility: public
                       startsAt: '2026-07-14T16:42:00Z'
@@ -3236,7 +3289,7 @@ components:
       additionalProperties: false
     User:
       type: object
-      required: [id, login, displayName, createdAt, updatedAt]
+      required: [id, login, displayName, sarosAnchor, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -3248,6 +3301,8 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        sarosAnchor:
+          $ref: '#/components/schemas/SarosAnchor'
         createdAt:
           type: string
           format: date-time
@@ -3257,9 +3312,22 @@ components:
           format: date-time
           readOnly: true
       additionalProperties: false
+    UpdateUserRequest:
+      type: object
+      required: [sarosAnchor]
+      properties:
+        sarosAnchor:
+          $ref: '#/components/schemas/SarosAnchor'
+      additionalProperties: false
+    SarosAnchor:
+      type: integer
+      minimum: 1
+      maximum: 180
+      default: 141
+      description: Saros series used as the user's temporal pulse anchor.
     PublicUserSummary:
       type: object
-      required: [id, login, displayName]
+      required: [id, login, displayName, sarosAnchor]
       properties:
         id:
           type: string
@@ -3270,6 +3338,8 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        sarosAnchor:
+          $ref: '#/components/schemas/SarosAnchor'
       additionalProperties: false
     PublicUserProfile:
       allOf:
@@ -3348,7 +3418,7 @@ components:
       additionalProperties: false
     SubscriptionTargetUserSummary:
       type: object
-      required: [id, login, displayName, status]
+      required: [id, login, displayName, sarosAnchor, status]
       properties:
         id:
           type: string
@@ -3359,6 +3429,8 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        sarosAnchor:
+          $ref: '#/components/schemas/SarosAnchor'
         status:
           type: string
           enum: [active, disabled]
@@ -4968,11 +5040,14 @@ components:
           description: Opaque all-resource change cursor captured with these totals.
         records:
           type: object
-          required: [total, public, private]
+          required: [total, public, private, pastTera, pastGiga, pastMega]
           properties:
             total: { type: integer, format: int64, minimum: 0 }
             public: { type: integer, format: int64, minimum: 0 }
             private: { type: integer, format: int64, minimum: 0 }
+            pastTera: { type: integer, format: int64, minimum: 0 }
+            pastGiga: { type: integer, format: int64, minimum: 0 }
+            pastMega: { type: integer, format: int64, minimum: 0 }
           additionalProperties: false
         events:
           $ref: '#/components/schemas/SyncResourceCount'
@@ -4982,10 +5057,13 @@ components:
           $ref: '#/components/schemas/SyncResourceCount'
         media:
           type: object
-          required: [total, byteLength, restorable, restorableByteLength]
+          required: [total, byteLength, photo, video, audio, restorable, restorableByteLength]
           properties:
             total: { type: integer, format: int64, minimum: 0 }
             byteLength: { type: integer, format: int64, minimum: 0 }
+            photo: { type: integer, format: int64, minimum: 0 }
+            video: { type: integer, format: int64, minimum: 0 }
+            audio: { type: integer, format: int64, minimum: 0 }
             restorable: { type: integer, format: int64, minimum: 0 }
             restorableByteLength: { type: integer, format: int64, minimum: 0 }
           additionalProperties: false

@@ -72,7 +72,11 @@ struct RootView: View {
                 TabView(selection: $selectedTab) {
                     ForEach(AppTab.allCases) { tab in
                         NavigationStack {
-                            screen(for: tab)
+                            if selectedTab == tab {
+                                screen(for: tab)
+                            } else {
+                                Color.clear
+                            }
                         }
                         .tabItem {
                             Label(tab.title, systemImage: tab.symbol)

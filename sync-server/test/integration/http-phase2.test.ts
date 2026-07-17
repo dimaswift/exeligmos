@@ -55,6 +55,7 @@ test(
       const firstSession = registered.json<SessionBody>();
       userId = firstSession.user.id;
       assert.equal(firstSession.user.login, login.toLowerCase());
+      assert.equal(firstSession.user.sarosAnchor, 141);
       assert.match(firstSession.accessToken, /^eyJ/);
       assert.match(firstSession.refreshToken, /^exr_/);
 
@@ -65,8 +66,22 @@ test(
       });
       assert.equal(me.statusCode, 200, me.body);
       assert.equal(me.json().id, userId);
+      assert.equal(me.json().sarosAnchor, 141);
       assert.match(me.headers.etag ?? "", /^"user-.+-r1"$/);
       assert.equal(me.headers["cache-control"], "no-store");
+
+      const updatedMe = await app.inject({
+        method: "PATCH",
+        url: "/v1/me",
+        headers: {
+          ...bearer(firstSession.accessToken),
+          "if-match": me.headers.etag ?? "",
+        },
+        payload: { sarosAnchor: 122 },
+      });
+      assert.equal(updatedMe.statusCode, 200, updatedMe.body);
+      assert.equal(updatedMe.json().sarosAnchor, 122);
+      assert.match(updatedMe.headers.etag ?? "", /^"user-.+-r2"$/);
 
       const missingProfile = await app.inject({
         method: "GET",
@@ -251,7 +266,11 @@ test(
 interface SessionBody {
   readonly accessToken: string;
   readonly refreshToken: string;
-  readonly user: { readonly id: string; readonly login: string };
+  readonly user: {
+    readonly id: string;
+    readonly login: string;
+    readonly sarosAnchor: number;
+  };
 }
 
 interface IssuedKeyBody {

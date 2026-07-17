@@ -28,14 +28,16 @@ export function FeedWorkspace({
 }: FeedWorkspaceProps) {
   return (
     <div className={joinClassNames(styles.workspace, className)}>
-      <header className={styles.pageHeader}>
-        <div>
-          <p className="eyebrow">{eyebrow}</p>
-          <h1>{title}</h1>
-          <p>{summary}</p>
-        </div>
-        {actions === undefined ? null : <div className={styles.actions}>{actions}</div>}
-      </header>
+      {title === "" && eyebrow === "" && summary === "" ? null : (
+        <header className={styles.pageHeader}>
+          <div>
+            {eyebrow === "" ? null : <p className="eyebrow">{eyebrow}</p>}
+            {title === "" ? null : <h1>{title}</h1>}
+            {summary === "" ? null : <p>{summary}</p>}
+          </div>
+          {actions === undefined ? null : <div className={styles.actions}>{actions}</div>}
+        </header>
+      )}
       {children}
     </div>
   );

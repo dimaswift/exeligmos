@@ -440,6 +440,8 @@ export function createTemporalEngine(catalog: DomainCatalog): TemporalEngine {
 /** The default engine used by the web application. */
 export const canonicalTemporalEngine = createTemporalEngine(canonicalCatalog);
 
+export * from "./saros.js";
+
 function clampStorageOutputDepth(catalog: DomainCatalog, value: number): PresentationDepth {
   assertSafeInteger(value, "Storage output depth");
   return clamp(

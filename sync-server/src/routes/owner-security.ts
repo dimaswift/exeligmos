@@ -22,6 +22,7 @@ import type {
   CreateDeviceInput,
   CreateEncryptionProfileInput,
   UpdateDeviceInput,
+  UpdateUserInput,
 } from "../owner-security/models.js";
 import { UserSecurityService } from "../owner-security/user-service.js";
 import {
@@ -74,6 +75,23 @@ export async function registerOwnerSecurityRoutes(
       const result = await users.getCurrentUser(principal.userId);
       return reply.header("etag", result.etag).send(result.view);
     }),
+  );
+
+  app.patch<{ Body: UpdateUserInput; Headers: IfMatchHeaders }>(
+    "/v1/me",
+    { schema: updateUserSchema },
+    async (request, reply) =>
+      withOwnerSecurityErrors(reply, async () => {
+        const principal = await authenticateJwt(options.authenticator, request);
+        await requestLimiter.checkAuthenticatedWrite(request, principal);
+        const result = await users.updateCurrentUser({
+          principal,
+          ifMatch: request.headers["if-match"],
+          input: request.body,
+          requestId: request.id,
+        });
+        return reply.header("etag", result.etag).send(result.view);
+      }),
   );
 
   app.get("/v1/me/encryption-profile", async (request, reply) =>
@@ -355,6 +373,17 @@ const listSchema = {
 } as const;
 const deviceParamsSchema = { params: DEVICE_PARAMS } as const;
 const apiKeyParamsSchema = { params: API_KEY_PARAMS } as const;
+const updateUserSchema = {
+  headers: IF_MATCH_HEADER_SCHEMA,
+  body: {
+    type: "object",
+    required: ["sarosAnchor"],
+    properties: {
+      sarosAnchor: { type: "integer", minimum: 1, maximum: 180 },
+    },
+    additionalProperties: false,
+  },
+} as const;
 const encryptionProfileCreateSchema = {
   headers: IDEMPOTENCY_HEADER_SCHEMA,
   body: {

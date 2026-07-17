@@ -3,4 +3,5 @@ build/
 node_modules/
 packages/api-client/src/schema.ts
 packages/domain-catalog/src/catalog.generated.ts
+app/features/temporal/generated/solar-temporal-data.json
 package-lock.json

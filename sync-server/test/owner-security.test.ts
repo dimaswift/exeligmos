@@ -56,10 +56,75 @@ test("GET /v1/me accepts an API-key principal and returns a strong user ETag", a
     id: USER_ID,
     login: "aurora",
     displayName: "Aurora",
+    sarosAnchor: 141,
     createdAt: "2026-07-14T18:00:00.000Z",
     updatedAt: "2026-07-14T19:00:00.000Z",
   });
   assert.deepEqual(authenticator.requiredScopes, [[]]);
+  database.assertDone();
+});
+
+test("PATCH /v1/me updates the JWT user's Saros anchor with ETag protection", async (context) => {
+  const updatedAt = new Date("2026-07-14T20:00:00Z");
+  const database = new ScriptedDatabase([
+    (text, values) => {
+      assert.match(text, /FROM users/);
+      assert.match(text, /FOR UPDATE/);
+      assert.deepEqual(values, [USER_ID]);
+      return rows([userRow()]);
+    },
+    (text, values) => {
+      assert.match(text, /UPDATE users/);
+      assert.deepEqual(values, [USER_ID, 122]);
+      return rows([{
+        ...userRow(),
+        saros_anchor: 122,
+        revision: "4",
+        updated_at: updatedAt,
+      }]);
+    },
+    (text, values) => {
+      assert.match(text, /INSERT INTO audit_log/);
+      assert.match(text, /user\.saros_anchor\.update/);
+      assert.deepEqual(values?.slice(0, 4), [USER_ID, "jwt", ACTOR_ID, "req-1"]);
+      assert.deepEqual(JSON.parse(String(values?.[4])), {
+        previousSarosAnchor: 141,
+        sarosAnchor: 122,
+      });
+      return rows([]);
+    },
+  ]);
+  const app = await ownerSecurityApp(database, new StubAuthenticator(jwtPrincipal()));
+  context.after(() => app.close());
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: "/v1/me",
+    headers: { "if-match": `"user-${USER_ID}-r3"`, "x-request-id": "req-1" },
+    payload: { sarosAnchor: 122 },
+  });
+
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.headers.etag, `"user-${USER_ID}-r4"`);
+  assert.equal(response.json().sarosAnchor, 122);
+  assert.equal(response.json().updatedAt, updatedAt.toISOString());
+  database.assertDone();
+});
+
+test("PATCH /v1/me is JWT-only", async (context) => {
+  const database = new ScriptedDatabase([]);
+  const app = await ownerSecurityApp(database, new StubAuthenticator(apiKeyPrincipal()));
+  context.after(() => app.close());
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: "/v1/me",
+    headers: { "if-match": `"user-${USER_ID}-r3"` },
+    payload: { sarosAnchor: 122 },
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.json().code, "jwt_required");
   database.assertDone();
 });
 
@@ -597,6 +662,7 @@ function userRow(): QueryResultRow {
     id: USER_ID,
     login: "aurora",
     display_name: "Aurora",
+    saros_anchor: 141,
     revision: "3",
     created_at: new Date("2026-07-14T18:00:00Z"),
     updated_at: new Date("2026-07-14T19:00:00Z"),

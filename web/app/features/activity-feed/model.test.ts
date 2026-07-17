@@ -26,7 +26,7 @@ describe("activity feed model", () => {
       record: {
         id: "Pub01",
         userId: "user",
-        author: { id: "user", login: "sun", displayName: "The Sun" },
+        author: { id: "user", login: "sun", displayName: "The Sun", sarosAnchor: 141 },
         visibility: "public",
         occurredAt: "2026-07-15T10:00:00Z",
         payload: {},

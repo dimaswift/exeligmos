@@ -4,8 +4,13 @@ export interface UserView {
   readonly id: string;
   readonly login: string;
   readonly displayName: string;
+  readonly sarosAnchor: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface UpdateUserInput {
+  readonly sarosAnchor: number;
 }
 
 export interface EncryptionProfileView {

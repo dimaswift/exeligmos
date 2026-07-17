@@ -1,5 +1,6 @@
 import { createOctalGlyph, type GlyphModel } from "@exeligmos/glyph-core";
-import { canonicalTemporalEngine } from "@exeligmos/temporal-core";
+import { canonicalCatalog } from "@exeligmos/domain-catalog";
+import { canonicalTemporalEngine, pulseDuration } from "@exeligmos/temporal-core";
 
 import type { ActivityRecord } from "./model";
 import { activityPresentationConfig } from "./presentation-config";
@@ -88,7 +89,7 @@ export function journalRecordPresentation(record: ActivityRecord): JournalRecord
       rarityId: descriptor.rarityId,
       title: descriptor.title,
       glyph: createOctalGlyph({
-        value: spike.octalAddress,
+        value: displayGlyphAddress(spike.octalAddress),
         depth: activityPresentationConfig.glyphDepth,
         rarityId: descriptor.rarityId,
         accessibilityLabel: `Saros ${spike.saros} ${descriptor.title}`,
@@ -111,13 +112,13 @@ export function journalRecordPresentation(record: ActivityRecord): JournalRecord
         ? closest === undefined
           ? undefined
           : createOctalGlyph({
-              value: closest.octalAddress,
+              value: displayGlyphAddress(closest.octalAddress),
               depth: activityPresentationConfig.glyphDepth,
               rarityId: closestDescriptor.rarityId,
               accessibilityLabel: closestDescriptor.title,
             })
         : createOctalGlyph({
-            value: phase.octalAddress,
+            value: displayGlyphAddress(phase.octalAddress),
             depth: activityPresentationConfig.glyphDepth,
             rarityId: phase.rarityRawValue,
             accessibilityLabel: `Saros ${phase.saros} phase`,
@@ -199,17 +200,26 @@ function durationLabel(start: string, end?: string): string | undefined {
   if (end === undefined) return undefined;
   const seconds = (Date.parse(end) - Date.parse(start)) / 1_000;
   if (!Number.isFinite(seconds) || seconds <= 1) return undefined;
-  const hours = Math.floor(seconds / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  const remainder = Math.floor(seconds % 60);
-  return [
-    hours > 0 ? `${hours}h` : "",
-    minutes > 0 ? `${minutes}m` : "",
-    remainder > 0 ? `${remainder}s` : "",
-  ]
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(" ");
+  let remaining = seconds;
+  const parts: string[] = [];
+  for (const unitId of ["giga", "mega", "kilo", "saros", "mili"] as const) {
+    const duration = pulseDuration(canonicalCatalog, unitId).seconds;
+    const amount = Math.floor((remaining + Number.EPSILON) / duration);
+    if (amount > 0) {
+      const labels = { giga: "Gs", mega: "Ms", kilo: "Ks", saros: "S", mili: "mS" } as const;
+      parts.push(`${amount} ${labels[unitId]}`);
+      remaining -= amount * duration;
+    }
+  }
+  return parts.slice(0, 2).join(" ") || "<1 mS";
+}
+
+/** Feed glyphs intentionally render the configured most-significant prefix. */
+function displayGlyphAddress(value: string): string {
+  const octal = [...value].filter((digit) => digit >= "0" && digit <= "7").join("");
+  return octal
+    .slice(0, activityPresentationConfig.glyphDepth)
+    .padEnd(activityPresentationConfig.glyphDepth, "0");
 }
 
 function objectValue(value: unknown): Readonly<Record<string, unknown>> | undefined {

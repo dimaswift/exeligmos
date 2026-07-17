@@ -1,0 +1,30 @@
+.pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.14em;
+  color: var(--exeligmos-color-time-saros, #fff);
+  line-height: 0;
+  --glyph-primary: currentcolor;
+  --glyph-secondary: currentcolor;
+}
+
+.pair[data-pulse-color="blue"] {
+  color: var(--exeligmos-color-time-kilo, #007aff);
+}
+
+.pair[data-pulse-color="purple"] {
+  color: var(--exeligmos-color-time-mega, #af52de);
+}
+
+.pair[data-pulse-color="yellow"] {
+  color: var(--exeligmos-color-time-giga, #ffcc00);
+}
+
+.pair[data-pulse-color="red"] {
+  color: var(--exeligmos-color-time-rollover, #ff3b30);
+}
+
+.glyph {
+  display: block;
+  flex: none;
+}

@@ -42,6 +42,7 @@ class MemoryAuthRepository implements AuthRepository {
       id: input.userId,
       login: input.login,
       displayName: input.displayName,
+      sarosAnchor: 141,
       passwordHash: input.passwordHash,
       role: "user",
       status: "active",

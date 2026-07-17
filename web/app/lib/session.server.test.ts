@@ -14,6 +14,7 @@ const backendSession: AuthSession = {
     id: "2dca8eab-00a8-4e94-9bd2-2fcbfe17e890",
     login: "sun",
     displayName: "Sun",
+    sarosAnchor: 141,
     createdAt: "2026-07-15T00:00:00Z",
     updatedAt: "2026-07-15T00:00:00Z",
   },

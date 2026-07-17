@@ -1,6 +1,12 @@
 import { GlyphRenderer } from "@exeligmos/ui";
 
-import { formatAbsoluteTimestamp, type ActivityRecord } from "../activity-feed/model";
+import { SarosPulseGlyphPair } from "~/components/saros-pulse-glyph-pair";
+import {
+  sarosPulseAnchorValue,
+  useSarosPulseTickAt,
+} from "~/features/temporal/saros-pulse-context";
+import { LocalTimestamp, RecordMediaGrid } from "../activity-feed/activity-feed";
+import type { ActivityRecord } from "../activity-feed/model";
 import { journalRecordPresentation } from "../activity-feed/journal-presentation";
 
 import styles from "./record-detail.module.css";
@@ -15,16 +21,10 @@ export function RecordDetailView({
   const presentation = journalRecordPresentation(record);
   const isPrivate = record.visibility === "private";
   const actor = isPrivate ? undefined : record.author;
-  const images = record.media.filter((item) => item.contentType.startsWith("image/"));
-  const videos = record.media.filter((item) => item.contentType.startsWith("video/"));
-  const audio = record.media.filter((item) => item.contentType.startsWith("audio/"));
-  const documents = record.media.filter(
-    (item) =>
-      !item.contentType.startsWith("image/") &&
-      !item.contentType.startsWith("video/") &&
-      !item.contentType.startsWith("audio/"),
-  );
   const timestamp = isPrivate ? record.createdAt : record.occurredAt;
+  const pulseAnchor =
+    actor === undefined ? undefined : sarosPulseAnchorValue(Reflect.get(actor, "sarosAnchor"));
+  const pulse = useSarosPulseTickAt(Date.parse(timestamp) / 1_000, pulseAnchor);
 
   return (
     <main className={styles.page}>
@@ -38,16 +38,15 @@ export function RecordDetailView({
             {presentation.emoji}
           </span>
           <div className={styles.identity}>
-            <p className="eyebrow">
-              {actor === undefined ? "Encrypted record" : `@${actor.login}`}
-            </p>
             <h1>{presentation.temporalTitle}</h1>
             {presentation.waveLabel === undefined ? null : <p>{presentation.waveLabel}</p>}
             {presentation.durationLabel === undefined ? null : (
               <span className={styles.duration}>{presentation.durationLabel}</span>
             )}
           </div>
-          {presentation.primaryGlyph === undefined ? null : (
+          {pulse !== undefined ? (
+            <SarosPulseGlyphPair className={styles.heroPulse} reading={pulse} size="3rem" />
+          ) : presentation.primaryGlyph === undefined ? null : (
             <GlyphRenderer
               className={styles.heroGlyph}
               model={presentation.primaryGlyph}
@@ -78,7 +77,12 @@ export function RecordDetailView({
         ) : (
           <>
             {presentation.text === "" ? null : <p className={styles.text}>{presentation.text}</p>}
-            <MediaGallery images={images} videos={videos} audio={audio} documents={documents} />
+            {record.media.length === 0 ? null : (
+              <section aria-labelledby="record-media" className={styles.media}>
+                <h2 id="record-media">Media</h2>
+                <RecordMediaGrid media={record.media} />
+              </section>
+            )}
             {record.tags.length === 0 ? null : (
               <ul aria-label="Tags" className={styles.tags}>
                 {record.tags.map((tag) => (
@@ -92,59 +96,10 @@ export function RecordDetailView({
         )}
 
         <footer className={styles.footer}>
-          <time dateTime={timestamp}>{formatAbsoluteTimestamp(timestamp)}</time>
+          <LocalTimestamp value={timestamp} />
           {actor === undefined ? null : <span>{actor.displayName}</span>}
         </footer>
       </article>
     </main>
   );
-}
-
-function MediaGallery({
-  images,
-  videos,
-  audio,
-  documents,
-}: {
-  readonly images: readonly ActivityRecord["media"][number][];
-  readonly videos: readonly ActivityRecord["media"][number][];
-  readonly audio: readonly ActivityRecord["media"][number][];
-  readonly documents: readonly ActivityRecord["media"][number][];
-}) {
-  if (images.length + videos.length + audio.length + documents.length === 0) return null;
-  return (
-    <section aria-labelledby="record-media" className={styles.media}>
-      <h2 id="record-media">Media</h2>
-      {images.length === 0 ? null : (
-        <div aria-label="Images" className={styles.imageRail}>
-          {images.map((item) => (
-            <a href={mediaUrl(item.id)} key={item.id} target="_blank">
-              <img alt={item.fileName} decoding="async" loading="lazy" src={mediaUrl(item.id)} />
-            </a>
-          ))}
-        </div>
-      )}
-      {videos.map((item) => (
-        <figure className={styles.player} key={item.id}>
-          <video controls playsInline preload="metadata" src={mediaUrl(item.id)} />
-          <figcaption>{item.fileName}</figcaption>
-        </figure>
-      ))}
-      {audio.map((item) => (
-        <figure className={styles.audioPlayer} key={item.id}>
-          <figcaption>{item.fileName}</figcaption>
-          <audio controls preload="metadata" src={mediaUrl(item.id)} />
-        </figure>
-      ))}
-      {documents.map((item) => (
-        <a className={styles.document} href={mediaUrl(item.id)} key={item.id}>
-          Open {item.fileName}
-        </a>
-      ))}
-    </section>
-  );
-}
-
-function mediaUrl(id: string): string {
-  return `/media/${encodeURIComponent(id)}`;
 }

@@ -26,6 +26,7 @@ export interface PublicUserSummary {
   readonly id: string;
   readonly login: string;
   readonly displayName: string;
+  readonly sarosAnchor: number;
 }
 
 export interface SubscriptionTargetUserSummary extends PublicUserSummary {
@@ -97,6 +98,7 @@ interface ProfileRow extends QueryResultRow {
   readonly id: string;
   readonly login: string;
   readonly display_name: string;
+  readonly saros_anchor: number;
   readonly created_at: Date | string;
   readonly public_record_count: string | number;
   readonly public_event_count: string | number;
@@ -109,6 +111,7 @@ interface SubscriptionRow extends QueryResultRow {
   readonly target_user_id: string;
   readonly target_login: string;
   readonly target_display_name: string;
+  readonly target_saros_anchor: number;
   readonly target_status: "active" | "disabled";
   readonly include_records: boolean;
   readonly include_events: boolean;
@@ -124,6 +127,7 @@ interface ActivityRow extends QueryResultRow {
   readonly actor_user_id: string;
   readonly actor_login: string;
   readonly actor_display_name: string;
+  readonly actor_saros_anchor: number;
   readonly resource_type: PublicActivityResourceType;
   readonly resource_id: string;
   readonly operation: "upsert" | "delete";
@@ -148,6 +152,7 @@ export class PublicProfileService {
          u.id,
          u.login,
          u.display_name,
+         u.saros_anchor,
          u.created_at,
          (SELECT count(*) FROM records r
           WHERE r.user_id = u.id AND r.visibility = 'public' AND r.deleted_at IS NULL)
@@ -171,6 +176,7 @@ export class PublicProfileService {
       id: row.id,
       login: row.login,
       displayName: row.display_name,
+      sarosAnchor: row.saros_anchor,
       createdAt: isoDate(row.created_at),
       publicRecordCount: safeCount(row.public_record_count),
       publicEventCount: safeCount(row.public_event_count),
@@ -434,6 +440,7 @@ export class PublicActivityService {
            activity.actor_user_id,
            actor.login AS actor_login,
            actor.display_name AS actor_display_name,
+           actor.saros_anchor AS actor_saros_anchor,
            activity.resource_type,
            CASE WHEN activity.resource_type = 'record'
              THEN activity_record.public_id
@@ -471,6 +478,7 @@ const SUBSCRIPTION_COLUMNS = `
   s.target_user_id,
   target.login AS target_login,
   target.display_name AS target_display_name,
+  target.saros_anchor AS target_saros_anchor,
   target.status AS target_status,
   s.include_records,
   s.include_events,
@@ -523,6 +531,7 @@ function mapSubscription(row: SubscriptionRow): SubscriptionResource {
       id: row.target_user_id,
       login: row.target_login,
       displayName: row.target_display_name,
+      sarosAnchor: row.target_saros_anchor,
       status: row.target_status,
     },
     includeRecords: row.include_records,
@@ -545,6 +554,7 @@ function mapActivity(row: ActivityRow): PublicActivityItem {
       id: row.actor_user_id,
       login: row.actor_login,
       displayName: row.actor_display_name,
+      sarosAnchor: row.actor_saros_anchor,
     },
     resourceType: row.resource_type,
     resourceId: row.resource_id,

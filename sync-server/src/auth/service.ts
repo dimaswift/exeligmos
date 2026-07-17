@@ -33,6 +33,7 @@ export interface PublicUser {
   readonly id: string;
   readonly login: string;
   readonly displayName: string;
+  readonly sarosAnchor: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -377,6 +378,7 @@ function publicUser(user: AuthUser): PublicUser {
     id: user.id,
     login: user.login,
     displayName: user.displayName,
+    sarosAnchor: user.sarosAnchor,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
   };

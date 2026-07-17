@@ -1,7 +1,7 @@
 .shell {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: var(--sidebar-width) minmax(30rem, 1fr) var(--inspector-width);
+  grid-template-columns: var(--sidebar-width) minmax(30rem, 1fr) minmax(28rem, 30rem);
 }
 
 .sidebar,
@@ -31,13 +31,9 @@
   text-decoration: none;
 }
 
-.brandMark {
-  width: 0.8rem;
-  height: 0.8rem;
-  border: 1px solid var(--color-accent);
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 0.2rem var(--color-canvas);
-  background: var(--color-accent);
+.brandClock {
+  min-width: 2.55rem;
+  font-size: 1.2rem;
 }
 
 .navigation {
@@ -119,29 +115,10 @@
 }
 
 .inspector {
-  padding: var(--space-5);
+  padding: var(--space-3);
+  overflow-x: hidden;
+  overflow-y: auto;
   border-left: 1px solid var(--color-border);
-}
-
-.inspector h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.inspector > p:not(:first-child) {
-  color: var(--color-text-muted);
-  font-size: 0.82rem;
-  line-height: 1.55;
-}
-
-.inspectorStatus {
-  margin-top: var(--space-5);
-  padding: var(--space-4);
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
 }
 
 @media (max-width: 76rem) {
@@ -149,8 +126,19 @@
     grid-template-columns: var(--sidebar-width) minmax(28rem, 1fr);
   }
 
+  .sidebar {
+    grid-row: 1 / span 2;
+  }
+
+  .main,
   .inspector {
-    display: none;
+    grid-column: 2;
+  }
+
+  .inspector {
+    position: static;
+    height: auto;
+    border-top: 1px solid var(--color-border);
   }
 }
 
@@ -163,6 +151,11 @@
     position: static;
     width: 100%;
     height: auto;
+  }
+
+  .inspector {
+    padding: var(--space-3) var(--space-4) var(--space-5);
+    border-left: 0;
   }
 
   .navigation {

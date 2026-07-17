@@ -24,6 +24,7 @@ test("record-filtered activity includes identifier-only user lifecycle controls"
         actor_user_id: userId,
         actor_login: "sun",
         actor_display_name: "Sun",
+        actor_saros_anchor: 141,
         resource_type: "user",
         resource_id: userId,
         operation: "delete",
@@ -46,7 +47,7 @@ test("record-filtered activity includes identifier-only user lifecycle controls"
   assert.deepEqual(page.data, [{
     sequence: 18,
     publishedAt: "2026-07-15T12:00:00.000Z",
-    actor: { id: userId, login: "sun", displayName: "Sun" },
+    actor: { id: userId, login: "sun", displayName: "Sun", sarosAnchor: 141 },
     resourceType: "user",
     resourceId: userId,
     operation: "delete",

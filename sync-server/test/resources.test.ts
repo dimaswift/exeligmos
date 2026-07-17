@@ -128,7 +128,7 @@ test("anonymous projection strips owner-only record and media fields", () => {
     id: recordPublicId,
     originId: recordId,
     userId,
-    author: { id: userId, login: "owner", displayName: "Owner" },
+    author: { id: userId, login: "owner", displayName: "Owner", sarosAnchor: 141 },
     deviceId,
     visibility: "public",
     occurredAt: "2026-07-14T12:00:00.000Z",

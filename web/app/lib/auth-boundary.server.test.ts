@@ -14,6 +14,7 @@ const auth: AuthBoundary["auth"] = {
     displayName: "Solar Observer",
     id: "01901234-5678-7abc-8def-0123456789ab",
     login: "observer",
+    sarosAnchor: 141,
     updatedAt: "2030-01-01T00:00:00.000Z",
   },
 };

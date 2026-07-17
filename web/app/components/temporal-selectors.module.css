@@ -1,0 +1,151 @@
+.periodSelector {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) 2rem;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+}
+
+.stepButton {
+  display: grid;
+  min-height: 2.45rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: var(--color-panel-raised);
+  color: var(--color-accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+}
+
+.stepButton:first-child {
+  border-right: 1px solid var(--color-border);
+}
+
+.stepButton:last-child {
+  border-left: 1px solid var(--color-border);
+}
+
+.stepButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent), transparent 88%);
+}
+
+.stepButton:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.periodValue {
+  display: grid;
+  min-width: 0;
+  place-content: center;
+  padding: 0.3rem 0.45rem;
+  text-align: center;
+}
+
+.periodValue small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.periodValue strong {
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.raritySelector {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
+.raritySelector legend {
+  padding: 0;
+  margin: 0 0 0.35rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rarityOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.rarityOption {
+  position: relative;
+  display: block;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.rarityOption input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.rarityOption span {
+  display: block;
+  overflow: hidden;
+  padding: 0.42rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+  color: var(--color-text-muted);
+  font-size: 0.64rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rarityOption:hover span {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.rarityOption input:focus-visible + span {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.rarityOption input:checked + span {
+  border-color: var(--rarity-color, var(--color-accent));
+  background: color-mix(in srgb, var(--rarity-color, var(--color-accent)), transparent 90%);
+  color: var(--rarity-color, var(--color-accent-strong));
+}
+
+.rarityOption[data-rarity="triplex"] {
+  --rarity-color: var(--exeligmos-color-rarity-triplex, #8e8e93);
+}
+
+.rarityOption[data-rarity="duplex"] {
+  --rarity-color: var(--exeligmos-color-rarity-duplex, #007aff);
+}
+
+.rarityOption[data-rarity="simplex"] {
+  --rarity-color: var(--exeligmos-color-rarity-simplex, #af52de);
+}
+
+.rarityOption[data-rarity="nihil"] {
+  --rarity-color: var(--exeligmos-color-rarity-nihil, #ffcc00);
+}

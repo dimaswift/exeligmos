@@ -60,14 +60,15 @@ test(
         { conname: "records_visibility_content_check", convalidated: true },
       ]);
 
-      const user = await client.query<{ id: string }>(
+      const user = await client.query<{ id: string; saros_anchor: number }>(
         `INSERT INTO users (login, display_name, password_hash)
          VALUES ($1, 'Integration Test', 'not-a-real-password-hash')
-         RETURNING id`,
+         RETURNING id, saros_anchor`,
         [login],
       );
       userId = user.rows[0]?.id;
       assert.ok(userId);
+      assert.equal(user.rows[0]?.saros_anchor, 141);
 
       const encryptionProfile = await client.query<{
         crypto_version: number;

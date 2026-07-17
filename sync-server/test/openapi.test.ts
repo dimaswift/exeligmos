@@ -33,6 +33,7 @@ test("OpenAPI contract exposes the complete v2 resource surface", async () => {
     "/v1/auth/register",
     "/v1/auth/login",
     "/v1/auth/refresh",
+    "/v1/me",
     "/v1/me/encryption-profile",
     "/v1/api-keys",
     "/v1/devices",
@@ -81,6 +82,37 @@ test("OpenAPI contract exposes the complete v2 resource surface", async () => {
     object(resourceTypeParameter.schema, "sync resourceType schema").maxItems,
     8,
   );
+});
+
+test("OpenAPI exposes the per-user Saros anchor and ETag-protected update", async () => {
+  const contract = await loadContract();
+  const paths = object(contract.paths, "paths must be defined");
+  const components = object(contract.components, "components must be defined");
+  const schemas = object(components.schemas, "schemas must be defined");
+
+  const me = object(paths["/v1/me"], "/v1/me must exist");
+  const update = object(me.patch, "PATCH /v1/me must exist");
+  assert.equal(update.operationId, "updateCurrentUser");
+  assert.deepEqual(update.security, [{ JwtBearer: [] }]);
+  assert.equal(
+    object(array(update.parameters, "PATCH /v1/me parameters")[0], "If-Match parameter").$ref,
+    "#/components/parameters/IfMatch",
+  );
+
+  const sarosAnchor = object(schemas.SarosAnchor, "SarosAnchor must exist");
+  assert.deepEqual(
+    {
+      type: sarosAnchor.type,
+      minimum: sarosAnchor.minimum,
+      maximum: sarosAnchor.maximum,
+      default: sarosAnchor.default,
+    },
+    { type: "integer", minimum: 1, maximum: 180, default: 141 },
+  );
+  for (const schemaName of ["User", "PublicUserSummary", "SubscriptionTargetUserSummary"]) {
+    const required = array(object(schemas[schemaName], `${schemaName} must exist`).required, `${schemaName} required`);
+    assert.ok(required.includes("sarosAnchor"), `${schemaName} must require sarosAnchor`);
+  }
 });
 
 test("OpenAPI documents the initial latest activity snapshot and live resume contract", async () => {

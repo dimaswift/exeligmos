@@ -8,6 +8,11 @@
   grid-template-columns: minmax(0, 1.25fr) minmax(19rem, 0.75fr);
 }
 
+.logo {
+  min-width: 6.9rem;
+  margin-bottom: var(--space-5);
+}
+
 .introduction h1 {
   max-width: 8ch;
   margin: 0;

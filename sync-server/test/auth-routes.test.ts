@@ -32,6 +32,7 @@ const session: AuthSessionResponse = {
     id: principal.userId,
     login: "aurora",
     displayName: "Aurora",
+    sarosAnchor: 141,
     createdAt: "2026-07-14T10:00:00.000Z",
     updatedAt: "2026-07-14T10:00:00.000Z",
   },

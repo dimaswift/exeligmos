@@ -25,6 +25,7 @@ export type OwnerRecord = ApiSchemas["Record"];
 export type OwnerEvent = ApiSchemas["Event"];
 export type PublicActivityItem = ApiSchemas["PublicActivityItem"];
 export type PublicActivityResourceType = ApiSchemas["PublicActivityResourceType"];
+export type SyncStats = ApiSchemas["SyncStats"];
 
 export type PublicRecordCursor = string & { readonly __publicRecordCursor: unique symbol };
 export type PublicEventCursor = string & { readonly __publicEventCursor: unique symbol };
@@ -240,6 +241,21 @@ export async function readOwnerRecords(
     "Could not load your records.",
   );
   return ownerRecordPage(page);
+}
+
+export async function readSyncStats(
+  auth: SnapshotAuthorization,
+  options: SnapshotRequestContext = {},
+): Promise<SyncStats> {
+  const client = createBackendApiClient({
+    baseUrl: options.baseUrl,
+    fetch: options.fetch,
+    accessToken: auth.accessToken,
+  });
+  return readBackendData(
+    () => client.GET("/v1/sync/stats", { signal: options.signal }),
+    "Could not load analytics.",
+  );
 }
 
 export async function readOwnerRecord(

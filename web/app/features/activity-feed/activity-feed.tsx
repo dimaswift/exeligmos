@@ -1,8 +1,14 @@
-import { Children, useId, type ReactNode } from "react";
+import { Children, useId, useRef, useState, type ReactNode } from "react";
 
 import { resolveEventType } from "@exeligmos/domain-catalog";
+import type { SarosPulseTickReading } from "@exeligmos/temporal-core";
 import { GlyphRenderer } from "@exeligmos/ui";
 
+import { SarosPulseGlyphPair } from "~/components/saros-pulse-glyph-pair";
+import {
+  sarosPulseAnchorValue,
+  useSarosPulseTickAt,
+} from "~/features/temporal/saros-pulse-context";
 import styles from "./activity-feed.module.css";
 import { journalRecordPresentation } from "./journal-presentation";
 import {
@@ -142,6 +148,9 @@ function RecordCard({
   const timestamp = isPrivate ? record.createdAt : record.occurredAt;
   const endedAt = isPrivate ? undefined : record.endedAt;
   const references = record.references;
+  const pulseAnchor =
+    actor === undefined ? undefined : sarosPulseAnchorValue(Reflect.get(actor, "sarosAnchor"));
+  const pulse = useSarosPulseTickAt(Date.parse(timestamp) / 1_000, pulseAnchor);
 
   return (
     <article
@@ -153,39 +162,19 @@ function RecordCard({
       data-activity-url={resource.activity?.resourceUrl}
       data-visibility={record.visibility}
     >
-      <CardHeader
-        activity={resource.activity}
-        actor={actor}
-        actorHref={actorHref}
-        end={endedAt}
-        kind="Record"
+      <RecordHeader
+        glyph={presentation.primaryGlyph}
+        href={href}
         marker={presentation.emoji}
-        start={timestamp}
-        visibility={record.visibility}
+        pulse={pulse}
+        privateRecord={isPrivate}
+        headingLevel={headingLevel}
+        title={presentation.temporalTitle}
+        titleId={titleId}
+        waveLabel={presentation.waveLabel}
       />
 
       <div className={styles.content}>
-        <div className={styles.recordIdentity}>
-          <div>
-            <CardHeading headingLevel={headingLevel} href={href} id={titleId}>
-              {presentation.temporalTitle}
-            </CardHeading>
-            {presentation.waveLabel === undefined ? null : (
-              <p className={styles.waveLabel}>{presentation.waveLabel}</p>
-            )}
-            {presentation.durationLabel === undefined ? null : (
-              <p className={styles.duration}>{presentation.durationLabel}</p>
-            )}
-          </div>
-          {presentation.primaryGlyph === undefined ? null : (
-            <GlyphRenderer
-              className={styles.primaryGlyph}
-              model={presentation.primaryGlyph}
-              size={58}
-            />
-          )}
-        </div>
-
         <SarosStrip presentation={presentation} />
 
         {isPrivate ? (
@@ -214,11 +203,156 @@ function RecordCard({
       </div>
 
       <footer className={styles.recordFooter}>
-        <Timestamp value={timestamp} />
-        {record.media.length === 0 ? null : <span>{record.media.length} media</span>}
-        {href === undefined ? null : <a href={href}>Open record →</a>}
+        <RecordDateRange duration={presentation.durationLabel} end={endedAt} start={timestamp} />
+        <ActorHandle actor={actor} href={actorHref} />
       </footer>
     </article>
+  );
+}
+
+function RecordHeader({
+  glyph,
+  href,
+  marker,
+  pulse,
+  privateRecord,
+  headingLevel,
+  title,
+  titleId,
+  waveLabel,
+}: {
+  readonly glyph: ReturnType<typeof journalRecordPresentation>["primaryGlyph"];
+  readonly href?: string;
+  readonly marker: string;
+  readonly pulse?: SarosPulseTickReading;
+  readonly privateRecord: boolean;
+  readonly headingLevel: 2 | 3 | 4;
+  readonly title: string;
+  readonly titleId: string;
+  readonly waveLabel?: string;
+}) {
+  const content = (
+    <>
+      <span aria-hidden="true" className={styles.kindMark}>
+        {marker}
+      </span>
+      <div className={styles.recordHeaderIdentity}>
+        <RecordHeaderHeading headingLevel={headingLevel} id={titleId}>
+          {title}
+        </RecordHeaderHeading>
+        {waveLabel === undefined ? null : <p className={styles.waveLabel}>{waveLabel}</p>}
+      </div>
+      <span className={styles.recordHeaderGlyph}>
+        {pulse === undefined ? (
+          glyph === undefined ? null : (
+            <GlyphRenderer decorative model={glyph} size={52} />
+          )
+        ) : (
+          <SarosPulseGlyphPair
+            className={styles.recordHeaderPulse}
+            decorative
+            reading={pulse}
+            size="2.35rem"
+          />
+        )}
+        {privateRecord ? (
+          <span aria-label="Private record" className={styles.lock}>
+            🔒
+          </span>
+        ) : null}
+      </span>
+    </>
+  );
+  return (
+    <header className={styles.header}>
+      {href === undefined ? (
+        content
+      ) : (
+        <a className={styles.headerLink} href={href}>
+          {content}
+        </a>
+      )}
+    </header>
+  );
+}
+
+function RecordHeaderHeading({
+  children,
+  headingLevel,
+  id,
+}: {
+  readonly children: ReactNode;
+  readonly headingLevel: 2 | 3 | 4;
+  readonly id: string;
+}) {
+  if (headingLevel === 2)
+    return (
+      <h2 className={styles.recordHeaderTitle} id={id}>
+        {children}
+      </h2>
+    );
+  if (headingLevel === 4)
+    return (
+      <h4 className={styles.recordHeaderTitle} id={id}>
+        {children}
+      </h4>
+    );
+  return (
+    <h3 className={styles.recordHeaderTitle} id={id}>
+      {children}
+    </h3>
+  );
+}
+
+function ActorHandle({ actor, href }: { readonly actor?: ActivityActor; readonly href?: string }) {
+  if (actor === undefined) return null;
+  const content = `@${actor.login}`;
+  return href === undefined ? (
+    <span className={styles.footerHandle}>{content}</span>
+  ) : (
+    <a className={styles.footerHandle} href={href}>
+      {content}
+    </a>
+  );
+}
+
+function RecordDateRange({
+  start,
+  end,
+  duration,
+}: {
+  readonly start: string;
+  readonly end?: string;
+  readonly duration?: string;
+}) {
+  const startTime = Date.parse(start);
+  const endTime = end === undefined ? Number.NaN : Date.parse(end);
+  const oneSaros = 568_971_743.04 / 8 ** 7;
+  const showRange = Number.isFinite(endTime) && endTime - startTime >= oneSaros * 1_000;
+  return (
+    <span className={styles.recordDate}>
+      <LocalTimestamp value={start} />
+      {showRange && end !== undefined ? (
+        <>
+          <span aria-hidden="true"> – </span>
+          <LocalTimestamp value={end} />
+        </>
+      ) : null}
+      {duration === undefined ? null : <span className={styles.recordDuration}> · {duration}</span>}
+    </span>
+  );
+}
+
+export function LocalTimestamp({ value }: { readonly value: string }) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return <span>Invalid timestamp</span>;
+  return (
+    <time dateTime={value} suppressHydrationWarning>
+      {new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      }).format(date)}
+    </time>
   );
 }
 
@@ -441,25 +575,181 @@ function RecordMediaStrip({
 }: {
   readonly media: Exclude<ActivityRecord, { visibility: "private" }>["media"];
 }) {
+  return <RecordMediaGrid media={media} variant="compact" />;
+}
+
+type RecordMediaItem = ActivityRecord["media"][number];
+
+export function RecordMediaGrid({
+  media,
+  variant = "detail",
+}: {
+  readonly media: readonly RecordMediaItem[];
+  readonly variant?: "compact" | "detail";
+}) {
+  const visualMedia = media.filter(
+    (item) => item.contentType.startsWith("image/") || item.contentType.startsWith("video/"),
+  );
+  const [viewerIndex, setViewerIndex] = useState<number | undefined>();
+  const displayed = variant === "compact" ? media.slice(0, 4) : media;
   if (media.length === 0) return null;
   return (
-    <div aria-label="Record media" className={styles.mediaStrip}>
-      {media.slice(0, 4).map((item) => {
-        const url = `/media/${encodeURIComponent(item.id)}`;
-        if (item.contentType.startsWith("image/")) {
-          return <img alt="" decoding="async" key={item.id} loading="lazy" src={url} />;
-        }
-        return (
-          <span className={styles.mediaTile} key={item.id} title={item.fileName}>
-            {item.contentType.startsWith("video/")
-              ? "▶"
-              : item.contentType.startsWith("audio/")
-                ? "♪"
-                : "↗"}
-          </span>
-        );
-      })}
-      {media.length <= 4 ? null : <span className={styles.mediaOverflow}>+{media.length - 4}</span>}
+    <>
+      <div
+        aria-label="Record media"
+        className={variant === "compact" ? styles.mediaStrip : styles.mediaGrid}
+      >
+        {displayed.map((item) => {
+          const url = `/media/${encodeURIComponent(item.id)}`;
+          if (item.contentType.startsWith("image/") || item.contentType.startsWith("video/")) {
+            const visualIndex = visualMedia.findIndex((candidate) => candidate.id === item.id);
+            return (
+              <button
+                className={styles.mediaButton}
+                key={item.id}
+                onClick={() => setViewerIndex(visualIndex)}
+                type="button"
+              >
+                {item.contentType.startsWith("image/") ? (
+                  <img alt={item.fileName} decoding="async" loading="lazy" src={url} />
+                ) : (
+                  <span className={styles.videoThumbnail}>
+                    <video aria-hidden="true" muted playsInline preload="metadata" src={url} />
+                    <span aria-hidden="true">▶</span>
+                    <span className={styles.visuallyHidden}>{item.fileName}</span>
+                  </span>
+                )}
+              </button>
+            );
+          }
+          if (item.contentType.startsWith("audio/")) {
+            return <AudioTile item={item} key={item.id} url={url} />;
+          }
+          return (
+            <a className={styles.mediaTile} href={url} key={item.id} title={item.fileName}>
+              ↗
+            </a>
+          );
+        })}
+        {variant !== "compact" || media.length <= 4 ? null : (
+          <span className={styles.mediaOverflow}>+{media.length - 4}</span>
+        )}
+      </div>
+      {viewerIndex === undefined ? null : (
+        <MediaViewer
+          initialIndex={viewerIndex}
+          media={visualMedia}
+          onClose={() => setViewerIndex(undefined)}
+        />
+      )}
+    </>
+  );
+}
+
+function AudioTile({
+  item,
+  url,
+}: {
+  readonly item: { readonly fileName: string };
+  readonly url: string;
+}) {
+  const audio = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const toggle = () => {
+    const player = audio.current;
+    if (player === null) return;
+    if (playing) {
+      player.pause();
+      player.currentTime = 0;
+      setPlaying(false);
+    } else {
+      void player
+        .play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false));
+    }
+  };
+  return (
+    <button
+      aria-label={`${playing ? "Stop" : "Play"} ${item.fileName}`}
+      className={`${styles.mediaTile} ${styles.mediaButton}`}
+      onClick={toggle}
+      type="button"
+    >
+      <audio onEnded={() => setPlaying(false)} preload="none" ref={audio} src={url} />
+      {playing ? "■" : "♪"}
+    </button>
+  );
+}
+
+function MediaViewer({
+  media,
+  initialIndex,
+  onClose,
+}: {
+  readonly media: readonly RecordMediaItem[];
+  readonly initialIndex: number;
+  readonly onClose: () => void;
+}) {
+  const [index, setIndex] = useState(initialIndex);
+  const item = media[index];
+  if (item === undefined) return null;
+  const previous = () => setIndex((current) => (current - 1 + media.length) % media.length);
+  const next = () => setIndex((current) => (current + 1) % media.length);
+  return (
+    <div
+      aria-label="Media preview"
+      aria-modal="true"
+      className={styles.gallery}
+      onClick={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
+      role="dialog"
+    >
+      <button
+        aria-label="Close preview"
+        className={styles.galleryClose}
+        onClick={onClose}
+        type="button"
+      >
+        ×
+      </button>
+      {media.length > 1 ? (
+        <button
+          aria-label="Previous media"
+          className={`${styles.galleryArrow} ${styles.galleryPrevious}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            previous();
+          }}
+          type="button"
+        >
+          ‹
+        </button>
+      ) : null}
+      <figure className={styles.galleryCurrent} onClick={(event) => event.stopPropagation()}>
+        {item.contentType.startsWith("video/") ? (
+          <video autoPlay controls playsInline src={`/media/${encodeURIComponent(item.id)}`} />
+        ) : (
+          <img alt={item.fileName} onClick={next} src={`/media/${encodeURIComponent(item.id)}`} />
+        )}
+        <figcaption>
+          {index + 1} / {media.length} · {item.fileName}
+        </figcaption>
+      </figure>
+      {media.length > 1 ? (
+        <button
+          aria-label="Next media"
+          className={`${styles.galleryArrow} ${styles.galleryNext}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            next();
+          }}
+          type="button"
+        >
+          ›
+        </button>
+      ) : null}
     </div>
   );
 }

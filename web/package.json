@@ -13,18 +13,20 @@
   "scripts": {
     "api:generate": "openapi-typescript ../sync-server/openapi/openapi.yaml -o packages/api-client/src/schema.ts",
     "catalog:generate": "node scripts/generate-domain-catalog.mjs",
+    "solar:generate": "node scripts/generate-solar-temporal-data.mjs",
+    "solar:check": "node scripts/generate-solar-temporal-data.mjs --check",
     "domain:validate": "npm --prefix ../domain-spec test",
-    "build": "npm run catalog:generate && npm run api:generate && react-router build",
+    "build": "npm run catalog:generate && npm run solar:generate && npm run api:generate && react-router build",
     "dev": "react-router dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "start": "react-router-serve ./build/server/index.js",
-    "predev": "npm run catalog:generate && npm run api:generate",
-    "test": "npm run catalog:generate && vitest run",
-    "test:watch": "vitest",
-    "typecheck": "npm run catalog:generate && npm run api:generate && react-router typegen && tsc --noEmit",
-    "check": "npm run domain:validate && npm run lint && npm run typecheck && npm test && npm run build"
+    "predev": "npm run catalog:generate && npm run solar:generate && npm run api:generate",
+    "test": "npm run catalog:generate && npm run solar:generate && vitest run",
+    "test:watch": "npm run solar:generate && vitest",
+    "typecheck": "npm run catalog:generate && npm run solar:generate && npm run api:generate && react-router typegen && tsc --noEmit",
+    "check": "npm run domain:validate && npm run solar:check && npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@exeligmos/api-client": "*",

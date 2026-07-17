@@ -1,0 +1,515 @@
+.realtimeWindow {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(circle at 85% 0%, rgb(139 215 193 / 8%), transparent 20rem), var(--color-canvas);
+}
+
+.topbar,
+.topbar > div,
+.windowActions {
+  display: flex;
+  align-items: center;
+}
+
+.topbar {
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.topbar > div:first-child {
+  min-width: 0;
+  gap: 0.45rem;
+}
+
+.topbar strong {
+  overflow: hidden;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.liveIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--color-accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.liveIndicator::before {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0.55rem currentColor;
+  content: "";
+}
+
+.windowActions {
+  flex: 0 0 auto;
+  gap: 0.35rem;
+}
+
+.soundToggle,
+.expandButton {
+  min-height: 2rem;
+  border: 1px solid var(--color-border-strong);
+  background: rgb(0 0 0 / 18%);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.soundToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.58rem;
+}
+
+.soundToggle::before {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.soundToggle[aria-pressed="true"] {
+  border-color: rgb(139 215 193 / 48%);
+  background: rgb(139 215 193 / 9%);
+  color: var(--color-accent-strong);
+}
+
+.expandButton {
+  display: grid;
+  width: 2rem;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0.9rem;
+}
+
+.soundToggle:hover,
+.expandButton:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.soundToggle:focus-visible,
+.expandButton:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.windowControls {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 255 / 2%);
+}
+
+.windowHeader {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.incomingCopy {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.incomingCopy > span {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.incomingCopy strong {
+  overflow: hidden;
+  color: var(--temporal-color, var(--color-text));
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incomingCopy time,
+.incomingCopy small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phasePair {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.phasePair > i {
+  color: var(--color-border-strong);
+  font-style: normal;
+}
+
+.phaseHalf {
+  display: grid;
+  width: 3.55rem;
+  justify-items: center;
+  gap: 0.12rem;
+  color: var(--temporal-color, white);
+}
+
+.phaseHalf > div {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.phaseHalf span,
+.phaseHalf code {
+  font-size: 0.46rem;
+}
+
+.phaseHalf span {
+  color: var(--color-text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phaseHalf code {
+  color: var(--temporal-color, var(--color-text));
+}
+
+.waveStage {
+  min-width: 0;
+}
+
+.waveStage svg {
+  display: block;
+  width: 100%;
+  height: 10rem;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(to right, transparent 24.8%, rgb(255 255 255 / 4%) 25%, transparent 25.2%),
+    linear-gradient(to right, transparent 49.8%, rgb(255 255 255 / 5%) 50%, transparent 50.2%),
+    linear-gradient(to right, transparent 74.8%, rgb(255 255 255 / 4%) 75%, transparent 75.2%),
+    rgb(0 0 0 / 16%);
+}
+
+.waveBaseline {
+  stroke: rgb(255 255 255 / 10%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.wavePath {
+  fill: none;
+  stroke: var(--temporal-color, white);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.spikeMarker {
+  stroke: var(--temporal-color, white);
+  stroke-dasharray: 2 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.spikePoint {
+  fill: var(--temporal-color, white);
+  vector-effect: non-scaling-stroke;
+}
+
+.playhead {
+  stroke: var(--color-text);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 4px rgb(255 255 255 / 52%));
+  vector-effect: non-scaling-stroke;
+}
+
+.playheadHead {
+  fill: var(--color-text);
+  filter: drop-shadow(0 0 4px rgb(255 255 255 / 52%));
+}
+
+.windowScale {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+  margin-top: 0.35rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.48rem;
+}
+
+.windowScale time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.windowScale time:last-child {
+  text-align: right;
+}
+
+.windowScale span {
+  color: var(--color-accent-strong);
+  text-align: center;
+}
+
+.spikeHistory,
+.spikeGroup {
+  display: grid;
+  min-width: 0;
+}
+
+.spikeHistory {
+  gap: var(--space-2);
+}
+
+.spikeGroup {
+  gap: 0.4rem;
+}
+
+.spikeGroup > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.spikeGroup > header strong {
+  font-size: 0.64rem;
+}
+
+.spikeGroup > header span {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+}
+
+.spikeStack {
+  position: relative;
+  display: grid;
+  gap: 0.28rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.spikeCard {
+  display: grid;
+  grid-template-columns: 2.35rem minmax(0, 1fr) auto;
+  min-width: 0;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--temporal-color) 22%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--temporal-color) 4%, transparent);
+  color: var(--temporal-color, white);
+  opacity: 0.74;
+  text-align: left;
+}
+
+.currentSpikeCard {
+  border-color: color-mix(in srgb, var(--temporal-color) 58%, var(--color-border-strong));
+  background: color-mix(in srgb, var(--temporal-color) 11%, transparent);
+  box-shadow: 0 0 1.1rem color-mix(in srgb, var(--temporal-color) 12%, transparent);
+  opacity: 1;
+}
+
+.spikeCardGlyph {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.spikeCardCopy {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.spikeCardCopy strong {
+  width: 100%;
+  overflow: hidden;
+  color: var(--temporal-color, var(--color-text));
+  font-size: 0.58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spikeCardCopy > span,
+.spikeTiming {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.45rem;
+  white-space: nowrap;
+}
+
+.spikeRelation {
+  color: var(--temporal-color, var(--color-text-muted)) !important;
+  font-size: 0.42rem !important;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.spikeTiming {
+  display: grid;
+  gap: 0.12rem;
+  text-align: right;
+}
+
+.spikeTiming span {
+  color: var(--temporal-color, var(--color-text-muted));
+}
+
+.soundError {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.62rem;
+}
+
+.srAnnouncement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.expanded {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr) minmax(16rem, 20rem);
+  grid-template-rows: auto auto minmax(15rem, 1fr);
+  align-content: stretch;
+  gap: var(--space-4);
+  width: 100vw;
+  height: 100dvh;
+  padding: clamp(1rem, 2.5vw, 2.5rem);
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 85% 0%, rgb(139 215 193 / 10%), transparent 38rem),
+    var(--color-canvas);
+}
+
+.expanded .topbar {
+  grid-column: 1 / -1;
+}
+
+.expanded .topbar strong {
+  font-size: 1rem;
+}
+
+.expanded .windowControls {
+  grid-column: 1;
+  grid-row: 2 / span 2;
+  align-content: start;
+  padding: var(--space-3);
+}
+
+.expanded .windowHeader {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.expanded .incomingCopy strong {
+  font-size: 1.2rem;
+}
+
+.expanded .phaseHalf {
+  width: 5rem;
+}
+
+.expanded .phaseHalf > div {
+  width: 4rem;
+  height: 4rem;
+}
+
+.expanded .phaseHalf span,
+.expanded .phaseHalf code {
+  font-size: 0.56rem;
+}
+
+.expanded .waveStage {
+  display: grid;
+  grid-column: 2;
+  grid-row: 3;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.expanded .waveStage svg {
+  height: 100%;
+  min-height: 0;
+}
+
+.expanded .windowScale {
+  font-size: 0.58rem;
+}
+
+.expanded .spikeHistory {
+  grid-column: 3;
+  grid-row: 2 / span 2;
+  width: 100%;
+  align-self: start;
+}
+
+.expanded .spikeCardGlyph {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.expanded .spikeCard {
+  grid-template-columns: 2.7rem minmax(0, 1fr) auto;
+  padding: 0.55rem 0.75rem;
+}
+
+@media (max-width: 54rem) {
+  .expanded {
+    display: block;
+    padding: var(--space-3);
+  }
+
+  .expanded > * + * {
+    margin-top: var(--space-3);
+  }
+
+  .expanded .waveStage svg {
+    height: 16rem;
+  }
+}

@@ -129,7 +129,12 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update authenticated user preferences
+         * @description JWT-only. Updates the Saros-series anchor used by temporal clocks and
+         *     record presentation. Supply the strong ETag returned by `GET /v1/me`.
+         */
+        patch: operations["updateCurrentUser"];
         trace?: never;
     };
     "/v1/me/encryption-profile": {
@@ -1066,16 +1071,26 @@ export interface components {
             readonly id: string;
             login: components["schemas"]["LoginName"];
             displayName: string;
+            sarosAnchor: components["schemas"]["SarosAnchor"];
             /** Format: date-time */
             readonly createdAt: string;
             /** Format: date-time */
             readonly updatedAt: string;
         };
+        UpdateUserRequest: {
+            sarosAnchor: components["schemas"]["SarosAnchor"];
+        };
+        /**
+         * @description Saros series used as the user's temporal pulse anchor.
+         * @default 141
+         */
+        SarosAnchor: number;
         PublicUserSummary: {
             /** Format: uuid */
             id: string;
             login: components["schemas"]["LoginName"];
             displayName: string;
+            sarosAnchor: components["schemas"]["SarosAnchor"];
         };
         PublicUserProfile: components["schemas"]["PublicUserSummary"] & {
             /** Format: date-time */
@@ -1117,6 +1132,7 @@ export interface components {
             id: string;
             login: components["schemas"]["LoginName"];
             displayName: string;
+            sarosAnchor: components["schemas"]["SarosAnchor"];
             /**
              * @description Current account availability for this existing subscription target.
              * @enum {string}
@@ -1859,6 +1875,12 @@ export interface components {
                 public: number;
                 /** Format: int64 */
                 private: number;
+                /** Format: int64 */
+                pastTera: number;
+                /** Format: int64 */
+                pastGiga: number;
+                /** Format: int64 */
+                pastMega: number;
             };
             events: components["schemas"]["SyncResourceCount"];
             tags: components["schemas"]["SyncResourceCount"];
@@ -1868,6 +1890,12 @@ export interface components {
                 total: number;
                 /** Format: int64 */
                 byteLength: number;
+                /** Format: int64 */
+                photo: number;
+                /** Format: int64 */
+                video: number;
+                /** Format: int64 */
+                audio: number;
                 /** Format: int64 */
                 restorable: number;
                 /** Format: int64 */
@@ -2447,6 +2475,45 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateCurrentUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Strong ETag of the revision being mutated.
+                 * @example "record-aB_9Z-r4"
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/merge-patch+json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description User preferences updated. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["UnprocessableContent"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["ServiceUnavailable"];
         };
@@ -3693,7 +3760,10 @@ export interface operations {
                      *       "records": {
                      *         "total": 728,
                      *         "public": 728,
-                     *         "private": 0
+                     *         "private": 0,
+                     *         "pastTera": 48,
+                     *         "pastGiga": 7,
+                     *         "pastMega": 1
                      *       },
                      *       "events": {
                      *         "total": 0
@@ -3707,6 +3777,9 @@ export interface operations {
                      *       "media": {
                      *         "total": 1936,
                      *         "byteLength": 4096432128,
+                     *         "photo": 1712,
+                     *         "video": 62,
+                     *         "audio": 162,
                      *         "restorable": 1936,
                      *         "restorableByteLength": 4096432128
                      *       }
@@ -3761,7 +3834,8 @@ export interface operations {
                      *             "author": {
                      *               "id": "e42b4fde-8baf-4b95-8bc8-5395b68d0dd2",
                      *               "login": "sun",
-                     *               "displayName": "Sun"
+                     *               "displayName": "Sun",
+                     *               "sarosAnchor": 141
                      *             },
                      *             "deviceId": "2dca8eab-00a8-4e94-9bd2-2fcbfe17e890",
                      *             "visibility": "public",

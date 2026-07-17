@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ApiSchemas } from "@exeligmos/api-client";
+import type { SarosInterval } from "@exeligmos/temporal-core";
+
+import { SarosPulseProvider } from "~/features/temporal/saros-pulse-context";
 
 import {
   ActivityChangeNotice,
@@ -21,6 +24,7 @@ const actor = {
   id: "10000000-0000-4000-8000-000000000001",
   login: "sun",
   displayName: "The Sun",
+  sarosAnchor: 141,
 } satisfies ApiSchemas["PublicUserSummary"];
 
 const reference = {
@@ -112,12 +116,12 @@ describe("activity presentation", () => {
     expect(markup).toContain('data-activity-sequence="41"');
     expect(markup).toContain('data-activity-operation="upsert"');
     expect(markup).toContain("Solar flare detected");
-    expect(markup).toContain("15 Jul 2026 · 12:30:00 UTC");
-    expect(markup).toContain("The Sun");
+    expect(markup).toContain('dateTime="2026-07-15T08:30:00-04:00"');
+    expect(markup).not.toContain("The Sun");
     expect(markup).toContain("@sun");
     expect(markup).toContain("observed-by");
     expect(markup).toContain("solar");
-    expect(markup).toContain("1 media");
+    expect(markup).not.toContain("Open record");
     expect(markup).toContain("☀️");
     expect(markup).toContain("/media/50000000-0000-4000-8000-000000000005");
     expect(markup).not.toContain("space-weather-agent");
@@ -169,7 +173,35 @@ describe("activity presentation", () => {
     expect(markup).toContain(">131<");
     expect(markup).toContain("<svg");
     expect(markup).toContain('data-glyph-depth="5"');
+    expect(markup).toContain('data-glyph-value="12345"');
+    expect(markup).not.toContain('data-glyph-value="34567"');
     expect(markup.match(/A journal moment/g)).toHaveLength(1);
+  });
+
+  it("renders the record author's two-glyph Saros pulse in the card header", () => {
+    const address = "1244444444";
+    const authorAnchor = 142;
+    const recordInstant = Date.parse(record.occurredAt) / 1_000;
+    const anchoredRecord = {
+      ...record,
+      author: { ...actor, sarosAnchor: authorAnchor },
+    } satisfies ApiSchemas["PublicRecordProjection"];
+    const markup = renderToStaticMarkup(
+      <SarosPulseProvider
+        anchorSaros={141}
+        intervals={[
+          intervalForAddress(141, recordInstant, "7654321012"),
+          intervalForAddress(authorAnchor, recordInstant, address),
+        ]}
+        observedAt={recordInstant}
+      >
+        <RecordActivityCard record={anchoredRecord} />
+      </SarosPulseProvider>,
+    );
+    const pulse = pulsePairMarkup(markup, address);
+
+    expect(pulse).toContain(`data-saros-anchor="${authorAnchor}"`);
+    expectGlyphOrder(pulse, "12444", "44444");
   });
 
   it("keeps encrypted records opaque while retaining owner-safe metadata", () => {
@@ -332,3 +364,43 @@ describe("activity presentation", () => {
     expect(markup).toContain('aria-disabled="true"');
   });
 });
+
+function intervalForAddress(
+  saros: number,
+  instantEpochSeconds: number,
+  address: string,
+): SarosInterval {
+  const previousEpochSeconds = instantEpochSeconds - Number.parseInt(address, 8) - 0.25;
+  return {
+    saros,
+    previous: {
+      epochSeconds: previousEpochSeconds,
+      typeCode: 13,
+      sequence: 1,
+      seriesCount: 2,
+    },
+    next: {
+      epochSeconds: previousEpochSeconds + 8 ** 10,
+      typeCode: 13,
+      sequence: 2,
+      seriesCount: 2,
+    },
+  };
+}
+
+function pulsePairMarkup(markup: string, address: string): string {
+  const markerIndex = markup.indexOf(`data-pulse-value="${address}"`);
+  expect(markerIndex).toBeGreaterThanOrEqual(0);
+  const start = markup.lastIndexOf("<span", markerIndex);
+  const end = markup.indexOf("</span>", markerIndex);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(markerIndex);
+  return markup.slice(start, end + "</span>".length);
+}
+
+function expectGlyphOrder(markup: string, mostSignificant: string, leastSignificant: string) {
+  const msbIndex = markup.indexOf(`data-glyph-value="${mostSignificant}"`);
+  const lsbIndex = markup.indexOf(`data-glyph-value="${leastSignificant}"`);
+  expect(msbIndex).toBeGreaterThanOrEqual(0);
+  expect(lsbIndex).toBeGreaterThan(msbIndex);
+}

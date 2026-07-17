@@ -104,10 +104,16 @@ export interface SyncResourceCount {
 export interface SyncRecordCount extends SyncResourceCount {
   readonly public: number;
   readonly private: number;
+  readonly pastTera: number;
+  readonly pastGiga: number;
+  readonly pastMega: number;
 }
 
 export interface SyncMediaCount extends SyncResourceCount {
   readonly byteLength: number;
+  readonly photo: number;
+  readonly video: number;
+  readonly audio: number;
   readonly restorable: number;
   readonly restorableByteLength: number;
 }
@@ -207,11 +213,17 @@ interface SyncStatsRow extends QueryResultRow {
   readonly high_water: string | number;
   readonly public_record_count: string | number;
   readonly private_record_count: string | number;
+  readonly past_tera_record_count: string | number;
+  readonly past_giga_record_count: string | number;
+  readonly past_mega_record_count: string | number;
   readonly event_count: string | number;
   readonly tag_count: string | number;
   readonly template_count: string | number;
   readonly media_count: string | number;
   readonly media_byte_length: string | number;
+  readonly photo_media_count: string | number;
+  readonly video_media_count: string | number;
+  readonly audio_media_count: string | number;
   readonly restorable_media_count: string | number;
   readonly restorable_media_byte_length: string | number;
 }
@@ -250,6 +262,7 @@ interface UserRow extends QueryResultRow {
   readonly id: string;
   readonly login: string;
   readonly display_name: string;
+  readonly saros_anchor: number;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
@@ -279,6 +292,10 @@ const RECEIPT_CLEANUP_LIMIT = 100;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MUTATION_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+// Canonical temporal catalog: rollover (Tera) = 8 Giga; each next unit is radix 8.
+const TERA_SECONDS = 1_111_272.935_625;
+const GIGA_SECONDS = 138_909.116_953_125;
+const MEGA_SECONDS = 17_363.639_619_140_625;
 
 export class SyncService {
   constructor(private readonly database: Database) {}
@@ -302,6 +319,15 @@ export class SyncService {
          (SELECT count(*) FROM records
           WHERE user_id = $1 AND visibility = 'private' AND deleted_at IS NULL)
            AS private_record_count,
+         (SELECT count(*) FROM records
+          WHERE user_id = $1 AND deleted_at IS NULL
+            AND event_at >= now() - make_interval(secs => $2)) AS past_tera_record_count,
+         (SELECT count(*) FROM records
+          WHERE user_id = $1 AND deleted_at IS NULL
+            AND event_at >= now() - make_interval(secs => $3)) AS past_giga_record_count,
+         (SELECT count(*) FROM records
+          WHERE user_id = $1 AND deleted_at IS NULL
+            AND event_at >= now() - make_interval(secs => $4)) AS past_mega_record_count,
          (SELECT count(*) FROM events
           WHERE user_id = $1 AND deleted_at IS NULL) AS event_count,
          (SELECT count(*) FROM tags
@@ -315,6 +341,15 @@ export class SyncService {
          (SELECT COALESCE(sum(byte_size), 0) FROM media_objects
           WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL)
            AS media_byte_length,
+         (SELECT count(*) FROM media_objects
+          WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL
+            AND content_type LIKE 'image/%') AS photo_media_count,
+         (SELECT count(*) FROM media_objects
+          WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL
+            AND content_type LIKE 'video/%') AS video_media_count,
+         (SELECT count(*) FROM media_objects
+          WHERE user_id = $1 AND status = 'ready' AND deleted_at IS NULL
+            AND content_type LIKE 'audio/%') AS audio_media_count,
          (SELECT count(*) FROM media_objects media
           WHERE media.user_id = $1 AND media.visibility = 'public'
             AND media.status = 'ready' AND media.deleted_at IS NULL
@@ -337,7 +372,7 @@ export class SyncService {
                 AND record.user_id = $1 AND record.visibility = 'public'
                 AND record.deleted_at IS NULL
             )) AS restorable_media_byte_length`,
-      [principal.userId],
+      [principal.userId, TERA_SECONDS, GIGA_SECONDS, MEGA_SECONDS],
     );
     const row = result.rows[0];
     if (row === undefined) throw new Error("Synchronization statistics query returned no row");
@@ -352,6 +387,9 @@ export class SyncService {
         total: publicRecords + privateRecords,
         public: publicRecords,
         private: privateRecords,
+        pastTera: syncStatNumber(row.past_tera_record_count, "past Tera record count"),
+        pastGiga: syncStatNumber(row.past_giga_record_count, "past Giga record count"),
+        pastMega: syncStatNumber(row.past_mega_record_count, "past Mega record count"),
       },
       events: { total: syncStatNumber(row.event_count, "event count") },
       tags: { total: syncStatNumber(row.tag_count, "tag count") },
@@ -359,6 +397,9 @@ export class SyncService {
       media: {
         total: syncStatNumber(row.media_count, "media count"),
         byteLength: syncStatNumber(row.media_byte_length, "media byte length"),
+        photo: syncStatNumber(row.photo_media_count, "photo media count"),
+        video: syncStatNumber(row.video_media_count, "video media count"),
+        audio: syncStatNumber(row.audio_media_count, "audio media count"),
         restorable: syncStatNumber(row.restorable_media_count, "restorable media count"),
         restorableByteLength: syncStatNumber(
           row.restorable_media_byte_length,
@@ -1195,7 +1236,7 @@ async function loadUserResources(
     return new Map();
   }
   const result = await queryable.query<UserRow>(
-    `SELECT id, login, display_name, created_at, updated_at
+    `SELECT id, login, display_name, saros_anchor, created_at, updated_at
      FROM users
      WHERE id = $1`,
     [userId],
@@ -1210,6 +1251,7 @@ async function loadUserResources(
             id: row.id,
             login: row.login,
             displayName: row.display_name,
+            sarosAnchor: row.saros_anchor,
             createdAt: isoDate(row.created_at),
             updatedAt: isoDate(row.updated_at),
           },

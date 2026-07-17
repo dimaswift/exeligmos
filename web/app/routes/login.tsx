@@ -1,20 +1,29 @@
 import { data, Form, redirect, useActionData, useNavigation, useSearchParams } from "react-router";
 
 import type { Route } from "./+types/login";
+import { LiveSarosPulseClock } from "~/components/saros-pulse-glyph-pair";
+import { realtimeSarosIntervalsAt } from "~/features/temporal/solar-engine.server";
 import { assertSameOrigin, BackendRequestError, loginWithPassword } from "~/lib/auth.server";
 import { safeReturnTo } from "~/lib/navigation";
 import { commitAuthSession, readAuthSession, toStoredAuthSession } from "~/lib/session.server";
 import styles from "./login.module.css";
 
 export const meta: Route.MetaFunction = () => [{ title: "Sign in · Exeligmos" }];
+const DEFAULT_LOGIN_DESTINATION = "/feed";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const auth = await readAuthSession(request);
   if (auth !== null) {
     const url = new URL(request.url);
-    throw redirect(safeReturnTo(url.searchParams.get("returnTo")));
+    throw redirect(safeReturnTo(url.searchParams.get("returnTo"), DEFAULT_LOGIN_DESTINATION));
   }
-  return null;
+  const observedAt = Date.now() / 1_000;
+  return {
+    sarosWindow: {
+      observedAt,
+      intervals: realtimeSarosIntervalsAt(observedAt),
+    },
+  };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -22,7 +31,7 @@ export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
   const login = form.get("login");
   const password = form.get("password");
-  const returnTo = safeReturnTo(form.get("returnTo"));
+  const returnTo = safeReturnTo(form.get("returnTo"), DEFAULT_LOGIN_DESTINATION);
 
   if (
     typeof login !== "string" ||
@@ -48,7 +57,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
 }
 
-export default function Login() {
+export default function Login({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
@@ -57,6 +66,12 @@ export default function Login() {
   return (
     <main className={styles.page}>
       <section className={styles.introduction}>
+        <LiveSarosPulseClock
+          className={styles.logo}
+          intervals={loaderData.sarosWindow.intervals}
+          observedAt={loaderData.sarosWindow.observedAt}
+          size="3.25rem"
+        />
         <p className="eyebrow">Exeligmos analytics</p>
         <h1>Inspect time as data.</h1>
         <p>
@@ -70,7 +85,11 @@ export default function Login() {
         <p className="eyebrow">Private workspace</p>
         <h2>Sign in</h2>
         <Form action="/login" method="post">
-          <input name="returnTo" type="hidden" value={safeReturnTo(searchParams.get("returnTo"))} />
+          <input
+            name="returnTo"
+            type="hidden"
+            value={safeReturnTo(searchParams.get("returnTo"), DEFAULT_LOGIN_DESTINATION)}
+          />
           <label>
             Login
             <input autoComplete="username" name="login" required type="text" />

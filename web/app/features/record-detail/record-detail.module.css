@@ -22,22 +22,22 @@
 .hero {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-5);
+  gap: var(--space-4);
   align-items: center;
-  padding: clamp(1.25rem, 4vw, 2.5rem);
+  padding: clamp(1rem, 2.5vw, 1.6rem);
   border-bottom: 1px solid var(--color-border);
   background: radial-gradient(circle at 90% 0%, rgb(139 215 193 / 12%), transparent 22rem);
 }
 
 .emoji {
-  font-size: clamp(2.8rem, 7vw, 5rem);
+  font-size: clamp(2rem, 4vw, 3rem);
   line-height: 1;
 }
 
 .identity h1 {
   margin: 0;
   color: var(--color-accent-strong);
-  font-size: clamp(1.7rem, 4vw, 3rem);
+  font-size: clamp(1.3rem, 2.5vw, 2rem);
 }
 
 .identity > p:not(:global(.eyebrow)) {
@@ -55,6 +55,12 @@
 
 .heroGlyph {
   color: var(--color-text);
+  width: 4rem;
+  height: 4.5rem;
+}
+
+.heroPulse {
+  min-width: 6.3rem;
 }
 
 .sarosSection,
@@ -108,65 +114,13 @@
   max-width: 54rem;
   padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem) 0;
   margin: 0;
-  font-size: clamp(1rem, 2vw, 1.25rem);
+  font-size: clamp(0.92rem, 1.5vw, 1.08rem);
   line-height: 1.65;
   white-space: pre-wrap;
 }
 
 .encrypted {
   color: #d8c1f0;
-}
-
-.imageRail {
-  display: grid;
-  grid-auto-columns: minmax(16rem, 72%);
-  grid-auto-flow: column;
-  gap: var(--space-3);
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  padding-bottom: var(--space-3);
-}
-
-.imageRail a {
-  height: min(62vh, 36rem);
-  scroll-snap-align: start;
-}
-
-.imageRail img {
-  width: 100%;
-  height: 100%;
-  border-radius: 0.75rem;
-  background: var(--color-canvas);
-  object-fit: contain;
-}
-
-.player,
-.audioPlayer {
-  margin: var(--space-4) 0 0;
-}
-
-.player video {
-  width: 100%;
-  max-height: 70vh;
-  border-radius: 0.75rem;
-  background: #000;
-}
-
-.player figcaption,
-.audioPlayer figcaption {
-  margin-bottom: var(--space-2);
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-}
-
-.audioPlayer audio {
-  width: min(100%, 38rem);
-}
-
-.document {
-  display: block;
-  width: fit-content;
-  margin-top: var(--space-3);
 }
 
 .tags {
@@ -204,12 +158,9 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .heroGlyph {
+  .heroGlyph,
+  .heroPulse {
     grid-column: 1 / -1;
     justify-self: end;
-  }
-
-  .imageRail {
-    grid-auto-columns: 92%;
   }
 }
