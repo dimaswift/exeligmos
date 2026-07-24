@@ -956,7 +956,7 @@ export interface components {
             status: "ready";
             checks: components["schemas"]["ReadinessChecks"];
         };
-        /** @description RFC 9457 Problem Details with stable Exeligmos extensions. */
+        /** @description RFC 9457 Problem Details with stable legacy protocol extensions. */
         Problem: {
             /**
              * Format: uri-reference
@@ -2333,7 +2333,7 @@ export interface operations {
                  *       "login": "aurora",
                  *       "password": "correct-horse-battery-staple",
                  *       "displayName": "Aurora Observer",
-                 *       "inviteCode": "EXELIGMOS-2026"
+                 *       "inviteCode": "FRACTONICA-2026"
                  *     }
                  */
                 "application/json": components["schemas"]["RegisterRequest"];

@@ -1,5 +1,5 @@
 {
-  "name": "@exeligmos/glyph-core",
+  "name": "@fractonica/glyph-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@exeligmos/domain-catalog": "*"
+    "@fractonica/domain-catalog": "*"
   }
 }

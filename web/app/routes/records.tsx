@@ -1,6 +1,6 @@
 import { data, Form, redirect, useActionData, useNavigation, useSearchParams } from "react-router";
 
-import { GlyphRenderer } from "@exeligmos/ui";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import type { Route } from "./+types/records";
 import { journalRecordPresentation } from "~/features/activity-feed/journal-presentation";
@@ -39,7 +39,7 @@ import { throwRouteError } from "~/lib/route-errors.server";
 
 import styles from "./management.module.css";
 
-export const meta: Route.MetaFunction = () => [{ title: "Records · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "Records · Fractonica" }];
 const WEB_RECORD_FORM_MAX_BYTES = WEB_ATTACHMENT_MAX_TOTAL_BYTES + 1_024 * 1_024;
 
 export async function loader({ context, request }: Route.LoaderArgs) {

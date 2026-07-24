@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalConformance } from "@exeligmos/domain-catalog";
+import { canonicalConformance } from "@fractonica/domain-catalog";
 
 import { runCanonicalConformance } from "./conformance.js";
 

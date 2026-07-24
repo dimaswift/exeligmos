@@ -134,7 +134,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Exeligmos Server") {
+            Section("Fractonica Server") {
                 HStack {
                     Text("Device")
                     Spacer()

@@ -1,4 +1,9 @@
-# Exeligmos private-record cryptographic profile v1
+# Fractonica private-record cryptographic profile v1
+
+The product is named Fractonica. The `exeligmos/...` HKDF context strings and
+`application/vnd.exeligmos.record+json` media type below are frozen v1
+cryptographic identifiers. Implementations must use them verbatim so existing
+ciphertext remains decryptable and authenticated metadata remains valid.
 
 Status: normative for the v2 API contract. Implementations should receive an
 independent cryptographic review before production deployment.

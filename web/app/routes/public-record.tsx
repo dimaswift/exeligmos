@@ -5,7 +5,7 @@ import { isRecordPublicId } from "~/lib/record-id";
 import { throwRouteError } from "~/lib/route-errors.server";
 
 export const meta: Route.MetaFunction = ({ loaderData }) => [
-  { title: `${loaderData?.record.payload.emoji ?? "Record"} · Exeligmos` },
+  { title: `${loaderData?.record.payload.emoji ?? "Record"} · Fractonica` },
 ];
 
 export async function loader({ params, request }: Route.LoaderArgs) {

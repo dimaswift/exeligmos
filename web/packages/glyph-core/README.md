@@ -1,11 +1,11 @@
-# `@exeligmos/glyph-core`
+# `@fractonica/glyph-core`
 
-Pure, immutable octal-glyph normalization, geometry, and semantic paint models for Exeligmos. The
+Pure, immutable octal-glyph normalization, geometry, and semantic paint models for Fractonica. The
 package has no React, DOM, canvas, networking, locale, or wall-clock dependency. React/SVG output
-lives in `@exeligmos/ui`.
+lives in `@fractonica/ui`.
 
 All coordinates, arms, depth bounds, socket order, fill rules, accessibility text, rarity colors,
-and semantic tokens come from `@exeligmos/domain-catalog`, generated from
+and semantic tokens come from `@fractonica/domain-catalog`, generated from
 `domain-spec/catalog.json`. Production callers must not duplicate those constants.
 
 ## Creating a glyph
@@ -15,7 +15,7 @@ Every glyph requires exactly one explicit color meaning: either a `rarityId` or 
 one would create a second source of truth.
 
 ```ts
-import { createOctalGlyph, splitSemanticGlyphStyle } from "@exeligmos/glyph-core";
+import { createOctalGlyph, splitSemanticGlyphStyle } from "@fractonica/glyph-core";
 
 const rarityGlyph = createOctalGlyph({
   value: "1422222",
@@ -36,7 +36,7 @@ rarity. Style constructors reject unknown semantic color tokens.
 ## Compatibility behavior
 
 - Glyph input retains the **rightmost** octal digits and pads on the **left**. This deliberately
-  differs from persisted address normalization in `@exeligmos/temporal-core`.
+  differs from persisted address normalization in `@fractonica/temporal-core`.
 - Presentation depth is clamped to the catalog-supported glyph range (`3...8` in catalog 1.0.0).
 - Socket order at depth `d` is `[0, d-1, d-2, ..., 1]`; split paint is selected by digit index, not
   socket index.
@@ -48,10 +48,10 @@ rarity. Style constructors reject unknown semantic color tokens.
 
 ## Rendering
 
-`@exeligmos/ui` provides the SSR-safe SVG adapter:
+`@fractonica/ui` provides the SSR-safe SVG adapter:
 
 ```tsx
-import { GlyphRenderer } from "@exeligmos/ui";
+import { GlyphRenderer } from "@fractonica/ui";
 
 <GlyphRenderer model={rarityGlyph} size={160} />;
 <GlyphRenderer decorative model={rarityGlyph} size="100%" />;

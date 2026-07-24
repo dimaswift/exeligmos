@@ -643,7 +643,7 @@
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Exeligmos;
+				INFOPLIST_KEY_CFBundleDisplayName = Fractonica;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.weather";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
@@ -774,7 +774,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Exeligmos;
+				INFOPLIST_KEY_CFBundleDisplayName = Fractonica;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.weather";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";

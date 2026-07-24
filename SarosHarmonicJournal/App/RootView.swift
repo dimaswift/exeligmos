@@ -217,7 +217,9 @@ struct RootView: View {
             return
         }
 
-        guard url.scheme == "exeligmos" else { return }
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "fractonica" || scheme == "exeligmos"
+        else { return }
 
         switch url.host {
         case "activity":
@@ -2104,7 +2106,7 @@ private struct JournalOnboardingView: View {
                     .font(.system(size: 72))
                     .foregroundStyle(.blue)
                 VStack(spacing: 8) {
-                    Text("Exeligmos")
+                    Text("Fractonica")
                         .font(.largeTitle.bold())
                     Text("A local-first journal. Record without an account, then merge safely whenever you sign in.")
                         .multilineTextAlignment(.center)

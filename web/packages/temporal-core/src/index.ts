@@ -5,7 +5,7 @@ import {
   type RarityFamilyId,
   type TemporalUnit,
   type TemporalUnitId,
-} from "@exeligmos/domain-catalog";
+} from "@fractonica/domain-catalog";
 
 /** A depth accepted by Saros clock calculations. Clock depths are validated, not clamped. */
 export type CalculationDepth = number & { readonly __calculationDepth: unique symbol };

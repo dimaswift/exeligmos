@@ -1,4 +1,4 @@
-import type { ApiSchemas } from "@exeligmos/api-client";
+import type { ApiSchemas } from "@fractonica/api-client";
 
 import {
   backendApiBaseUrl,
@@ -63,7 +63,7 @@ export async function resolveManagedDevice(auth: Auth, requestedId?: string): Pr
     () =>
       client.POST("/v1/devices", {
         params: { header: { "Idempotency-Key": crypto.randomUUID() } },
-        body: { name: "Exeligmos web", kind: "web", platform: "browser", metadata: {} },
+        body: { name: "Fractonica web", kind: "web", platform: "browser", metadata: {} },
       }),
     "Could not register a web device.",
   );

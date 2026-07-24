@@ -2,18 +2,26 @@
  * lv_octal_glyph.h
  *
  * A real LVGL widget (lv_obj_class) that renders an OctalGlyph -- a radial
- * "core ring + up to 8 digit arms" glyph, stylistically ported from
- * @exeligmos/glyph-core. It has exactly one dependency: lvgl.h. The core
- * ring is drawn live with lv_draw_arc; each arm is a small pre-rendered
- * PROGMEM sprite (baked offline by tools/bake_sprites.py, see
- * octal_glyph_sprites.h) rotated onto its socket with lv_draw_image -- no
- * ThorVG / vector-graphics module, no polygon triangulation, no runtime
- * shape math at all beyond a digit lookup and an angle.
+ * "core ring + up to 8 digit arms" glyph -- as the *exact* filled-polygon
+ * geometry @fractonica/glyph-core's TypeScript produces (byte-for-byte
+ * verified against it), via a small pure-C anti-aliased scanline rasterizer
+ * (octal_glyph_raster.c) that writes straight into a plain ARGB8888 pixel
+ * buffer -- no SVG, no ThorVG, no vector-graphics module, no dependency
+ * beyond LVGL itself. An earlier design rendered this same exact geometry
+ * through LVGL's native SVG decoder (LV_USE_SVG, ThorVG-backed) and it
+ * looked right in every host simulation, but never rendered on the real
+ * target hardware with no diagnosable failure signal; this rasterizer
+ * trades ThorVG's vector-fill machinery for ~200 lines of plain C anyone
+ * can step through. Two even earlier redesigns (stroked lines, then
+ * pre-rendered sprites) simplified the artwork itself to cut render cost,
+ * but neither looked close enough to the original. See the README's
+ * "Rendering approach" section for the full history and trade-offs.
  *
- * The glyph renders at a fixed OG_SPRITE_CANVAS_SIZE x OG_SPRITE_CANVAS_SIZE
- * pixel canvas (120x120 as shipped) regardless of the widget's own size --
- * sizing/scaling the sprites to fit an arbitrary box isn't supported yet.
- * Give the widget a size >= the canvas so nothing clips.
+ * Internally this wraps one lv_image child; every value/depth/color/split/
+ * size change re-rasterizes directly into a heap-allocated pixel buffer
+ * sized to the widget's current box and re-points the child at it. No
+ * fixed-resolution constraint -- it scales (contain-fit) to whatever size
+ * you give the widget.
  *
  * Usage:
  *   lv_obj_t * glyph = lv_octal_glyph_create(parent);

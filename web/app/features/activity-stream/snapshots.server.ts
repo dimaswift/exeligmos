@@ -1,4 +1,4 @@
-import type { ApiPaths, ApiSchemas } from "@exeligmos/api-client";
+import type { ApiPaths, ApiSchemas } from "@fractonica/api-client";
 
 import {
   BackendRequestError,

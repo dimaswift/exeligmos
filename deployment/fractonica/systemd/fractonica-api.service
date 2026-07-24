@@ -1,0 +1,38 @@
+[Unit]
+Description=Fractonica API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fractonica-api
+Group=fractonica-api
+SupplementaryGroups=fractonica-release
+WorkingDirectory=/opt/fractonica/current/api
+EnvironmentFile=/etc/fractonica/api.env
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8788
+Environment=MEDIA_STORAGE_ROOT=/var/lib/fractonica/media
+Environment=NODE_OPTIONS=--max-old-space-size=384
+ExecStart=/opt/fractonica/current/runtime/node --enable-source-maps /opt/fractonica/current/api/dist/server.js
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/fractonica/media
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

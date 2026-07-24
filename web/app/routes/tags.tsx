@@ -13,7 +13,7 @@ import { throwRouteError } from "~/lib/route-errors.server";
 
 import styles from "./management.module.css";
 
-export const meta: Route.MetaFunction = () => [{ title: "Tags · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "Tags · Fractonica" }];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   try {

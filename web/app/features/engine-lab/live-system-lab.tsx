@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
-import { canonicalCatalog } from "@exeligmos/domain-catalog";
-import { createOctalGlyph } from "@exeligmos/glyph-core";
+import { canonicalCatalog } from "@fractonica/domain-catalog";
+import { createOctalGlyph } from "@fractonica/glyph-core";
 import {
   canonicalTemporalEngine,
   repdigitPeriodSeconds,
@@ -12,8 +12,8 @@ import {
   type SarosInterval,
   type SarosPulseReading,
   type SarosSpikeReference,
-} from "@exeligmos/temporal-core";
-import { GlyphRenderer } from "@exeligmos/ui";
+} from "@fractonica/temporal-core";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import styles from "~/routes/engine-lab.module.css";
 

@@ -1,5 +1,5 @@
 {
-  "name": "exeligmos-sync-server",
+  "name": "fractonica-sync-server",
   "version": "2.0.0-alpha.1",
   "private": true,
   "type": "module",
@@ -9,6 +9,8 @@
   },
   "scripts": {
     "start": "npm run start:v2",
+    "boot": "node --env-file-if-exists=.env scripts/boot.mjs",
+    "boot:dev": "node --env-file-if-exists=.env scripts/boot.mjs --dev",
     "dev:v2": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "start:v2": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

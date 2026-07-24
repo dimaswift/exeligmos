@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { createOctalGlyph, splitSemanticGlyphStyle } from "@exeligmos/glyph-core";
+import { createOctalGlyph, splitSemanticGlyphStyle } from "@fractonica/glyph-core";
 
 import { defaultGlyphColor, GlyphRenderer, type GlyphRendererStyle } from "./glyph-renderer.js";
 

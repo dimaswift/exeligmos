@@ -13,7 +13,7 @@ import {
 import { readRequestAuth } from "~/lib/auth-boundary.server";
 import { throwRouteError } from "~/lib/route-errors.server";
 
-export const meta: Route.MetaFunction = () => [{ title: "My feed · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "My feed · Fractonica" }];
 
 export async function loader({ context, request, url }: Route.LoaderArgs) {
   try {

@@ -9,8 +9,8 @@ export const meta: Route.MetaFunction = ({ loaderData }) => [
   {
     title:
       loaderData?.record.visibility === "public"
-        ? `${loaderData.record.payload.emoji ?? "Record"} · Exeligmos`
-        : "Private record · Exeligmos",
+        ? `${loaderData.record.payload.emoji ?? "Record"} · Fractonica`
+        : "Private record · Fractonica",
   },
 ];
 

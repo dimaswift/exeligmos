@@ -1,4 +1,4 @@
-import { canonicalCatalog } from "@exeligmos/domain-catalog";
+import { canonicalCatalog } from "@fractonica/domain-catalog";
 
 import { glyphStyleForRarity, normalizeGlyphStyle } from "./style.js";
 import type {

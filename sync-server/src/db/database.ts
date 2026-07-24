@@ -141,7 +141,7 @@ export function createPostgresDatabase(config: DatabaseConfig): PostgresDatabase
     statement_timeout: config.statementTimeoutMs,
     lock_timeout: config.lockTimeoutMs,
     idle_in_transaction_session_timeout: config.idleInTransactionSessionTimeoutMs,
-    application_name: "exeligmos-sync-server",
+    application_name: "fractonica-sync-server",
   });
 
   return new PostgresDatabase(

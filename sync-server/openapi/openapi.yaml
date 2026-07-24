@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: Exeligmos API
+  title: Fractonica API
   version: 2.0.0
   summary: Server-authoritative journal, event, and synchronization API.
   description: |
-    The Exeligmos v2 API is the only supported server contract after migration.
+    The Fractonica v2 API is the only supported server contract after migration.
     It is multi-user, cursor-synchronized, and intended for the first-party iOS
     client as well as user-authorized automation agents.
 
@@ -46,7 +46,7 @@ info:
     name: Proprietary
     identifier: LicenseRef-Proprietary
 externalDocs:
-  description: Exeligmos private-record cryptographic profile v1
+  description: Fractonica private-record cryptographic profile v1
   url: ../docs/crypto-v1.md
 servers:
   - url: /
@@ -167,7 +167,7 @@ paths:
               login: aurora
               password: correct-horse-battery-staple
               displayName: Aurora Observer
-              inviteCode: EXELIGMOS-2026
+              inviteCode: FRACTONICA-2026
       responses:
         '201':
           description: User and initial session created.
@@ -2677,7 +2677,7 @@ components:
     ApiKeyBearer:
       type: http
       scheme: bearer
-      bearerFormat: Exeligmos API key
+      bearerFormat: Fractonica API key
       description: |
         User-issued secret beginning with `exk_`. Keys are stored hashed,
         device-bound, scoped, independently expirable, and revocable. The
@@ -3042,7 +3042,7 @@ components:
       additionalProperties: false
     Problem:
       type: object
-      description: RFC 9457 Problem Details with stable Exeligmos extensions.
+      description: RFC 9457 Problem Details with stable legacy protocol extensions.
       required: [type, title, status, code, requestId]
       properties:
         type:

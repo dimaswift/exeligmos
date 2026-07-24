@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ApiSchemas } from "@exeligmos/api-client";
-import type { SarosInterval } from "@exeligmos/temporal-core";
+import type { ApiSchemas } from "@fractonica/api-client";
+import type { SarosInterval } from "@fractonica/temporal-core";
 
 import { SarosPulseProvider } from "~/features/temporal/saros-pulse-context";
 

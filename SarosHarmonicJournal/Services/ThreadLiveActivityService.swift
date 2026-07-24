@@ -16,7 +16,7 @@ enum ThreadLiveActivityError: LocalizedError {
         case .unavailable:
             "Live Activities are not available on this device."
         case .disabled:
-            "Live Activities are disabled for Exeligmos."
+            "Live Activities are disabled for Fractonica."
         }
     }
 }

@@ -5,7 +5,7 @@ import {
   type GlyphColorRole,
   type GlyphModel,
   type GlyphPaint,
-} from "@exeligmos/glyph-core";
+} from "@fractonica/glyph-core";
 
 export type GlyphColorResolver = (
   role: GlyphColorRole,

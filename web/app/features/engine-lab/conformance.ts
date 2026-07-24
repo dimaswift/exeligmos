@@ -1,10 +1,10 @@
-import { canonicalConformance, resolveEventType } from "@exeligmos/domain-catalog";
+import { canonicalConformance, resolveEventType } from "@fractonica/domain-catalog";
 import {
   glyphFrameBounds,
   glyphSocketDigitIndices,
   normalizeGlyphOctal,
-} from "@exeligmos/glyph-core";
-import { canonicalTemporalEngine } from "@exeligmos/temporal-core";
+} from "@fractonica/glyph-core";
+import { canonicalTemporalEngine } from "@fractonica/temporal-core";
 
 export type CanonicalConformanceVector = (typeof canonicalConformance.vectors)[number];
 

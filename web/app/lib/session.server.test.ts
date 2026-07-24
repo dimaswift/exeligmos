@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AuthSession } from "@exeligmos/api-client";
+import type { AuthSession } from "@fractonica/api-client";
 
 import { commitAuthSession, readAuthSession, toStoredAuthSession } from "./session.server.js";
 

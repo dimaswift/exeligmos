@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
-import { canonicalCatalog } from "@exeligmos/domain-catalog";
-import { createOctalGlyph } from "@exeligmos/glyph-core";
+import { canonicalCatalog } from "@fractonica/domain-catalog";
+import { createOctalGlyph } from "@fractonica/glyph-core";
 import {
   sarosRealtimeWindow,
   type RarityId,
@@ -11,8 +11,8 @@ import {
   type SarosRealtimePeriodId,
   type SarosRealtimeSpike,
   type SarosRealtimeWaveformSample,
-} from "@exeligmos/temporal-core";
-import { GlyphRenderer } from "@exeligmos/ui";
+} from "@fractonica/temporal-core";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import {
   LowestRaritySelector,

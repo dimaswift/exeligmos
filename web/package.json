@@ -1,5 +1,5 @@
 {
-  "name": "@exeligmos/web",
+  "name": "@fractonica/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -29,11 +29,11 @@
     "check": "npm run domain:validate && npm run solar:check && npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@exeligmos/api-client": "*",
-    "@exeligmos/domain-catalog": "*",
-    "@exeligmos/glyph-core": "*",
-    "@exeligmos/temporal-core": "*",
-    "@exeligmos/ui": "*",
+    "@fractonica/api-client": "*",
+    "@fractonica/domain-catalog": "*",
+    "@fractonica/glyph-core": "*",
+    "@fractonica/temporal-core": "*",
+    "@fractonica/ui": "*",
     "@react-router/node": "8.2.0",
     "@react-router/serve": "8.2.0",
     "openapi-fetch": "^0.17.0",

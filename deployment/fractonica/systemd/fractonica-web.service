@@ -1,0 +1,36 @@
+[Unit]
+Description=Fractonica web application
+After=network-online.target fractonica-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fractonica-web
+Group=fractonica-web
+SupplementaryGroups=fractonica-release
+WorkingDirectory=/opt/fractonica/current/web
+EnvironmentFile=/etc/fractonica/web.env
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3100
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/opt/fractonica/current/runtime/node /opt/fractonica/current/web/node_modules/@react-router/serve/bin.cjs /opt/fractonica/current/web/build/server/index.js
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

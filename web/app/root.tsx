@@ -12,7 +12,7 @@ import "./styles/tokens.css";
 import "./styles/global.css";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Exeligmos" },
+  { title: "Fractonica" },
   {
     name: "description",
     content: "A temporal analytics workspace for records, events, and relationships.",
@@ -55,7 +55,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 
   return (
     <main className="error-page">
-      <p className="eyebrow">Exeligmos</p>
+      <p className="eyebrow">Fractonica</p>
       <h1>{title}</h1>
       <p>{detail}</p>
       <a href="/">Return to the workspace</a>

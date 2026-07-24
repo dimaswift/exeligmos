@@ -8,7 +8,7 @@ import { safeReturnTo } from "~/lib/navigation";
 import { commitAuthSession, readAuthSession, toStoredAuthSession } from "~/lib/session.server";
 import styles from "./login.module.css";
 
-export const meta: Route.MetaFunction = () => [{ title: "Sign in · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "Sign in · Fractonica" }];
 const DEFAULT_LOGIN_DESTINATION = "/feed";
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -70,9 +70,9 @@ export default function Login({ loaderData }: Route.ComponentProps) {
           className={styles.logo}
           intervals={loaderData.sarosWindow.intervals}
           observedAt={loaderData.sarosWindow.observedAt}
-          size="3.25rem"
+          size="4.875rem"
         />
-        <p className="eyebrow">Exeligmos analytics</p>
+        <p className="eyebrow">Fractonica analytics</p>
         <h1>Inspect time as data.</h1>
         <p>
           A desktop workspace for records, events, temporal patterns, and the relationships between

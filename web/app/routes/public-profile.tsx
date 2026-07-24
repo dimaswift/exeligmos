@@ -25,7 +25,7 @@ import styles from "./feed-routes.module.css";
 const PUBLIC_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/;
 
 export const meta: Route.MetaFunction = ({ loaderData, params }) => [
-  { title: `@${loaderData.snapshot.profile.login ?? params.login} · Exeligmos` },
+  { title: `@${loaderData.snapshot.profile.login ?? params.login} · Fractonica` },
   {
     name: "description",
     content: `Public records and events from ${loaderData.snapshot.profile.displayName}.`,

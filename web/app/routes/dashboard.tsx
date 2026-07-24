@@ -6,7 +6,7 @@ import { throwRouteError } from "~/lib/route-errors.server";
 
 import styles from "./dashboard.module.css";
 
-export const meta: Route.MetaFunction = () => [{ title: "Analytics · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "Analytics · Fractonica" }];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   try {

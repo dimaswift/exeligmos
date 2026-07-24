@@ -1,4 +1,4 @@
-import { canonicalTemporalEngine } from "@exeligmos/temporal-core";
+import { canonicalTemporalEngine } from "@fractonica/temporal-core";
 
 export const DEFAULT_ENGINE_LAB_QUERY = {
   address: "1422222",

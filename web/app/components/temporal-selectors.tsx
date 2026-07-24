@@ -5,7 +5,7 @@ import {
   SAROS_REALTIME_RARITIES,
   type SarosRealtimeMinimumRarity,
   type SarosRealtimePeriodId,
-} from "@exeligmos/temporal-core";
+} from "@fractonica/temporal-core";
 
 import styles from "./temporal-selectors.module.css";
 

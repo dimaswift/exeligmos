@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:exeligmos:domain-conformance-vectors:schema:1",
-  "title": "Exeligmos domain conformance vectors",
+  "title": "Fractonica domain conformance vectors",
   "type": "object",
   "required": ["$schema", "schemaVersion", "catalogVersion", "floatTolerance", "vectors"],
   "properties": {

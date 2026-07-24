@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { Form, NavLink, Outlet, useRevalidator } from "react-router";
 
-import type { User } from "@exeligmos/api-client";
-import type { SarosInterval } from "@exeligmos/temporal-core";
+import type { User } from "@fractonica/api-client";
+import type { SarosInterval } from "@fractonica/temporal-core";
 
 import { LiveSarosPulseClock } from "./saros-pulse-glyph-pair";
 import { RealtimeSarosWindow } from "~/features/engine-lab/realtime-saros-window";
@@ -47,16 +47,16 @@ export function AppShell({ sarosWindow, user }: AppShellProps) {
     >
       <div className={styles.shell}>
         <aside className={styles.sidebar}>
-          <a aria-label="Exeligmos analytics" className={styles.brand} href="/">
+          <a aria-label="Fractonica analytics" className={styles.brand} href="/">
             <LiveSarosPulseClock
               anchorSaros={anchorSaros}
               className={styles.brandClock}
               decorative
               intervals={sarosWindow.intervals}
               observedAt={sarosWindow.observedAt}
-              size="1.2rem"
+              size="1.8rem"
             />
-            <span>Exeligmos</span>
+            <span>Fractonica</span>
           </a>
 
           <nav aria-label="Workspace" className={styles.navigation}>

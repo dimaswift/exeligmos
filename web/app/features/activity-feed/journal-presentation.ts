@@ -1,6 +1,6 @@
-import { createOctalGlyph, type GlyphModel } from "@exeligmos/glyph-core";
-import { canonicalCatalog } from "@exeligmos/domain-catalog";
-import { canonicalTemporalEngine, pulseDuration } from "@exeligmos/temporal-core";
+import { createOctalGlyph, type GlyphModel } from "@fractonica/glyph-core";
+import { canonicalCatalog } from "@fractonica/domain-catalog";
+import { canonicalTemporalEngine, pulseDuration } from "@fractonica/temporal-core";
 
 import type { ActivityRecord } from "./model";
 import { activityPresentationConfig } from "./presentation-config";

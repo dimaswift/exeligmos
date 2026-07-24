@@ -51,22 +51,22 @@ struct ThreadTrackingSnapshot: Codable, Hashable {
 
     var deepLinkURL: URL? {
         if isActivityLogging == true || ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
-            return URL(string: "exeligmos://record")
+            return URL(string: "fractonica://record")
         }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
-            return URL(string: "exeligmos://saros")
+            return URL(string: "fractonica://saros")
         }
-        return URL(string: "exeligmos://thread/\(threadID)")
+        return URL(string: "fractonica://thread/\(threadID)")
     }
 
     var recordURL: URL? {
         if isActivityLogging == true || ThreadTrackingSharedStore.isActivityLoggingID(threadID) {
-            return URL(string: "exeligmos://record")
+            return URL(string: "fractonica://record")
         }
         if threadID == ThreadTrackingSharedStore.journalTrackingID {
-            return URL(string: "exeligmos://record")
+            return URL(string: "fractonica://record")
         }
-        return URL(string: "exeligmos://record/\(threadID)")
+        return URL(string: "fractonica://record/\(threadID)")
     }
 }
 

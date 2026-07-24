@@ -1,10 +1,10 @@
-# `@exeligmos/temporal-core`
+# `@fractonica/temporal-core`
 
-Pure Saros clock, storage-address, and rarity semantics for the Exeligmos web analytics application.
+Pure Saros clock, storage-address, and rarity semantics for the Fractonica web analytics application.
 The package contains no React, DOM, networking, locale, timezone, or wall-clock dependency. Every
 timestamp and interval is supplied by the caller as epoch seconds.
 
-All constants and vocabulary come from `@exeligmos/domain-catalog`, which is generated from the root
+All constants and vocabulary come from `@fractonica/domain-catalog`, which is generated from the root
 `domain-spec/catalog.json`. Do not copy depth bounds, the radix, unit exponents, rarity names,
 semantic tokens, or address rules into this package or its consumers.
 
@@ -17,7 +17,7 @@ semantic tokens, or address rules into this package or its consumers.
 - canonical and rarity-aware storage retain the **leftmost** radix digits and pad on the **right**;
 - rarity classification retains the **leftmost** digits but pads on the **left** before suffix
   analysis;
-- glyph normalization retains the rightmost digits and belongs to `@exeligmos/glyph-core`, not this
+- glyph normalization retains the rightmost digits and belongs to `@fractonica/glyph-core`, not this
   package.
 
 These distinctions are compatibility behavior, not interchangeable formatting choices.
@@ -27,7 +27,7 @@ These distinctions are compatibility behavior, not interchangeable formatting ch
 Use the bound immutable engine in application code:
 
 ```ts
-import { canonicalTemporalEngine } from "@exeligmos/temporal-core";
+import { canonicalTemporalEngine } from "@fractonica/temporal-core";
 
 const reading = canonicalTemporalEngine.clockReading({
   previousEpochSeconds: 0,

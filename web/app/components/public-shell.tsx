@@ -1,6 +1,6 @@
 import { Link, NavLink, Outlet } from "react-router";
 
-import { DEFAULT_SAROS_PULSE_ANCHOR, type SarosInterval } from "@exeligmos/temporal-core";
+import { DEFAULT_SAROS_PULSE_ANCHOR, type SarosInterval } from "@fractonica/temporal-core";
 
 import { LiveSarosPulseClock } from "./saros-pulse-glyph-pair";
 import { SarosPulseProvider } from "~/features/temporal/saros-pulse-context";
@@ -25,15 +25,15 @@ export function PublicShell({
           Skip to content
         </a>
         <header className={styles.header}>
-          <Link aria-label="Exeligmos public activity" className={styles.brand} to="/explore">
+          <Link aria-label="Fractonica public activity" className={styles.brand} to="/explore">
             <LiveSarosPulseClock
               className={styles.brandClock}
               decorative
               intervals={sarosWindow.intervals}
               observedAt={sarosWindow.observedAt}
-              size="1.1rem"
+              size="1.65rem"
             />
-            <span>Exeligmos</span>
+            <span>Fractonica</span>
           </Link>
           <nav aria-label="Public navigation" className={styles.navigation}>
             <NavLink

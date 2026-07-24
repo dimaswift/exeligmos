@@ -7,7 +7,7 @@ import {
 } from "~/features/temporal/solar-engine.server";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "System lab · Exeligmos" },
+  { title: "System lab · Fractonica" },
   {
     name: "description",
     content: "Realtime Saros Grid, waveform, repdigit periods, and octal pulse inspection.",

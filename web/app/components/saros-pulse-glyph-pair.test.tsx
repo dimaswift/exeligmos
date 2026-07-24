@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { sarosPulseTickReading, type SarosInterval } from "@exeligmos/temporal-core";
+import { sarosPulseTickReading, type SarosInterval } from "@fractonica/temporal-core";
 
 import { LiveSarosPulseClock, SarosPulseGlyphPair } from "./saros-pulse-glyph-pair";
 

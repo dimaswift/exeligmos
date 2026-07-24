@@ -21,7 +21,7 @@ import {
 } from "~/features/activity-stream/snapshots.server";
 import { throwRouteError } from "~/lib/route-errors.server";
 
-export const meta: Route.MetaFunction = () => [{ title: "Global feed · Exeligmos" }];
+export const meta: Route.MetaFunction = () => [{ title: "Global feed · Fractonica" }];
 
 export async function loader({ request, url }: Route.LoaderArgs) {
   try {

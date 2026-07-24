@@ -1,8 +1,8 @@
 import { Children, useId, useRef, useState, type ReactNode } from "react";
 
-import { resolveEventType } from "@exeligmos/domain-catalog";
-import type { SarosPulseTickReading } from "@exeligmos/temporal-core";
-import { GlyphRenderer } from "@exeligmos/ui";
+import { resolveEventType } from "@fractonica/domain-catalog";
+import type { SarosPulseTickReading } from "@fractonica/temporal-core";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import { SarosPulseGlyphPair } from "~/components/saros-pulse-glyph-pair";
 import {

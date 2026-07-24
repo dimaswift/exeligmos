@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { createOctalGlyph } from "@exeligmos/glyph-core";
+import { createOctalGlyph } from "@fractonica/glyph-core";
 import {
   DEFAULT_SAROS_PULSE_ANCHOR,
   sarosPulseAnchorInterval,
   sarosPulseTickReading,
   type SarosInterval,
   type SarosPulseTickReading,
-} from "@exeligmos/temporal-core";
-import { GlyphRenderer } from "@exeligmos/ui";
+} from "@fractonica/temporal-core";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import styles from "./saros-pulse-glyph-pair.module.css";
 

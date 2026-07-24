@@ -1,6 +1,6 @@
-# Exeligmos domain specification
+# Fractonica domain specification
 
-This directory is the language-neutral source of truth for Exeligmos temporal
+This directory is the language-neutral source of truth for Fractonica temporal
 units, harmonic depths, rarity semantics, octal glyph geometry, and numeric
 event-type registration. UI code may format or arrange these concepts, but it
 must not redefine their values or infer a second taxonomy.
@@ -168,7 +168,7 @@ Experimental metadata lives inside the event's existing `metadata` object:
   "type": 2000000000,
   "metadata": {
     "eventType": {
-      "namespace": "dev.exeligmos.sun",
+      "namespace": "com.fractonica.sun",
       "name": "solar-flare",
       "version": 1,
       "label": "Solar flare"

@@ -1,6 +1,6 @@
 import { redirect } from "react-router";
 
-import type { AuthSession } from "@exeligmos/api-client";
+import type { AuthSession } from "@fractonica/api-client";
 
 import { createBackendApiClient, readBackendData } from "./backend.server";
 import {

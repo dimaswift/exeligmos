@@ -9,7 +9,7 @@ import {
   type SarosInterval,
   type SarosSystemSnapshot,
   type SolarEclipsePoint,
-} from "@exeligmos/temporal-core";
+} from "@fractonica/temporal-core";
 
 import rawSolarData from "./generated/solar-temporal-data.json";
 

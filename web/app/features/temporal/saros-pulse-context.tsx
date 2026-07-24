@@ -6,7 +6,7 @@ import {
   sarosPulseTickReading,
   type SarosInterval,
   type SarosPulseTickReading,
-} from "@exeligmos/temporal-core";
+} from "@fractonica/temporal-core";
 
 interface SarosPulseContextValue {
   readonly anchorSaros: number;

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { SAROS_REALTIME_PHASE_DEPTH, type SarosInterval } from "@exeligmos/temporal-core";
+import { SAROS_REALTIME_PHASE_DEPTH, type SarosInterval } from "@fractonica/temporal-core";
 
 import { RealtimeSarosWindow } from "./realtime-saros-window";
 

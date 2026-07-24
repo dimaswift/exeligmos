@@ -22,10 +22,10 @@ import {
 import { throwRouteError } from "~/lib/route-errors.server";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Explore public activity · Exeligmos" },
+  { title: "Explore public activity · Fractonica" },
   {
     name: "description",
-    content: "Current public records and events from the Exeligmos network.",
+    content: "Current public records and events from the Fractonica network.",
   },
 ];
 
@@ -78,7 +78,7 @@ export default function PublicFeed({ loaderData }: Route.ComponentProps) {
       actions={<a href="/login?returnTo=%2Ffeed%2Fglobal">Open analytics workspace</a>}
       eyebrow="Public network"
       summary="Inspect current public record and event projections across accounts. Each lane owns its cursor, so dense desktop exploration remains deterministic and shareable."
-      title="Explore Exeligmos"
+      title="Explore Fractonica"
     >
       <ResourceLaneGrid>
         <RecordLane

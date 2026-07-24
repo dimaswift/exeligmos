@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Exeligmos</string>
+	<string>Fractonica</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,6 +27,7 @@
 			<string>com.exeligmos.sarosjournal</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>fractonica</string>
 				<string>exeligmos</string>
 			</array>
 		</dict>
@@ -37,7 +38,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Exeligmos Media Import</string>
+			<string>Fractonica Media Import</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>

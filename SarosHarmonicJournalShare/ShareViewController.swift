@@ -224,7 +224,7 @@ final class ShareViewController: UIViewController {
 
     private func finish(openApp: Bool) {
         guard openApp,
-              let url = URL(string: "exeligmos://import/shared")
+              let url = URL(string: "fractonica://import/shared")
         else {
             extensionContext?.completeRequest(returningItems: nil)
             return

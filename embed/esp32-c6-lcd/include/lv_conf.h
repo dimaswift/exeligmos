@@ -10,7 +10,17 @@
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_STRING LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_BUILTIN
-#define LV_MEM_SIZE (64 * 1024U)
+/* 16KB: src/main.cpp now bypasses LVGL entirely (talks straight to
+ * ESP32C6LCD147's raw Display class -- see that file's doc comment for
+ * why), so lv_init() is never called and this pool is never actually
+ * used. It's kept small but nonzero rather than ripping LVGL out of the
+ * project, since ESP32C6LCD147.h still links against it (Ui/lv_display_t
+ * types) and the lv_octal_glyph widget is still there if a future build
+ * wants LVGL back. Note this static array is reserved at boot regardless
+ * of whether lv_init() runs (see LVGL's lv_mem_core_builtin.c), so keep
+ * this small -- our own front/back pixel buffers in main.cpp (~169KB for
+ * one 130x130 glyph) are the real budget to watch now. */
+#define LV_MEM_SIZE (16 * 1024U)
 
 #define LV_DEF_REFR_PERIOD 16
 #define LV_DPI_DEF 260

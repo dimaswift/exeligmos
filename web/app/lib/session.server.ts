@@ -1,6 +1,6 @@
 import { createCookie } from "react-router";
 
-import type { AuthSession, User } from "@exeligmos/api-client";
+import type { AuthSession, User } from "@fractonica/api-client";
 
 export interface StoredAuthSession {
   readonly accessToken: string;

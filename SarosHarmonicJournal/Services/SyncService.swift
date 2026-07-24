@@ -293,7 +293,7 @@ enum SyncAuthenticationState: Hashable {
     case signedIn(SyncAuthenticatedUser)
 }
 
-/// The offline-first iOS client for the Exeligmos relay.
+/// The offline-first iOS client for the Fractonica relay.
 ///
 /// Passwords are exchanged only by `login`/`register`. Access and rotating refresh
 /// tokens live in the Keychain. Local CRUD is recorded before network delivery.
@@ -322,18 +322,18 @@ final class SyncService {
         var errorDescription: String? {
             switch self {
             case .invalidServerURL:
-                "Enter an Exeligmos server URL such as https://journal.example.com."
+                "Enter a Fractonica server URL such as https://fractonica.com."
             case .authenticationRequired:
-                "Sign in to this Exeligmos server before syncing."
+                "Sign in to this Fractonica server before syncing."
             case .invalidAccountInput(let detail):
                 detail
             case .credentialStorage(let status):
                 "Secure credential storage failed with status \(status)."
             case .invalidResponse(let statusCode, let body):
                 if let statusCode {
-                    "Exeligmos returned HTTP \(statusCode): \(body)"
+                    "Fractonica returned HTTP \(statusCode): \(body)"
                 } else {
-                    "Exeligmos returned an invalid response: \(body)"
+                    "Fractonica returned an invalid response: \(body)"
                 }
             case .unsupportedPrivateRecord(let id):
                 "Private record \(id.uuidString) requires a configured journal encryption key."
@@ -344,7 +344,7 @@ final class SyncService {
             case .mediaDigestMismatch(let id):
                 "Downloaded media \(id.uuidString) failed SHA-256 verification."
             case .crossOriginCredentialURL(let url):
-                "Refusing to send Exeligmos credentials to a different origin: \(url.absoluteString)"
+                "Refusing to send Fractonica credentials to a different origin: \(url.absoluteString)"
             case .localStoreOwnerMismatch(
                 let boundServer,
                 let boundUserID,
@@ -680,10 +680,11 @@ final class SyncService {
 
         while true {
             var components = URLComponents(url: try endpoint(server, path: "/v1/sync/changes"), resolvingAgainstBaseURL: false)
-            // Keep each main-actor SwiftData commit small. Payload decoding is
-            // detached, and a 25-command page prevents a reconnect backlog
-            // from monopolizing UI time when it is projected locally.
-            var queryItems = [URLQueryItem(name: "limit", value: "25")]
+            // Payload decoding is detached and unchanged fields are not
+            // written. A larger replay page amortizes SwiftData saves and
+            // observable-query invalidations without increasing media memory,
+            // because downloads remain file-backed and sequential.
+            var queryItems = [URLQueryItem(name: "limit", value: "100")]
             if let cursor {
                 queryItems.append(URLQueryItem(name: "cursor", value: cursor))
             }
@@ -853,16 +854,18 @@ final class SyncService {
                         localMedia: downloaded.items,
                         tags: tagByID
                     )
-                    // Network/media awaits above re-enter the main actor. An
-                    // edit created during that time must win over this remote
-                    // snapshot even though it was absent from the sync's
-                    // original command array.
-                    pendingNow = currentPendingMutationIDs(
-                        modelContext: modelContext,
-                        userID: user.id,
-                        fallback: pending
-                    )
-                    pagePending = pendingNow
+                    // Existing immutable media returns without network I/O.
+                    // Only re-fetch the pending-command collection after a
+                    // real download has suspended this main-actor merge; doing
+                    // it for every record made a replay O(records * commands).
+                    if downloaded.downloadCount > 0 {
+                        pendingNow = currentPendingMutationIDs(
+                            modelContext: modelContext,
+                            userID: user.id,
+                            fallback: pending
+                        )
+                        pagePending = pendingNow
+                    }
                     if let existing, pendingNow.entryDeletes.contains(existing.id) {
                         continue
                     }
@@ -1245,12 +1248,14 @@ final class SyncService {
                     localMedia: downloaded.items,
                     tags: tagByID
                 )
-                pendingNow = currentPendingMutationIDs(
-                    modelContext: modelContext,
-                    userID: user.id,
-                    fallback: pending
-                )
-                pagePending = pendingNow
+                if downloaded.downloadCount > 0 {
+                    pendingNow = currentPendingMutationIDs(
+                        modelContext: modelContext,
+                        userID: user.id,
+                        fallback: pending
+                    )
+                    pagePending = pendingNow
+                }
                 if let existing, pendingNow.entryDeletes.contains(existing.id) {
                     continue
                 }
@@ -1849,8 +1854,14 @@ final class SyncService {
 
         for remote in media {
             if let local = existingByID[remote.id],
-               FileManager.default.fileExists(atPath: MediaStorage.url(for: local).path),
-               (try? await Self.sha256Hex(of: MediaStorage.url(for: local))) == remote.sha256 {
+               FileManager.default.fileExists(atPath: MediaStorage.url(for: local).path) {
+                // Completed server media is immutable and the bytes were
+                // digest-verified when first uploaded or restored. A record
+                // revision does not imply a media revision, so hashing every
+                // local attachment again turns a metadata replay into a full
+                // library scan and saturates the device. Missing files still
+                // take the authenticated download + SHA-256 verification path
+                // below.
                 items.append(local)
                 continue
             }
@@ -1941,26 +1952,28 @@ final class SyncService {
     }
 
     private func apply(_ snapshot: JournalEntrySnapshot, to entry: JournalEntry) {
-        entry.createdAt = snapshot.createdAt
-        entry.eventDate = snapshot.eventDate
-        entry.endDate = snapshot.endDate
-        entry.unixTimestamp = snapshot.unixTimestamp
-        entry.version = max(snapshot.version ?? entry.version, 1)
-        entry.text = snapshot.text
-        entry.emoji = snapshot.emoji
-        entry.mediaItems = snapshot.mediaItems
-        entry.tagIDs = snapshot.tagIDs ?? []
-        entry.context = snapshot.context
-        entry.latitude = snapshot.latitude
-        entry.longitude = snapshot.longitude
-        entry.sourceRecordID = snapshot.sourceRecordID
-        entry.sourceDeviceID = snapshot.sourceDeviceID
-        entry.sourceDeviceEmoji = snapshot.sourceDeviceEmoji
-        entry.sourceDeviceName = snapshot.sourceDeviceName
-        entry.weatherCode = snapshot.weatherCode
-        entry.weatherEmoji = snapshot.weatherEmoji
-        entry.temperatureC = snapshot.temperatureC
-        entry.updatedAt = snapshot.updatedAt
+        if entry.createdAt != snapshot.createdAt { entry.createdAt = snapshot.createdAt }
+        if entry.eventDate != snapshot.eventDate { entry.eventDate = snapshot.eventDate }
+        if entry.endDate != snapshot.endDate { entry.endDate = snapshot.endDate }
+        if entry.unixTimestamp != snapshot.unixTimestamp { entry.unixTimestamp = snapshot.unixTimestamp }
+        let version = max(snapshot.version ?? entry.version, 1)
+        if entry.version != version { entry.version = version }
+        if entry.text != snapshot.text { entry.text = snapshot.text }
+        if entry.emoji != snapshot.emoji { entry.emoji = snapshot.emoji }
+        if entry.mediaItems != snapshot.mediaItems { entry.mediaItems = snapshot.mediaItems }
+        let tagIDs = snapshot.tagIDs ?? []
+        if entry.tagIDs != tagIDs { entry.tagIDs = tagIDs }
+        if entry.context != snapshot.context { entry.context = snapshot.context }
+        if entry.latitude != snapshot.latitude { entry.latitude = snapshot.latitude }
+        if entry.longitude != snapshot.longitude { entry.longitude = snapshot.longitude }
+        if entry.sourceRecordID != snapshot.sourceRecordID { entry.sourceRecordID = snapshot.sourceRecordID }
+        if entry.sourceDeviceID != snapshot.sourceDeviceID { entry.sourceDeviceID = snapshot.sourceDeviceID }
+        if entry.sourceDeviceEmoji != snapshot.sourceDeviceEmoji { entry.sourceDeviceEmoji = snapshot.sourceDeviceEmoji }
+        if entry.sourceDeviceName != snapshot.sourceDeviceName { entry.sourceDeviceName = snapshot.sourceDeviceName }
+        if entry.weatherCode != snapshot.weatherCode { entry.weatherCode = snapshot.weatherCode }
+        if entry.weatherEmoji != snapshot.weatherEmoji { entry.weatherEmoji = snapshot.weatherEmoji }
+        if entry.temperatureC != snapshot.temperatureC { entry.temperatureC = snapshot.temperatureC }
+        if entry.updatedAt != snapshot.updatedAt { entry.updatedAt = snapshot.updatedAt }
     }
 
     private func markCommandsSuperseded(

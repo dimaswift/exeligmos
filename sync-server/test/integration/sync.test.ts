@@ -166,21 +166,51 @@ test(
       assert.ok(ownerStats.cursor.length > 1);
       assert.deepEqual({ ...ownerStats, cursor: "<cursor>" }, {
         cursor: "<cursor>",
-        records: { total: 1, public: 1, private: 0 },
+        records: {
+          total: 1,
+          public: 1,
+          private: 0,
+          pastTera: 1,
+          pastGiga: 0,
+          pastMega: 0,
+        },
         events: { total: 1 },
         tags: { total: 1 },
         templates: { total: 1 },
-        media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+        media: {
+          total: 0,
+          byteLength: 0,
+          photo: 0,
+          video: 0,
+          audio: 0,
+          restorable: 0,
+          restorableByteLength: 0,
+        },
       });
       const otherStats = await service.stats(otherPrincipal);
       assert.ok(otherStats.cursor.length > 1);
       assert.deepEqual({ ...otherStats, cursor: "<cursor>" }, {
         cursor: "<cursor>",
-        records: { total: 0, public: 0, private: 0 },
+        records: {
+          total: 0,
+          public: 0,
+          private: 0,
+          pastTera: 0,
+          pastGiga: 0,
+          pastMega: 0,
+        },
         events: { total: 0 },
         tags: { total: 0 },
         templates: { total: 0 },
-        media: { total: 0, byteLength: 0, restorable: 0, restorableByteLength: 0 },
+        media: {
+          total: 0,
+          byteLength: 0,
+          photo: 0,
+          video: 0,
+          audio: 0,
+          restorable: 0,
+          restorableByteLength: 0,
+        },
       });
 
       const authoritativeRecordUpsert = await service.applyBatch(

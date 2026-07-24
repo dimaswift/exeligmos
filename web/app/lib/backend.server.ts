@@ -1,4 +1,4 @@
-import { createApiClient, type ApiClientOptions, type ApiSchemas } from "@exeligmos/api-client";
+import { createApiClient, type ApiClientOptions, type ApiSchemas } from "@fractonica/api-client";
 
 export type BackendProblem = ApiSchemas["Problem"];
 

@@ -1,4 +1,4 @@
-# Exeligmos web
+# Fractonica web
 
 Server-rendered React Router workspace for desktop temporal analytics and public activity. This is a
 new frontend; it does not share UI state or view models with the legacy viewer.
@@ -124,8 +124,8 @@ solar artifact. Generation validates canonical lengths and indices and fully dec
 geometry record. `npm run solar:check` performs the same work without writing and fails when the
 checked-in artifact is missing or stale.
 
-`@exeligmos/temporal-core` strictly separates calculation depth from presentation depth and retains
-the native address/rarity boundary behavior. `@exeligmos/glyph-core` emits deeply frozen, fill-only
+`@fractonica/temporal-core` strictly separates calculation depth from presentation depth and retains
+the native address/rarity boundary behavior. `@fractonica/glyph-core` emits deeply frozen, fill-only
 geometry cached by `geometryVersion:depth`. Glyph creation requires exactly one explicit rarity or
 catalog-backed style because the catalog does not define a generic default paint. See the package
 READMEs for the public APIs and compatibility rules.

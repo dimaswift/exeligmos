@@ -1,4 +1,4 @@
-import type { ApiSchemas } from "@exeligmos/api-client";
+import type { ApiSchemas } from "@fractonica/api-client";
 
 export type ActivityActor = ApiSchemas["PublicUserSummary"];
 export type ActivityReference = ApiSchemas["ResourceReference"];

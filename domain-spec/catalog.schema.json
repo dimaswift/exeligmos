@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:exeligmos:domain-catalog:schema:1",
-  "title": "Exeligmos domain catalog",
+  "title": "Fractonica domain catalog",
   "description": "Language-neutral contract for harmonic time, rarity, glyph geometry, and numeric event types.",
   "type": "object",
   "required": [

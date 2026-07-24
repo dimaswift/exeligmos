@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthSession } from "@exeligmos/api-client";
+import type { AuthSession } from "@fractonica/api-client";
 
 import { assertSameOrigin, requireAuth } from "./auth.server.js";
 import { safeReturnTo } from "./navigation.js";

@@ -1,0 +1,25 @@
+{
+  "name": "fractonica-embed",
+  "version": "0.1.0",
+  "description": "Zero-dependency C library for embedded Fractonica displays: (1) og_build_glyph + og_glyph_rasterize render OctalGlyphs (radial core-ring + digit-arm glyphs) at a specified depth (3-8) and color directly into a caller-owned ARGB8888 pixel buffer, plus og_glyph_diff_rect for dirty-rect-only redraws; (2) saros_reading_at computes a Saros-eclipse-cycle phase-address (10-digit octal fraction between a solar Saros series' eclipses) from UTC time, using a compact flash-resident eclipse dataset. Pure ISO C99, no LVGL/Arduino/OS dependency -- works with any pixel buffer and any display driver you push it to yourself. An optional LVGL widget wrapper (lv_octal_glyph) is included separately in optional-lvgl-widget/ (not compiled by default -- see README) for projects that prefer LVGL's own display/flush pipeline over pushing pixels directly.",
+  "keywords": ["glyph", "graphics", "clock", "saros", "astronomy", "embedded", "lvgl"],
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "authors": [
+    {
+      "name": "Fractonica"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": "*",
+  "build": {
+    "srcDir": "src",
+    "flags": ["-I src"]
+  },
+  "export": {
+    "include": ["src", "optional-lvgl-widget", "library.json", "library.properties", "README.md"]
+  }
+}

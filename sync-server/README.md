@@ -1,6 +1,6 @@
-# Exeligmos Sync Server
+# Fractonica Sync Server
 
-Exeligmos v2 is a multi-user PostgreSQL service for first-party clients and
+Fractonica v2 is a multi-user PostgreSQL service for first-party clients and
 user-authorized automation agents. Its public contract is OpenAPI 3.1, records
 are public by default or may be stored as opaque client-encrypted ciphertext,
 and PostgreSQL includes pgvector for later similarity search.
@@ -42,6 +42,17 @@ The checked-in [`openapi/openapi.yaml`](openapi/openapi.yaml) is both the comple
 v2 contract and the implemented HTTP surface. It is safe to use for client
 generation after reviewing the private-content crypto profile.
 
+## Brand and frozen protocol identifiers
+
+The product name is **Fractonica**. A small set of `exeligmos` identifiers is
+deliberately retained because it is part of the existing v2 wire, storage, or
+cryptographic contract: problem-detail URNs, the encrypted-record media type,
+HKDF context strings, database functions and advisory-lock keys, JWT defaults,
+and legacy-import provider values. Renaming those values in place would break
+stored ciphertext, clients, migration checksums, or active credentials. New
+user-facing names and internal package metadata use Fractonica; compatibility
+identifiers are documented and may only change in a versioned protocol migration.
+
 ## Requirements
 
 - Node.js 24 or newer and npm 11 or newer
@@ -65,7 +76,26 @@ the Ed25519 JWT key exactly once and place its base64 value in
 openssl genpkey -algorithm ED25519 -outform DER | base64 | tr -d '\n'
 ```
 
-Start PostgreSQL and apply every migration:
+The normal boot command makes Docker/PostgreSQL ready, runs migrations, waits
+for `/health/ready`, and then keeps the compiled server running:
+
+```sh
+npm run build
+npm run boot
+```
+
+For local TypeScript watch mode, use:
+
+```sh
+npm run boot:dev
+```
+
+The boot script starts Docker Desktop automatically on macOS when it is not yet
+running. It never runs `docker compose down`, never recreates the database
+volume, and fails with an actionable error if Docker is wedged or PostgreSQL
+cannot become ready.
+
+To perform the database steps manually instead:
 
 ```sh
 docker compose up -d postgres
@@ -491,7 +521,7 @@ Build the production JavaScript and container image with:
 
 ```sh
 npm run build
-docker build -t exeligmos-sync-server:v2 .
+docker build -t fractonica-sync-server:v2 .
 ```
 
 The image runs as the unprivileged `node` user. Migrations are an explicit

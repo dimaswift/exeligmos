@@ -1,4 +1,4 @@
-import { GlyphRenderer } from "@exeligmos/ui";
+import { GlyphRenderer } from "@fractonica/ui";
 
 import { SarosPulseGlyphPair } from "~/components/saros-pulse-glyph-pair";
 import {

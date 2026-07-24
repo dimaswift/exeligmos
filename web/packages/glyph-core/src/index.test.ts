@@ -1,4 +1,4 @@
-import { canonicalCatalog, canonicalConformance } from "@exeligmos/domain-catalog";
+import { canonicalCatalog, canonicalConformance } from "@fractonica/domain-catalog";
 import { describe, expect, it } from "vitest";
 
 import {

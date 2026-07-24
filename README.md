@@ -1,6 +1,6 @@
-# Exeligmos
+# Fractonica
 
-Exeligmos is a local-first temporal journal and analytics platform. The native
+Fractonica is a local-first temporal journal and analytics platform. The native
 iOS app captures records, events, tags, templates, and media; the Fastify API
 synchronizes those resources between users and devices; and the server-rendered
 web app is the desktop surface for inspection, public profiles, references, and

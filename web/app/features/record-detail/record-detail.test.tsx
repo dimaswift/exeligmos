@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { SarosInterval } from "@exeligmos/temporal-core";
+import type { SarosInterval } from "@fractonica/temporal-core";
 
 import { SarosPulseProvider } from "~/features/temporal/saros-pulse-context";
 import { LocalTimestamp } from "../activity-feed/activity-feed";
