@@ -169,19 +169,19 @@ test("tag and template routes enforce scopes and shared request budgets", async 
   await app.ready();
   context.after(() => app.close());
 
-  const tagRead = await app.inject({ method: "GET", url: "/v1/tags" });
+  const tagRead = await app.inject({ method: "GET", url: "/tags" });
   assert.equal(tagRead.statusCode, 429);
   const tagWrite = await app.inject({
     method: "DELETE",
-    url: `/v1/tags/${tagId}`,
+    url: `/tags/${tagId}`,
     headers: { "if-match": '"tag-r1"', "idempotency-key": "delete-tag-1" },
   });
   assert.equal(tagWrite.statusCode, 429);
-  const templateRead = await app.inject({ method: "GET", url: "/v1/templates" });
+  const templateRead = await app.inject({ method: "GET", url: "/templates" });
   assert.equal(templateRead.statusCode, 429);
   const templateWrite = await app.inject({
     method: "DELETE",
-    url: `/v1/templates/${templateId}`,
+    url: `/templates/${templateId}`,
     headers: { "if-match": '"template-r1"', "idempotency-key": "delete-template-1" },
   });
   assert.equal(templateWrite.statusCode, 429);

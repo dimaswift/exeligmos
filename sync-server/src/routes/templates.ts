@@ -40,10 +40,6 @@ interface TemplateQuerystring {
   readonly updatedAfter?: string;
 }
 
-interface TemplateVersionQuerystring {
-  readonly version?: string | number;
-}
-
 export async function registerTemplateRoutes(
   app: FastifyInstance,
   options: TemplateRoutesOptions,
@@ -53,7 +49,7 @@ export async function registerTemplateRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get<{ Querystring: TemplateQuerystring }>(
-    "/v1/templates",
+    "/templates",
     { schema: { querystring: templateQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["templates:read"]);
@@ -63,7 +59,7 @@ export async function registerTemplateRoutes(
   );
 
   app.post<{ Body: CreateTemplateInput }>(
-    "/v1/templates",
+    "/templates",
     { schema: { headers: idempotencyHeadersSchema, body: createTemplateSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["templates:write"]);
@@ -78,23 +74,19 @@ export async function registerTemplateRoutes(
     },
   );
 
-  app.get<{ Params: TemplatePath; Querystring: TemplateVersionQuerystring }>(
-    "/v1/templates/:templateId",
-    { schema: { params: templatePathSchema, querystring: templateVersionQuerySchema } },
+  app.get<{ Params: TemplatePath }>(
+    "/templates/:templateId",
+    { schema: { params: templatePathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["templates:read"]);
       await requestLimiter.checkAuthenticatedRead(request, principal);
-      const resource = await service.get(
-        principal.userId,
-        request.params.templateId,
-        request.query.version,
-      );
+      const resource = await service.get(principal.userId, request.params.templateId);
       return reply.header("etag", templateEtag(resource.id, resource.revision)).send(resource);
     },
   );
 
   app.patch<{ Params: TemplatePath; Body: UpdateTemplateInput }>(
-    "/v1/templates/:templateId",
+    "/templates/:templateId",
     {
       schema: {
         params: templatePathSchema,
@@ -106,7 +98,7 @@ export async function registerTemplateRoutes(
       withPreconditionHeader(reply, async () => {
         const principal = await options.authenticator.authenticate(request, ["templates:write"]);
         await requestLimiter.checkAuthenticatedWrite(request, principal);
-        const response = await service.createVersion(
+        const response = await service.update(
           principal,
           request.params.templateId,
           request.body,
@@ -119,7 +111,7 @@ export async function registerTemplateRoutes(
   );
 
   app.delete<{ Params: TemplatePath }>(
-    "/v1/templates/:templateId",
+    "/templates/:templateId",
     { schema: { params: templatePathSchema, headers: conditionalMutationHeadersSchema } },
     async (request, reply) =>
       withPreconditionHeader(reply, async () => {
@@ -249,11 +241,6 @@ const templatePathSchema = {
   type: "object",
   required: ["templateId"],
   properties: { templateId: uuid },
-  additionalProperties: false,
-};
-const templateVersionQuerySchema = {
-  type: "object",
-  properties: { version: { type: "integer", minimum: 1, maximum: 2_147_483_647 } },
   additionalProperties: false,
 };
 const idempotencyHeaderProperty = {

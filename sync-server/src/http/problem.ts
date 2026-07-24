@@ -285,7 +285,7 @@ export function registerProblemHandlers(app: {
         code: "invalid_json",
         title: "Unprocessable Content",
         type: "urn:exeligmos:problem:invalid-json",
-        detail: "JSON strings and object keys must contain PostgreSQL-compatible Unicode text.",
+        detail: "JSON strings and object keys must not contain U+0000 or unpaired UTF-16 surrogates.",
       });
     }
 

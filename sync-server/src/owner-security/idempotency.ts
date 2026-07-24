@@ -216,7 +216,7 @@ export async function completeSecretOnceIdempotency(options: {
   await options.client.query(
     `UPDATE idempotency_keys
      SET response_headers = jsonb_build_object(
-           'location', '/v1/api-keys/' || $4::text
+           'location', '/api-keys/' || $4::text
          ),
          response_body = jsonb_build_object(
            'code', 'api_key_secret_already_returned',

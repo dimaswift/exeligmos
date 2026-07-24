@@ -31,13 +31,13 @@ test("the complete Phase 3 resource surface is registered", async (context) => {
   await app.ready();
 
   for (const [method, url] of [
-    ["GET", "/v1/tags"],
-    ["GET", "/v1/templates"],
-    ["POST", "/v1/media-upload-sessions"],
-    ["GET", "/v1/media/:mediaId/content"],
-    ["GET", "/v1/public/media/:mediaId/content"],
-    ["GET", "/v1/sync/changes"],
-    ["POST", "/v1/sync/batches"],
+    ["GET", "/tags"],
+    ["GET", "/templates"],
+    ["POST", "/media-upload-sessions"],
+    ["GET", "/media/:mediaId/content"],
+    ["GET", "/public/media/:mediaId/content"],
+    ["GET", "/sync/changes"],
+    ["POST", "/sync/batches"],
   ] as const) {
     assert.equal(app.hasRoute({ method, url }), true, `${method} ${url} must be registered`);
   }
@@ -138,7 +138,7 @@ test("database statement and lock deadlines return a retryable safe problem", as
   assert.equal(response.body.includes("internal query text"), false);
 });
 
-test("PostgreSQL-incompatible JSON text returns a safe domain problem", async (context) => {
+test("invalid JSON Unicode text returns a safe domain problem", async (context) => {
   const app = buildApp({ config: testConfig(), database: new FakeDatabase() });
   app.get("/test/invalid-database-text", async () => {
     throw Object.assign(new Error("invalid byte sequence details must stay private"), {
@@ -233,7 +233,7 @@ test("forwarded client addresses are trusted only for the configured hop count",
   try {
     const request = {
       method: "POST" as const,
-      url: "/v1/auth/login",
+      url: "/auth/login",
       headers: { "x-forwarded-for": "198.51.100.42" },
       payload: {
         login: "aurora",

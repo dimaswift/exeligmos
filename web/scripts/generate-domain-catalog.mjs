@@ -8,7 +8,7 @@ const destination = new globalThis.URL(
   import.meta.url,
 );
 const conformanceSource = new globalThis.URL(
-  "../../domain-spec/conformance/v1.json",
+  "../../domain-spec/conformance/vectors.json",
   import.meta.url,
 );
 const conformanceDestination = new globalThis.URL(
@@ -22,15 +22,8 @@ const [sourceText, conformanceSourceText] = await Promise.all([
 const catalog = JSON.parse(sourceText);
 const conformance = JSON.parse(conformanceSourceText);
 
-if (catalog.schemaVersion !== 1 || typeof catalog.catalogVersion !== "string") {
-  throw new Error("Unsupported or malformed canonical domain catalog.");
-}
-if (
-  conformance.schemaVersion !== 1 ||
-  conformance.catalogVersion !== catalog.catalogVersion ||
-  !Array.isArray(conformance.vectors)
-) {
-  throw new Error("Unsupported, malformed, or catalog-mismatched conformance vectors.");
+if (!catalog || typeof catalog !== "object" || !Array.isArray(conformance.vectors)) {
+  throw new Error("Malformed canonical domain source.");
 }
 
 const fingerprint = createHash("sha256").update(sourceText).digest("hex");
@@ -53,6 +46,6 @@ await Promise.all([
   writeFile(conformanceDestination, conformanceOutput, "utf8"),
 ]);
 globalThis.console.log(
-  `Generated domain catalog ${catalog.catalogVersion} (${fingerprint.slice(0, 12)}) ` +
+  `Generated domain catalog (${fingerprint.slice(0, 12)}) ` +
     `and ${conformance.vectors.length} vectors (${conformanceFingerprint.slice(0, 12)}).`,
 );

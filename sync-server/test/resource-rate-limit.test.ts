@@ -150,17 +150,17 @@ test("record routes invoke public, authenticated-read, and authenticated-write l
     requestLimiter: limiter,
   });
   try {
-    const publicResponse = await app.inject({ method: "GET", url: "/v1/public/records" });
+    const publicResponse = await app.inject({ method: "GET", url: "/public/records" });
     assert.equal(publicResponse.statusCode, 429);
     const ownerResponse = await app.inject({
       method: "GET",
-      url: "/v1/records",
+      url: "/records",
       headers: { authorization: "Bearer ignored" },
     });
     assert.equal(ownerResponse.statusCode, 429);
     const writeResponse = await app.inject({
       method: "DELETE",
-      url: "/v1/records/Q7_xA",
+      url: "/records/Q7_xA",
       headers: {
         authorization: "Bearer ignored",
         "if-match": '"record-r1"',
@@ -184,11 +184,11 @@ test("event routes share authenticated read and write limits", async () => {
     requestLimiter: limiter,
   });
   try {
-    assert.equal((await app.inject({ method: "GET", url: "/v1/events" })).statusCode, 429);
+    assert.equal((await app.inject({ method: "GET", url: "/events" })).statusCode, 429);
     assert.equal(
       (await app.inject({
         method: "DELETE",
-        url: "/v1/events/20a78723-c33e-4794-a036-5da69a15e8bf",
+        url: "/events/20a78723-c33e-4794-a036-5da69a15e8bf",
         headers: {
           "if-match": '"event-r1"',
           "idempotency-key": "event-delete-1",
@@ -212,11 +212,11 @@ test("owner and security routes share authenticated read and write limits", asyn
     requestLimiter: limiter,
   });
   try {
-    assert.equal((await app.inject({ method: "GET", url: "/v1/me" })).statusCode, 429);
+    assert.equal((await app.inject({ method: "GET", url: "/me" })).statusCode, 429);
     assert.equal(
       (await app.inject({
         method: "PATCH",
-        url: "/v1/me",
+        url: "/me",
         headers: { "if-match": '"user-r1"' },
         payload: { sarosAnchor: 141 },
       })).statusCode,
@@ -225,7 +225,7 @@ test("owner and security routes share authenticated read and write limits", asyn
     assert.equal(
       (await app.inject({
         method: "POST",
-        url: "/v1/devices",
+        url: "/devices",
         headers: { "idempotency-key": "device-create-1" },
         payload: { name: "Agent", kind: "agent" },
       })).statusCode,

@@ -295,7 +295,7 @@ export class SubscriptionService {
           return {
             status,
             headers: {
-              location: `/v1/subscriptions/${targetUserId}`,
+              location: `/subscriptions/${targetUserId}`,
               etag: subscriptionEtag(resource.id, resource.revision),
             },
             body: resource,
@@ -561,8 +561,8 @@ function mapActivity(row: ActivityRow): PublicActivityItem {
     operation: row.operation,
     revision: Number(row.revision),
     resourceUrl: row.resource_type === "user"
-      ? `/v1/public/users/${encodeURIComponent(row.actor_login)}`
-      : `/v1/public/${row.resource_type}s/${row.resource_id}`,
+      ? `/public/users/${encodeURIComponent(row.actor_login)}`
+      : `/public/${row.resource_type}s/${row.resource_id}`,
   };
 }
 
@@ -648,7 +648,6 @@ function activitySignature(
 
 function encodeActivityCursor(signature: string, sequence: bigint): string {
   return Buffer.from(JSON.stringify({
-    v: 1,
     kind: ACTIVITY_CURSOR_KIND,
     signature,
     sequence: sequence.toString(),
@@ -665,8 +664,7 @@ function decodeActivityCursor(value: string | undefined, expectedSignature: stri
     }
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     if (
-      Object.keys(parsed).length !== 4 ||
-      parsed.v !== 1 ||
+      Object.keys(parsed).length !== 3 ||
       parsed.kind !== ACTIVITY_CURSOR_KIND ||
       parsed.signature !== expectedSignature ||
       typeof parsed.sequence !== "string" ||

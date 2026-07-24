@@ -29,8 +29,6 @@ export const DEFAULT_MEDIA_UPLOAD_TTL_MS = 24 * 60 * 60 * 1_000;
 
 export interface MediaEncryptionInput {
   readonly algorithm: "A256GCM";
-  readonly cryptoVersion: 1;
-  readonly keyVersion: 1;
   readonly nonce: string;
   readonly plaintextContentType?: string;
 }
@@ -109,8 +107,6 @@ export interface MediaRow extends QueryResultRow {
   readonly sha256: Buffer;
   readonly storage_key: string;
   readonly cipher_algorithm: string | null;
-  readonly crypto_version: number | null;
-  readonly key_version: number | null;
   readonly nonce: Buffer | null;
   readonly plaintext_content_type: string | null;
   readonly revision: string | number;
@@ -133,8 +129,6 @@ interface MediaUploadRow extends QueryResultRow {
   readonly sha256: Buffer;
   readonly temporary_storage_key: string;
   readonly cipher_algorithm: string | null;
-  readonly crypto_version: number | null;
-  readonly key_version: number | null;
   readonly nonce: Buffer | null;
   readonly plaintext_content_type: string | null;
   readonly created_at: Date | string;
@@ -160,8 +154,6 @@ const MEDIA_COLUMNS = `
   m.sha256,
   m.storage_key,
   m.cipher_algorithm,
-  m.crypto_version,
-  m.key_version,
   m.nonce,
   m.plaintext_content_type,
   m.revision,
@@ -187,8 +179,6 @@ const UPLOAD_COLUMNS = `
   sha256,
   temporary_storage_key,
   cipher_algorithm,
-  crypto_version,
-  key_version,
   nonce,
   plaintext_content_type,
   created_at,
@@ -251,14 +241,14 @@ export class MediaService {
                id, user_id, device_id, requested_media_id, status,
                file_name, content_type, byte_size, sha256,
                temporary_storage_key,
-               cipher_algorithm, crypto_version, key_version, nonce,
+               cipher_algorithm, nonce,
                plaintext_content_type, expires_at
              ) VALUES (
                $1, $2, $3, $4, 'reserved',
                $5, $6, $7, decode($8, 'hex'),
                $9,
-               $10, $11, $12, $13, $14,
-               clock_timestamp() + ($15::bigint * interval '1 millisecond')
+               $10, $11, $12,
+               clock_timestamp() + ($13::bigint * interval '1 millisecond')
              )
              RETURNING ${UPLOAD_COLUMNS}`,
             [
@@ -272,8 +262,6 @@ export class MediaService {
               declaration.sha256,
               storageKey,
               declaration.encryption?.algorithm ?? null,
-              declaration.encryption?.cryptoVersion ?? null,
-              declaration.encryption?.keyVersion ?? null,
               declaration.encryption === undefined
                 ? null
                 : Buffer.from(declaration.encryption.nonce, "base64"),
@@ -291,7 +279,7 @@ export class MediaService {
           );
           return {
             status: 201,
-            headers: { location: `/v1/media-upload-sessions/${uploadId}` },
+            headers: { location: `/media-upload-sessions/${uploadId}` },
             body: mapMediaUploadRow(row),
           };
         },
@@ -505,12 +493,12 @@ export class MediaService {
             `INSERT INTO media_objects (
                id, user_id, device_id, visibility, status,
                file_name, content_type, byte_size, sha256, storage_key,
-               cipher_algorithm, crypto_version, key_version, nonce,
+               cipher_algorithm, nonce,
                plaintext_content_type, metadata
              ) VALUES (
                $1, $2, $3, $4, 'ready',
                $5, $6, $7, $8, $9,
-               $10, $11, $12, $13, $14, '{}'::jsonb
+               $10, $11, $12, '{}'::jsonb
              )`,
             [
               mediaId,
@@ -523,8 +511,6 @@ export class MediaService {
               upload.sha256,
               upload.temporary_storage_key,
               upload.cipher_algorithm,
-              upload.crypto_version,
-              upload.key_version,
               upload.nonce,
               upload.plaintext_content_type,
             ],
@@ -728,9 +714,9 @@ export function mapMediaRow(row: MediaRow): MediaObjectResource {
     ...(encryption === undefined ? {} : { encryption }),
     revision: numeric(row.revision),
     createdAt: isoDate(row.created_at),
-    contentUrl: `/v1/media/${row.id}/content`,
+    contentUrl: `/media/${row.id}/content`,
     ...(row.visibility === "public"
-      ? { publicContentUrl: `/v1/public/media/${row.id}/content` }
+      ? { publicContentUrl: `/public/media/${row.id}/content` }
       : {}),
   };
 }
@@ -788,7 +774,7 @@ function mapMediaUploadRow(row: MediaUploadRow): MediaUploadResource {
     receivedBytes: numeric(row.received_bytes),
     sha256: row.sha256.toString("hex"),
     ...(encryption === undefined ? {} : { encryption }),
-    uploadUrl: `/v1/media-upload-sessions/${row.id}/content`,
+    uploadUrl: `/media-upload-sessions/${row.id}/content`,
     expiresAt: isoDate(row.expires_at),
     createdAt: isoDate(row.created_at),
     mediaId: row.media_id ?? row.requested_media_id,
@@ -798,8 +784,6 @@ function mapMediaUploadRow(row: MediaUploadRow): MediaUploadResource {
 function encryptionFromRow(row: {
   readonly visibility?: "public" | "private";
   readonly cipher_algorithm: string | null;
-  readonly crypto_version: number | null;
-  readonly key_version: number | null;
   readonly nonce: Buffer | null;
   readonly plaintext_content_type: string | null;
 }): MediaEncryptionInput | undefined {
@@ -807,8 +791,6 @@ function encryptionFromRow(row: {
   if (!encrypted) {
     if (
       row.visibility === "private" ||
-      row.crypto_version !== null ||
-      row.key_version !== null ||
       row.nonce !== null ||
       row.plaintext_content_type !== null
     ) {
@@ -818,8 +800,6 @@ function encryptionFromRow(row: {
   }
   if (
     row.cipher_algorithm !== "A256GCM" ||
-    row.crypto_version !== 1 ||
-    row.key_version !== 1 ||
     row.nonce === null ||
     row.nonce.byteLength !== 12 ||
     row.visibility === "public"
@@ -828,8 +808,6 @@ function encryptionFromRow(row: {
   }
   return {
     algorithm: "A256GCM",
-    cryptoVersion: 1,
-    keyVersion: 1,
     nonce: row.nonce.toString("base64"),
     ...(row.plaintext_content_type === null
       ? {}
@@ -910,13 +888,11 @@ function validateUploadDeclaration(
     const candidate = input.encryption;
     if (
       candidate.algorithm !== "A256GCM" ||
-      candidate.cryptoVersion !== 1 ||
-      candidate.keyVersion !== 1 ||
       !/^[A-Za-z0-9+/]{16}$/.test(candidate.nonce) ||
       Buffer.from(candidate.nonce, "base64").byteLength !== 12
     ) {
       throw unprocessable(
-        "encryption must use the supported A256GCM v1 envelope and a 12-byte nonce.",
+        "encryption must use A256GCM with a 12-byte nonce.",
         "invalid_encryption",
       );
     }
@@ -935,8 +911,6 @@ function validateUploadDeclaration(
     }
     encryption = {
       algorithm: "A256GCM",
-      cryptoVersion: 1,
-      keyVersion: 1,
       nonce: candidate.nonce,
       ...(plaintextContentType === undefined ? {} : { plaintextContentType }),
     };
@@ -978,12 +952,12 @@ async function assertEncryptionProfile(queryable: Queryable, userId: string): Pr
   const result = await queryable.query(
     `SELECT 1
      FROM user_encryption_profiles
-     WHERE user_id = $1 AND crypto_version = 1 AND key_version = 1`,
+     WHERE user_id = $1`,
     [userId],
   );
   if (result.rowCount === 0) {
     throw unprocessable(
-      "Initialize encryption profile v1 before storing private media.",
+      "Initialize the encryption profile before storing private media.",
       "encryption_profile_required",
     );
   }

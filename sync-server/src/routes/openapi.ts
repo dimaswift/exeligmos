@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 const openApiUrl = new URL("../../openapi/openapi.yaml", import.meta.url);
-const cryptoProfileUrl = new URL("../../docs/crypto-v1.md", import.meta.url);
+const cryptoProfileUrl = new URL("../../docs/crypto.md", import.meta.url);
 const swaggerUiCssUrl = new URL(
   "../../node_modules/swagger-ui-dist/swagger-ui.css",
   import.meta.url,
@@ -76,7 +76,7 @@ export function registerOpenApiRoutes(app: FastifyInstance): void {
     sendSwaggerAsset(reply, swaggerAssets, swaggerUiFaviconUrl, "image/png"),
   );
 
-  app.get("/docs/crypto-v1.md", async (_request, reply) => {
+  app.get("/docs/crypto.md", async (_request, reply) => {
     cryptoProfile ??= readFile(cryptoProfileUrl, "utf8");
     return reply
       .header("cache-control", "public, max-age=300")

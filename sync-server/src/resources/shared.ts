@@ -23,7 +23,6 @@ interface StoredIdempotencyRow extends QueryResultRow {
 }
 
 interface CursorEnvelope {
-  readonly v: 1;
   readonly kind: string;
   readonly signature: string;
   readonly sort: string;
@@ -127,7 +126,7 @@ export function encodeCursor(
   sort: string,
   id: string,
 ): string {
-  const envelope: CursorEnvelope = { v: 1, kind, signature, sort, id };
+  const envelope: CursorEnvelope = { kind, signature, sort, id };
   return Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url");
 }
 
@@ -472,7 +471,6 @@ function isCursorEnvelope(value: unknown): value is CursorEnvelope {
   }
   const candidate = value as Partial<CursorEnvelope>;
   return (
-    candidate.v === 1 &&
     typeof candidate.kind === "string" &&
     typeof candidate.signature === "string" &&
     typeof candidate.sort === "string" &&

@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { HttpProblem } from "../../src/http/problem.js";
 import {
   createTagInTransaction,
@@ -17,24 +16,21 @@ import {
 } from "../../src/resources/tags.js";
 import {
   createTemplateInTransaction,
-  createTemplateVersionInTransaction,
   retireTemplateInTransaction,
   TemplateService,
   templateEtag,
+  updateTemplateInTransaction,
 } from "../../src/resources/templates.js";
 import { testConfig } from "../helpers.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
 
 test(
-  "tag and versioned-template services preserve tenant, revision, and tombstone semantics",
+  "tag and template services preserve tenant, revision, and tombstone semantics",
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const baseConfig = testConfig();
     const database = createPostgresDatabase({ ...baseConfig.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -144,42 +140,37 @@ test(
           metadata: { nested: { keep: true, remove: true } },
         }, "catalog-integration"),
       );
-      const version2 = await database.transaction((queryable) =>
-        createTemplateVersionInTransaction(
+      const updated = await database.transaction((queryable) =>
+        updateTemplateInTransaction(
           queryable,
           principal,
           template.id,
           {
-            body: { text: "Solar flare {{class}}", context: { version: 2 } },
+            body: { text: "Solar flare {{class}}", context: { state: 2 } },
             metadata: { nested: { remove: null, added: true } },
           },
           templateEtag(template.id, template.revision),
           "catalog-integration",
         ));
-      assert.equal(version2.version, 2);
-      assert.equal(version2.revision, 2);
-      assert.deepEqual(version2.metadata, { nested: { keep: true, added: true } });
+      assert.equal(updated.revision, 2);
+      assert.deepEqual(updated.metadata, { nested: { keep: true, added: true } });
 
       const templateService = new TemplateService(database);
-      const historical = await templateService.get(userId, template.id, 1);
-      assert.equal(historical.version, 1);
-      assert.deepEqual(historical.body, { text: "Flare {{class}}", context: { keep: 1 } });
-      assert.equal(historical.revision, 2);
+      const current = await templateService.get(userId, template.id);
+      assert.deepEqual(current.body, { text: "Solar flare {{class}}", context: { state: 2 } });
+      assert.equal(current.revision, 2);
       await database.transaction((queryable) =>
         retireTemplateInTransaction(
           queryable,
           principal,
           template.id,
-          templateEtag(template.id, version2.revision),
+          templateEtag(template.id, updated.revision),
           "catalog-integration",
         ));
       await assert.rejects(
         templateService.get(userId, template.id),
         isProblem("template_not_found"),
       );
-      const retiredHistorical = await templateService.get(userId, template.id, 1);
-      assert.ok(retiredHistorical.retiredAt);
-      assert.equal(retiredHistorical.revision, 3);
 
       const changes = await sql.query<{ entity_type: string; operation: string; revision: string }>(
         `SELECT entity_type, operation, revision::text

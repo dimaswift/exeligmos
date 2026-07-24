@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import { Client } from "pg";
@@ -9,7 +8,7 @@ import { buildApp } from "../../src/app.js";
 import { NOOP_AUTH_ATTEMPT_LIMITER } from "../../src/auth/rate-limit.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { testConfig } from "../helpers.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -19,10 +18,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
 
     const baseConfig = testConfig();
     const config = {
@@ -47,7 +43,7 @@ test(
     try {
       const registered = await app.inject({
         method: "POST",
-        url: "/v1/auth/register",
+        url: "/auth/register",
         payload: { login, password, displayName: "HTTP Integration" },
       });
       assert.equal(registered.statusCode, 201, registered.body);
@@ -61,7 +57,7 @@ test(
 
       const me = await app.inject({
         method: "GET",
-        url: "/v1/me",
+        url: "/me",
         headers: bearer(firstSession.accessToken),
       });
       assert.equal(me.statusCode, 200, me.body);
@@ -72,7 +68,7 @@ test(
 
       const updatedMe = await app.inject({
         method: "PATCH",
-        url: "/v1/me",
+        url: "/me",
         headers: {
           ...bearer(firstSession.accessToken),
           "if-match": me.headers.etag ?? "",
@@ -85,7 +81,7 @@ test(
 
       const missingProfile = await app.inject({
         method: "GET",
-        url: "/v1/me/encryption-profile",
+        url: "/me/encryption-profile",
         headers: bearer(firstSession.accessToken),
       });
       assert.equal(missingProfile.statusCode, 404);
@@ -94,12 +90,12 @@ test(
       const profileIdempotencyKey = `profile-${randomUUID()}`;
       const profileRequest = {
         method: "POST" as const,
-        url: "/v1/me/encryption-profile",
+        url: "/me/encryption-profile",
         headers: {
           ...bearer(firstSession.accessToken),
           "idempotency-key": profileIdempotencyKey,
         },
-        payload: { cryptoVersion: 1, keyVersion: 1, keyCheck },
+        payload: { keyCheck },
       };
       const profile = await app.inject(profileRequest);
       const profileReplay = await app.inject(profileRequest);
@@ -110,7 +106,7 @@ test(
 
       const device = await app.inject({
         method: "POST",
-        url: "/v1/devices",
+        url: "/devices",
         headers: {
           ...bearer(firstSession.accessToken),
           "idempotency-key": `device-${randomUUID()}`,
@@ -129,14 +125,14 @@ test(
 
       const boundSession = await app.inject({
         method: "PUT",
-        url: `/v1/devices/${deviceBody.id}/current-session`,
+        url: `/devices/${deviceBody.id}/current-session`,
         headers: bearer(firstSession.accessToken),
       });
       assert.equal(boundSession.statusCode, 204, boundSession.body);
 
       const issued = await app.inject({
         method: "POST",
-        url: "/v1/api-keys",
+        url: "/api-keys",
         headers: {
           ...bearer(firstSession.accessToken),
           "idempotency-key": `api-key-${randomUUID()}`,
@@ -160,7 +156,7 @@ test(
 
       const devicesViaKey = await app.inject({
         method: "GET",
-        url: "/v1/devices",
+        url: "/devices",
         headers: bearer(issuedBody.secret),
       });
       assert.equal(devicesViaKey.statusCode, 200, devicesViaKey.body);
@@ -171,7 +167,7 @@ test(
 
       const meViaKey = await app.inject({
         method: "GET",
-        url: "/v1/me",
+        url: "/me",
         headers: bearer(issuedBody.secret),
       });
       assert.equal(meViaKey.statusCode, 200, meViaKey.body);
@@ -179,7 +175,7 @@ test(
 
       const keyManagementViaKey = await app.inject({
         method: "GET",
-        url: "/v1/api-keys",
+        url: "/api-keys",
         headers: bearer(issuedBody.secret),
       });
       assert.equal(keyManagementViaKey.statusCode, 403);
@@ -206,14 +202,14 @@ test(
 
       const logoutLogin = await app.inject({
         method: "POST",
-        url: "/v1/auth/login",
+        url: "/auth/login",
         payload: { login: login.toUpperCase(), password },
       });
       assert.equal(logoutLogin.statusCode, 200, logoutLogin.body);
       const logoutSession = logoutLogin.json<SessionBody>();
       const logoutRequest = {
         method: "POST" as const,
-        url: "/v1/auth/logout",
+        url: "/auth/logout",
         headers: bearer(logoutSession.accessToken),
         payload: { refreshToken: logoutSession.refreshToken },
       };
@@ -224,14 +220,14 @@ test(
 
       const loggedOutSession = await app.inject({
         method: "GET",
-        url: "/v1/me",
+        url: "/me",
         headers: bearer(logoutSession.accessToken),
       });
       assert.equal(loggedOutSession.statusCode, 401);
 
       const rotated = await app.inject({
         method: "POST",
-        url: "/v1/auth/refresh",
+        url: "/auth/refresh",
         payload: { refreshToken: firstSession.refreshToken },
       });
       assert.equal(rotated.statusCode, 200, rotated.body);
@@ -240,7 +236,7 @@ test(
 
       const reuse = await app.inject({
         method: "POST",
-        url: "/v1/auth/refresh",
+        url: "/auth/refresh",
         payload: { refreshToken: firstSession.refreshToken },
       });
       assert.equal(reuse.statusCode, 401);
@@ -249,7 +245,7 @@ test(
 
       const revokedDescendant = await app.inject({
         method: "GET",
-        url: "/v1/me",
+        url: "/me",
         headers: bearer(rotatedSession.accessToken),
       });
       assert.equal(revokedDescendant.statusCode, 401);

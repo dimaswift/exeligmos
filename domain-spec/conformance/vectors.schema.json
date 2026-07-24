@@ -3,17 +3,10 @@
   "$id": "urn:exeligmos:domain-conformance-vectors:schema:1",
   "title": "Fractonica domain conformance vectors",
   "type": "object",
-  "required": ["$schema", "schemaVersion", "catalogVersion", "floatTolerance", "vectors"],
+  "required": ["$schema", "floatTolerance", "vectors"],
   "properties": {
     "$schema": {
       "const": "./vectors.schema.json"
-    },
-    "schemaVersion": {
-      "const": 1
-    },
-    "catalogVersion": {
-      "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
     },
     "floatTolerance": {
       "type": "number",

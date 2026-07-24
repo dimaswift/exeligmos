@@ -14,7 +14,6 @@ const screenshotInstant = Date.parse("2026-07-16T20:54:55Z") / 1_000;
 describe("canonical solar temporal adapter", () => {
   it("pins the generated canonical dataset provenance", () => {
     expect(solarTemporalDataMetadata).toEqual({
-      schemaVersion: 1,
       sourceSha256: "cf8ca294b6537f7b98e68b791d71448b065d8c445d4b48e49775365da9663b43",
       seriesCount: 180,
       eclipseCount: 13_206,

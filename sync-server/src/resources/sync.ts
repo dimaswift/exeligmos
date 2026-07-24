@@ -267,7 +267,7 @@ interface UserRow extends QueryResultRow {
   readonly updated_at: Date | string;
 }
 
-interface VersionedResource {
+interface SyncResource {
   readonly id: string;
   readonly revision: number;
 }
@@ -1130,7 +1130,7 @@ function tableForMutationResource(
 function succeededResult(
   clientMutationId: string,
   resourceType: SyncMutationResourceType,
-  resource: VersionedResource,
+  resource: SyncResource,
   etag = syncResourceEtag(resourceType, resource.id, resource.revision),
 ): SyncMutationResult {
   return {
@@ -1464,7 +1464,6 @@ function syncCursorSignature(
 export function encodeSyncCursor(signature: string, sequence: bigint): string {
   return Buffer.from(
     JSON.stringify({
-      v: 1,
       kind: SYNC_CURSOR_KIND,
       signature,
       sequence: sequence.toString(),
@@ -1496,8 +1495,7 @@ export function decodeSyncCursor(
     }
     const candidate = decoded as Record<string, unknown>;
     if (
-      Object.keys(candidate).length !== 4 ||
-      candidate.v !== 1 ||
+      Object.keys(candidate).length !== 3 ||
       candidate.kind !== SYNC_CURSOR_KIND ||
       candidate.signature !== expectedSignature ||
       typeof candidate.sequence !== "string" ||
@@ -1556,7 +1554,7 @@ function knownProblem(
       title: "Unprocessable Content",
       type: "https://api.exeligmos.app/problems/invalid-json",
       detail:
-        "JSON strings and object keys must contain PostgreSQL-compatible Unicode text.",
+        "JSON strings and object keys must not contain U+0000 or unpaired UTF-16 surrogates.",
     });
   } else if (errorCode !== undefined) {
     try {
@@ -1576,7 +1574,7 @@ function knownProblem(
     status: candidate.status,
     code,
     detail: candidate.message.slice(0, 4_000),
-    instance: "/v1/sync/batches",
+    instance: "/sync/batches",
     requestId,
   };
 }

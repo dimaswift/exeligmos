@@ -85,7 +85,7 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
   });
 
   try {
-    const statsResponse = await app.inject({ method: "GET", url: "/v1/sync/stats" });
+    const statsResponse = await app.inject({ method: "GET", url: "/sync/stats" });
     assert.equal(statsResponse.statusCode, 200, statsResponse.body);
     const stats = statsResponse.json<{ cursor: string } & Record<string, unknown>>();
     assert.ok(stats.cursor.length > 1);
@@ -106,7 +106,7 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
       },
     });
 
-    const first = await app.inject({ method: "GET", url: "/v1/sync/changes" });
+    const first = await app.inject({ method: "GET", url: "/sync/changes" });
     assert.equal(first.statusCode, 200, first.body);
     const page = first.json<{ data: unknown[]; nextCursor: string; hasMore: boolean }>();
     assert.deepEqual(page.data, []);
@@ -117,7 +117,7 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
 
     const rebound = await app.inject({
       method: "GET",
-      url: `/v1/sync/changes?resourceType=event&cursor=${encodeURIComponent(page.nextCursor)}`,
+      url: `/sync/changes?resourceType=event&cursor=${encodeURIComponent(page.nextCursor)}`,
     });
     assert.equal(rebound.statusCode, 400, rebound.body);
     assert.equal(rebound.json().code, "invalid_cursor");
@@ -125,7 +125,7 @@ test("sync change route authenticates with sync:read, rate limits, and binds its
     currentPrincipal = { ...principal, userId: "44444444-4444-4444-8444-444444444444" };
     const otherUser = await app.inject({
       method: "GET",
-      url: `/v1/sync/changes?cursor=${encodeURIComponent(page.nextCursor)}`,
+      url: `/sync/changes?cursor=${encodeURIComponent(page.nextCursor)}`,
     });
     assert.equal(otherUser.statusCode, 400, otherUser.body);
     assert.equal(otherUser.json().code, "invalid_cursor");
@@ -153,7 +153,7 @@ test("sync batch route validates nested mutations and requests sync:write", asyn
   try {
     const malformed = await app.inject({
       method: "POST",
-      url: "/v1/sync/batches",
+      url: "/sync/batches",
       headers: { "idempotency-key": "sync-route-malformed" },
       payload: {
         deviceId: principal.deviceId,
@@ -174,7 +174,7 @@ test("sync batch route validates nested mutations and requests sync:write", asyn
 
     const authenticated = await app.inject({
       method: "POST",
-      url: "/v1/sync/batches",
+      url: "/sync/batches",
       headers: { "idempotency-key": "sync-route-auth" },
       payload: {
         deviceId: principal.deviceId,

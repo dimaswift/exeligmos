@@ -115,7 +115,7 @@ describe("catalog-driven octal geometry", () => {
     });
   }
 
-  it("retains the exact depth-seven legacy hole as the second even-odd contour", () => {
+  it("retains the exact depth-seven hole as the second even-odd contour", () => {
     const core = createOctalGlyph({ value: "1234567", depth: 7, rarityId: "common" }).paths[0];
     if (core === undefined) {
       throw new Error("The glyph core path is required.");
@@ -123,7 +123,7 @@ describe("catalog-driven octal geometry", () => {
     expect(core.fillRule).toBe("evenodd");
     expect(core.contours).toHaveLength(2);
     expect(core.contours[1]?.points.map((point) => [point.x, point.y])).toEqual(
-      canonicalCatalog.glyph.coreHole.legacyExactPoints,
+      canonicalCatalog.glyph.coreHole.exactPoints,
     );
     expect(pathData(core).match(/\bM\b/g)).toHaveLength(2);
   });

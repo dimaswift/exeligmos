@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import path from "node:path";
 import test from "node:test";
 
 import type { FastifyRequest } from "fastify";
@@ -7,7 +6,7 @@ import { Client, type QueryResultRow } from "pg";
 
 import { PostgresAuthAttemptLimiter } from "../../src/auth/rate-limit.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { HttpProblem } from "../../src/http/problem.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -22,10 +21,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const coordination = new Client({ connectionString: databaseUrl });
     await coordination.connect();
     await coordination.query(

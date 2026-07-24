@@ -44,9 +44,9 @@ final class SyncCoordinator: ObservableObject {
     private var resyncRequested = false
     private var syncGeneration = 0
     private var transientSyncFailureCount = 0
-    private let initialRestoreKey = "exeligmos.sync.initial-restore-completed.v1"
-    private let lastUserKey = "exeligmos.sync.last-user-id.v1"
-    private let authenticationEnabledKey = "exeligmos.sync.authentication-enabled.v1"
+    private let initialRestoreKey = "fractonica.sync.initial-restore-completed"
+    private let lastUserKey = "fractonica.sync.last-user-id"
+    private let authenticationEnabledKey = "fractonica.sync.authentication-enabled"
 
     init(service: SyncService, defaults: UserDefaults = .standard) {
         self.service = service

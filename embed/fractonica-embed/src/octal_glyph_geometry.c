@@ -163,9 +163,9 @@ static uint8_t og_arm_to_world_points(const og_arm_template_t *tmpl, uint8_t soc
 }
 
 static uint8_t og_make_core_hole(const og_point_t *core_polygon, uint8_t core_len, uint8_t depth, og_point_t *out) {
-    if (depth == OG_CORE_HOLE_LEGACY_EXACT_DEPTH) {
-        memcpy(out, og_core_hole_legacy_points, sizeof(og_core_hole_legacy_points));
-        return OG_CORE_HOLE_LEGACY_POINT_COUNT;
+    if (depth == OG_CORE_HOLE_EXACT_DEPTH) {
+        memcpy(out, og_core_hole_exact_points, sizeof(og_core_hole_exact_points));
+        return OG_CORE_HOLE_EXACT_POINT_COUNT;
     }
     og_inset_convex_polygon(core_polygon, core_len, OG_INSET_THICKNESS, out);
     return core_len;

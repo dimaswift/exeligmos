@@ -27,7 +27,7 @@ import type {
   CreateApiKeyInput,
   CreatedApiKeyView,
   Page,
-  Versioned,
+  ResourceState,
 } from "./models.js";
 
 interface ApiKeyRow extends QueryResultRow {
@@ -113,13 +113,13 @@ export class ApiKeyService {
     };
   }
 
-  async get(userId: string, apiKeyId: string): Promise<Versioned<ApiKeyView>> {
+  async get(userId: string, apiKeyId: string): Promise<ResourceState<ApiKeyView>> {
     assertUuid(apiKeyId, "apiKeyId");
     const row = await findApiKey(this.database, userId, apiKeyId, false);
     if (row === undefined) {
       throw notFound();
     }
-    return versionedApiKey(row);
+    return apiKeyState(row);
   }
 
   async create(options: {
@@ -196,7 +196,7 @@ export class ApiKeyService {
           key: apiKeyView(row),
           secret,
           etag: apiKeyEtag(row),
-          location: `/v1/api-keys/${row.id}`,
+          location: `/api-keys/${row.id}`,
         };
       });
     } catch (error) {
@@ -269,7 +269,7 @@ async function findApiKey(
   return result.rows[0];
 }
 
-function versionedApiKey(row: ApiKeyRow): Versioned<ApiKeyView> {
+function apiKeyState(row: ApiKeyRow): ResourceState<ApiKeyView> {
   return { view: apiKeyView(row), etag: apiKeyEtag(row) };
 }
 

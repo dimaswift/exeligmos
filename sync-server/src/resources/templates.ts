@@ -60,7 +60,6 @@ export interface TemplateResource {
   readonly body: JsonObject;
   readonly variableSchema: JsonObject;
   readonly metadata: JsonObject;
-  readonly version: number;
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -88,7 +87,6 @@ interface TemplateRow extends QueryResultRow {
   readonly body: JsonObject;
   readonly variable_schema: JsonObject;
   readonly metadata: JsonObject;
-  readonly version: number;
   readonly revision: string | number;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
@@ -97,7 +95,6 @@ interface TemplateRow extends QueryResultRow {
 }
 
 interface TemplateCursor {
-  readonly v: 1;
   readonly kind: "templates";
   readonly signature: string;
   readonly name: string;
@@ -135,7 +132,7 @@ export class TemplateService {
     }
     values.push(limit + 1);
     const result = await this.database.query<TemplateRow>(
-      `${templateSelect("t.version")}
+      `${templateSelect()}
        WHERE ${where.join(" AND ")}
        ORDER BY t.name ASC, t.id ASC
        LIMIT $${values.length}`,
@@ -153,12 +150,9 @@ export class TemplateService {
     };
   }
 
-  async get(userId: string, templateId: string, version?: unknown): Promise<TemplateResource> {
+  async get(userId: string, templateId: string): Promise<TemplateResource> {
     assertUuid(templateId, "templateId");
-    const parsedVersion = optionalVersion(version);
-    const row = parsedVersion === undefined
-      ? await loadActiveTemplateRow(this.database, userId, templateId)
-      : await loadTemplateVersionRow(this.database, userId, templateId, parsedVersion);
+    const row = await loadActiveTemplateRow(this.database, userId, templateId);
     if (row === undefined) {
       throw templateNotFound();
     }
@@ -188,7 +182,7 @@ export class TemplateService {
           return {
             status: 201,
             headers: {
-              location: `/v1/templates/${resource.id}`,
+              location: `/templates/${resource.id}`,
               etag: templateEtag(resource.id, resource.revision),
             },
             body: resource,
@@ -198,7 +192,7 @@ export class TemplateService {
     );
   }
 
-  async createVersion(
+  async update(
     principal: Principal,
     templateId: string,
     input: UpdateTemplateInput,
@@ -210,11 +204,11 @@ export class TemplateService {
       executeIdempotentMutation(
         this.database,
         principal,
-        "createTemplateVersion",
+        "updateTemplate",
         idempotencyKey,
         { templateId, ifMatch, input },
         async (queryable) => {
-          const resource = await createTemplateVersionInTransaction(
+          const resource = await updateTemplateInTransaction(
             queryable,
             principal,
             templateId,
@@ -299,17 +293,6 @@ export async function createTemplateInTransaction(
       JSON.stringify(definition.metadata),
     ],
   );
-  await queryable.query(
-    `INSERT INTO template_versions (
-       user_id, template_id, version, body, variable_schema
-     ) VALUES ($1, $2, 1, $3::jsonb, $4::jsonb)`,
-    [
-      principal.userId,
-      id,
-      JSON.stringify(definition.body),
-      JSON.stringify(definition.variableSchema),
-    ],
-  );
   await writeTemplateAudit(queryable, principal, "template.create", id, requestId);
   const row = await loadActiveTemplateRow(queryable, principal.userId, id);
   if (row === undefined) {
@@ -318,8 +301,8 @@ export async function createTemplateInTransaction(
   return mapTemplateRow(row);
 }
 
-/** RFC 7396 patch semantics; every accepted patch creates a new immutable version. */
-export async function createTemplateVersionInTransaction(
+/** RFC 7396 patch semantics for the canonical template resource. */
+export async function updateTemplateInTransaction(
   queryable: Queryable,
   principal: Principal,
   templateId: string,
@@ -421,7 +404,7 @@ export async function loadActiveTemplateResources(
     return new Map();
   }
   const result = await queryable.query<TemplateRow>(
-    `${templateSelect("t.version")}
+    `${templateSelect()}
      WHERE t.user_id = $1 AND t.id = ANY($2::uuid[])
        AND t.deleted_at IS NULL AND t.retired_at IS NULL`,
     [userId, templateIds],
@@ -455,7 +438,6 @@ export function mapTemplateRow(row: TemplateRow): TemplateResource {
     body: row.body,
     variableSchema: row.variable_schema,
     metadata: row.metadata,
-    version: row.version,
     revision: Number(row.revision),
     createdAt: isoDate(row.created_at),
     updatedAt: isoDate(row.updated_at),
@@ -470,10 +452,6 @@ async function updateLockedTemplate(
   definition: TemplateDefinition,
   requestId: string,
 ): Promise<TemplateResource> {
-  const nextVersion = current.version + 1;
-  if (!Number.isSafeInteger(nextVersion) || nextVersion > 2_147_483_647) {
-    throw unprocessable("The template version cannot be incremented.", "template_version_limit");
-  }
   await queryable.query(
     `UPDATE templates SET
        name = $3,
@@ -482,7 +460,6 @@ async function updateLockedTemplate(
        body = $6::jsonb,
        variable_schema = $7::jsonb,
        metadata = $8::jsonb,
-       version = $9,
        updated_at = clock_timestamp()
      WHERE user_id = $1 AND id = $2`,
     [
@@ -494,25 +471,12 @@ async function updateLockedTemplate(
       JSON.stringify(definition.body),
       JSON.stringify(definition.variableSchema),
       JSON.stringify(definition.metadata),
-      nextVersion,
-    ],
-  );
-  await queryable.query(
-    `INSERT INTO template_versions (
-       user_id, template_id, version, body, variable_schema
-     ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
-    [
-      principal.userId,
-      current.id,
-      nextVersion,
-      JSON.stringify(definition.body),
-      JSON.stringify(definition.variableSchema),
     ],
   );
   await writeTemplateAudit(
     queryable,
     principal,
-    "template.version.create",
+    "template.update",
     current.id,
     requestId,
   );
@@ -529,24 +493,10 @@ async function loadActiveTemplateRow(
   templateId: string,
 ): Promise<TemplateRow | undefined> {
   const result = await queryable.query<TemplateRow>(
-    `${templateSelect("t.version")}
+    `${templateSelect()}
      WHERE t.user_id = $1 AND t.id = $2
        AND t.deleted_at IS NULL AND t.retired_at IS NULL`,
     [userId, templateId],
-  );
-  return result.rows[0];
-}
-
-async function loadTemplateVersionRow(
-  queryable: Queryable,
-  userId: string,
-  templateId: string,
-  version: number,
-): Promise<TemplateRow | undefined> {
-  const result = await queryable.query<TemplateRow>(
-    `${templateSelect("$3::integer")}
-     WHERE t.user_id = $1 AND t.id = $2`,
-    [userId, templateId, version],
   );
   return result.rows[0];
 }
@@ -557,7 +507,7 @@ async function lockActiveTemplate(
   templateId: string,
 ): Promise<TemplateRow | undefined> {
   const result = await queryable.query<TemplateRow>(
-    `${templateSelect("t.version")}
+    `${templateSelect()}
      WHERE t.user_id = $1 AND t.id = $2
        AND t.deleted_at IS NULL AND t.retired_at IS NULL
      FOR UPDATE OF t`,
@@ -566,27 +516,22 @@ async function lockActiveTemplate(
   return result.rows[0];
 }
 
-function templateSelect(versionExpression: string): string {
+function templateSelect(): string {
   return `SELECT
      t.id,
      t.user_id,
      t.name,
      t.description,
      t.engine,
-     tv.body,
-     tv.variable_schema,
+     t.body,
+     t.variable_schema,
      t.metadata,
-     tv.version,
      t.revision,
      t.created_at,
      t.updated_at,
      t.retired_at,
      t.deleted_at
-   FROM templates t
-   JOIN template_versions tv
-     ON tv.user_id = t.user_id
-    AND tv.template_id = t.id
-    AND tv.version = ${versionExpression}`;
+   FROM templates t`;
 }
 
 async function writeTemplateAudit(
@@ -606,7 +551,6 @@ async function writeTemplateAudit(
 
 function encodeTemplateCursor(signature: string, row: TemplateRow): string {
   const cursor: TemplateCursor = {
-    v: 1,
     kind: "templates",
     signature,
     name: row.name,
@@ -642,7 +586,6 @@ function isTemplateCursor(value: unknown): value is TemplateCursor {
   }
   const cursor = value as Partial<TemplateCursor>;
   return (
-    cursor.v === 1 &&
     cursor.kind === "templates" &&
     typeof cursor.signature === "string" &&
     typeof cursor.name === "string" &&
@@ -769,17 +712,6 @@ function validateMetadata(value: unknown): JsonObject {
   }
   assertSerializedJsonSize(value, RESOURCE_METADATA_MAX_BYTES, "metadata");
   return value;
-}
-
-function optionalVersion(value: unknown): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 2_147_483_647) {
-    throw invalidRequest("version must be a positive 32-bit integer.");
-  }
-  return parsed;
 }
 
 function templateNotFound(): HttpProblem {

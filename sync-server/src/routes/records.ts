@@ -71,7 +71,7 @@ export async function registerRecordRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get<{ Querystring: OwnerQuerystring }>(
-    "/v1/records",
+    "/records",
     { schema: { querystring: ownerRecordQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["records:read"]);
@@ -81,7 +81,7 @@ export async function registerRecordRoutes(
   );
 
   app.post<{ Body: CreateRecordInput }>(
-    "/v1/records",
+    "/records",
     { schema: { headers: idempotencyHeadersSchema, body: createRecordSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["records:write"]);
@@ -97,7 +97,7 @@ export async function registerRecordRoutes(
   );
 
   app.get<{ Params: RecordPath }>(
-    "/v1/records/:recordId",
+    "/records/:recordId",
     { schema: { params: recordPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["records:read"]);
@@ -110,7 +110,7 @@ export async function registerRecordRoutes(
   );
 
   app.put<{ Params: RecordPath; Body: ReplaceRecordInput }>(
-    "/v1/records/:recordId",
+    "/records/:recordId",
     {
       schema: {
         params: recordPathSchema,
@@ -135,7 +135,7 @@ export async function registerRecordRoutes(
   );
 
   app.patch<{ Params: RecordPath; Body: UpdateRecordInput }>(
-    "/v1/records/:recordId",
+    "/records/:recordId",
     {
       schema: {
         params: recordPathSchema,
@@ -160,7 +160,7 @@ export async function registerRecordRoutes(
   );
 
   app.delete<{ Params: RecordPath }>(
-    "/v1/records/:recordId",
+    "/records/:recordId",
     { schema: { params: recordPathSchema, headers: conditionalMutationHeadersSchema } },
     async (request, reply) =>
       withPreconditionHeader(reply, async () => {
@@ -178,7 +178,7 @@ export async function registerRecordRoutes(
   );
 
   app.get<{ Querystring: PublicQuerystring }>(
-    "/v1/public/records",
+    "/public/records",
     { schema: { querystring: publicRecordQuerySchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -188,7 +188,7 @@ export async function registerRecordRoutes(
   );
 
   app.get<{ Params: RecordPath }>(
-    "/v1/public/records/:recordId",
+    "/public/records/:recordId",
     { schema: { params: recordPathSchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -341,11 +341,9 @@ const sourceSchema = {
 };
 const encryptionSchema = {
   type: "object",
-  required: ["algorithm", "cryptoVersion", "keyVersion", "nonce", "ciphertext", "contentType"],
+  required: ["algorithm", "nonce", "ciphertext", "contentType"],
   properties: {
     algorithm: { const: "A256GCM" },
-    cryptoVersion: { const: 1 },
-    keyVersion: { const: 1 },
     nonce: {
       type: "string",
       minLength: 16,
@@ -366,7 +364,6 @@ const renderSchema = {
   required: ["templateId", "variables"],
   properties: {
     templateId: uuid,
-    version: { type: "integer", minimum: 1 },
     variables: jsonObject,
   },
   additionalProperties: false,

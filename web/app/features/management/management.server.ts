@@ -41,7 +41,7 @@ class ManagedMediaOutcomeUnknownError extends ManagedMutationOutcomeUnknownError
 export async function listManagedTags(auth: Auth, signal?: AbortSignal) {
   const client = clientFor(auth);
   return readBackendData(
-    () => client.GET("/v1/tags", { params: { query: { limit: 100 } }, signal }),
+    () => client.GET("/tags", { params: { query: { limit: 100 } }, signal }),
     "Could not load tags.",
   );
 }
@@ -49,7 +49,7 @@ export async function listManagedTags(auth: Auth, signal?: AbortSignal) {
 export async function listManagedDevices(auth: Auth, signal?: AbortSignal) {
   const client = clientFor(auth);
   return readBackendData(
-    () => client.GET("/v1/devices", { params: { query: { limit: 100 } }, signal }),
+    () => client.GET("/devices", { params: { query: { limit: 100 } }, signal }),
     "Could not load devices.",
   );
 }
@@ -61,7 +61,7 @@ export async function resolveManagedDevice(auth: Auth, requestedId?: string): Pr
   const client = clientFor(auth);
   const created = await readBackendData(
     () =>
-      client.POST("/v1/devices", {
+      client.POST("/devices", {
         params: { header: { "Idempotency-Key": crypto.randomUUID() } },
         body: { name: "Fractonica web", kind: "web", platform: "browser", metadata: {} },
       }),
@@ -74,7 +74,7 @@ export async function createManagedTag(auth: Auth, body: ApiSchemas["CreateTagRe
   const client = clientFor(auth);
   return readBackendData(
     () =>
-      client.POST("/v1/tags", {
+      client.POST("/tags", {
         params: { header: { "Idempotency-Key": crypto.randomUUID() } },
         body,
       }),
@@ -91,7 +91,7 @@ export async function updateManagedTag(
   const client = clientFor(auth);
   return readBackendData(
     () =>
-      client.PATCH("/v1/tags/{tagId}", {
+      client.PATCH("/tags/{tagId}", {
         params: {
           path: { tagId },
           header: {
@@ -107,7 +107,7 @@ export async function updateManagedTag(
 
 export async function deleteManagedTag(auth: Auth, tagId: string, revision: number) {
   const client = clientFor(auth);
-  const result = await client.DELETE("/v1/tags/{tagId}", {
+  const result = await client.DELETE("/tags/{tagId}", {
     params: {
       path: { tagId },
       header: {
@@ -131,7 +131,7 @@ export async function createManagedRecord(
   const create = () =>
     readBackendData(
       () =>
-        client.POST("/v1/records", {
+        client.POST("/records", {
           params: { header: { "Idempotency-Key": `web:${operationId}:record:create` } },
           body,
         }),
@@ -178,7 +178,7 @@ export async function uploadManagedMedia(
   const reserve = () =>
     readBackendData(
       () =>
-        client.POST("/v1/media-upload-sessions", {
+        client.POST("/media-upload-sessions", {
           params: { header: { "Idempotency-Key": reserveKey } },
           body: declaration,
         }),
@@ -212,7 +212,7 @@ export async function uploadManagedMedia(
   } catch (error) {
     if (error instanceof ManagedMediaOutcomeUnknownError) throw error;
     await client
-      .DELETE("/v1/media-upload-sessions/{uploadId}", {
+      .DELETE("/media-upload-sessions/{uploadId}", {
         params: { path: { uploadId: upload.id } },
       })
       .catch(() => undefined);
@@ -225,7 +225,7 @@ export async function cleanupManagedMedia(auth: Auth, media: readonly ManagedMed
   const client = clientFor(auth);
   await Promise.allSettled(
     media.map((item) =>
-      client.DELETE("/v1/media/{mediaId}", {
+      client.DELETE("/media/{mediaId}", {
         params: {
           path: { mediaId: item.id },
           header: {
@@ -254,7 +254,7 @@ export async function updateManagedRecord(
 ) {
   const client = clientFor(auth);
   const current = await readBackendData(
-    () => client.GET("/v1/records/{recordId}", { params: { path: { recordId } } }),
+    () => client.GET("/records/{recordId}", { params: { path: { recordId } } }),
     "Could not load the record before editing.",
   );
   if (current.visibility !== "public") {
@@ -271,7 +271,7 @@ export async function updateManagedRecord(
   } as unknown as ApiSchemas["PublicRecordPayload"];
   return readBackendData(
     () =>
-      client.PATCH("/v1/records/{recordId}", {
+      client.PATCH("/records/{recordId}", {
         params: {
           path: { recordId },
           header: {
@@ -294,7 +294,7 @@ export async function updateManagedRecord(
 
 export async function deleteManagedRecord(auth: Auth, recordId: string, revision: number) {
   const client = clientFor(auth);
-  const result = await client.DELETE("/v1/records/{recordId}", {
+  const result = await client.DELETE("/records/{recordId}", {
     params: {
       path: { recordId },
       header: {
@@ -351,7 +351,7 @@ async function completeManagedUpload(
   const complete = () =>
     readBackendData(
       () =>
-        client.POST("/v1/media-upload-sessions/{uploadId}/complete", {
+        client.POST("/media-upload-sessions/{uploadId}/complete", {
           params: {
             path: { uploadId: upload.id },
             header: { "Idempotency-Key": idempotencyKey },
@@ -396,7 +396,7 @@ async function completedMediaOrUnknown(
   if (mediaId === undefined) throw new ManagedMediaOutcomeUnknownError(fileName, cause);
   try {
     return await readBackendData(
-      () => client.GET("/v1/media/{mediaId}", { params: { path: { mediaId } } }),
+      () => client.GET("/media/{mediaId}", { params: { path: { mediaId } } }),
       `Could not reconcile completed media ${fileName}.`,
     );
   } catch (error) {
@@ -413,7 +413,7 @@ async function uploadStatusOrUnknown(
   try {
     return await readBackendData(
       () =>
-        client.GET("/v1/media-upload-sessions/{uploadId}", {
+        client.GET("/media-upload-sessions/{uploadId}", {
           params: { path: { uploadId } },
         }),
       `Could not reconcile upload ${fileName}.`,

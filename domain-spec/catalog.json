@@ -1,7 +1,5 @@
 {
   "$schema": "./catalog.schema.json",
-  "schemaVersion": 1,
-  "catalogVersion": "1.0.0",
   "status": "foundation",
   "provenance": [
     {
@@ -81,37 +79,37 @@
         "id": "color.rarity.common",
         "fallbackSrgb": "#FFFFFF",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "white"
+        "swiftColor": "white"
       },
       {
         "id": "color.rarity.triplex",
         "fallbackSrgb": "#8E8E93",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "gray"
+        "swiftColor": "gray"
       },
       {
         "id": "color.rarity.duplex",
         "fallbackSrgb": "#007AFF",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "blue"
+        "swiftColor": "blue"
       },
       {
         "id": "color.rarity.simplex",
         "fallbackSrgb": "#AF52DE",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "purple"
+        "swiftColor": "purple"
       },
       {
         "id": "color.rarity.nihil",
         "fallbackSrgb": "#FFCC00",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "yellow"
+        "swiftColor": "yellow"
       },
       {
         "id": "color.rarity.mythic-omega",
         "fallbackSrgb": "#FF3B30",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "red",
+        "swiftColor": "red",
         "description": "Swift special case for mythic-7 / Omega Nihil."
       },
       {
@@ -158,43 +156,43 @@
         "id": "color.time.rollover",
         "fallbackSrgb": "#FF3B30",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "red"
+        "swiftColor": "red"
       },
       {
         "id": "color.time.giga",
         "fallbackSrgb": "#FFCC00",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "yellow"
+        "swiftColor": "yellow"
       },
       {
         "id": "color.time.mega",
         "fallbackSrgb": "#AF52DE",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "purple"
+        "swiftColor": "purple"
       },
       {
         "id": "color.time.kilo",
         "fallbackSrgb": "#007AFF",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "blue"
+        "swiftColor": "blue"
       },
       {
         "id": "color.time.saros",
         "fallbackSrgb": "#FFFFFF",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "white"
+        "swiftColor": "white"
       },
       {
         "id": "color.time.mili",
         "fallbackSrgb": "#FF9500",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "orange"
+        "swiftColor": "orange"
       },
       {
         "id": "color.time.nano",
         "fallbackSrgb": "#32ADE6",
         "sourceKind": "swift-system",
-        "legacySwiftColor": "cyan"
+        "swiftColor": "cyan"
       },
       {
         "id": "color.event.generic",
@@ -484,7 +482,6 @@
     }
   },
   "glyph": {
-    "geometryVersion": "1.0.0",
     "supportedDepth": {
       "minimum": 3,
       "maximum": 8
@@ -516,8 +513,8 @@
       "insetThickness": 14
     },
     "coreHole": {
-      "legacyExactDepth": 7,
-      "legacyExactPoints": [
+      "exactDepth": 7,
+      "exactPoints": [
         [27.95, 1.45],
         [25.81, 10.82],
         [16.29, 22.75],
@@ -675,7 +672,7 @@
     "producerAllocations": [],
     "providerMetadata": {
       "containerProperty": "eventType",
-      "required": ["namespace", "name", "version"],
+      "required": ["namespace", "name"],
       "optional": ["label", "semanticToken"],
       "namespaceFormat": "reverse-dns"
     },

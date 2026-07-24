@@ -13,11 +13,9 @@ import {
 
 describe("canonical domain catalog", () => {
   it("exposes generated indexes without redefining catalog values", () => {
-    expect(canonicalCatalog.schemaVersion).toBe(1);
     expect(temporalUnitsById.get("saros")?.title).toBe("Saros");
     expect(rarityFamiliesById.get("mythic")?.title).toBe("Nihil");
     expect(canonicalCatalogSha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(canonicalConformance.catalogVersion).toBe(canonicalCatalog.catalogVersion);
     expect(canonicalConformance.vectors).toHaveLength(40);
     expect(canonicalConformanceSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(semanticColorsById.get("color.rarity.nihil")?.fallbackSrgb).toBe("#FFCC00");

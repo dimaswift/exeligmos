@@ -19,11 +19,11 @@ describe("managed media upload", () => {
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init);
         calls.push(request);
-        if (request.method === "POST" && request.url.endsWith("/v1/media-upload-sessions")) {
+        if (request.method === "POST" && request.url.endsWith("/media-upload-sessions")) {
           return Promise.resolve(
             Response.json(
               uploadResource({
-                uploadUrl: "/v1/signed-upload-target",
+                uploadUrl: "/signed-upload-target",
               }),
               { status: 201 },
             ),
@@ -53,9 +53,9 @@ describe("managed media upload", () => {
 
     expect(media.id).toBe("22222222-2222-4222-8222-222222222222");
     expect(calls.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
-      "POST /v1/media-upload-sessions",
-      "PUT /v1/signed-upload-target",
-      "POST /v1/media-upload-sessions/11111111-1111-4111-8111-111111111111/complete",
+      "POST /media-upload-sessions",
+      "PUT /signed-upload-target",
+      "POST /media-upload-sessions/11111111-1111-4111-8111-111111111111/complete",
     ]);
     const contentRequest = calls[1];
     expect(contentRequest?.headers.get("Authorization")).toBe("Bearer jwt");
@@ -82,7 +82,7 @@ describe("managed media upload", () => {
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init);
         calls.push(request);
-        if (request.method === "POST" && request.url.endsWith("/v1/media-upload-sessions")) {
+        if (request.method === "POST" && request.url.endsWith("/media-upload-sessions")) {
           return Promise.resolve(Response.json(uploadResource(), { status: 201 }));
         }
         if (request.method === "PUT") return Promise.resolve(new Response(null, { status: 204 }));
@@ -95,7 +95,7 @@ describe("managed media upload", () => {
             Response.json(uploadResource({ status: "completed", receivedBytes: 5 })),
           );
         }
-        if (request.method === "GET" && request.url.includes("/v1/media/")) {
+        if (request.method === "GET" && request.url.includes("/media/")) {
           return Promise.resolve(Response.json(mediaResource()));
         }
         return Promise.reject(new Error(`Unexpected request ${request.method} ${request.url}`));
@@ -179,7 +179,7 @@ describe("managed record mutations", () => {
             Response.json({
               id: "abcde",
               visibility: "public",
-              payload: { text: "old", emoji: "🌞", legacy: true },
+              payload: { text: "old", emoji: "🌞", archived: true },
             }),
           );
         }
@@ -213,7 +213,7 @@ function uploadResource(overrides: Record<string, unknown> = {}) {
     byteLength: 5,
     receivedBytes: 0,
     sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-    uploadUrl: "/v1/media-upload-sessions/11111111-1111-4111-8111-111111111111/content",
+    uploadUrl: "/media-upload-sessions/11111111-1111-4111-8111-111111111111/content",
     expiresAt: "2026-07-18T00:00:00.000Z",
     createdAt: "2026-07-17T00:00:00.000Z",
     mediaId: "22222222-2222-4222-8222-222222222222",
@@ -232,6 +232,6 @@ function mediaResource() {
     byteLength: 5,
     sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
     createdAt: "2026-07-17T00:00:00.000Z",
-    contentUrl: "/v1/media/22222222-2222-4222-8222-222222222222/content",
+    contentUrl: "/media/22222222-2222-4222-8222-222222222222/content",
   };
 }

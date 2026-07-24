@@ -14,17 +14,17 @@ database, media, immutable releases, secrets, and off-host backups:
 
 The API binds only to `127.0.0.1:8788`; SSR web binds to
 `127.0.0.1:3100`. Port 3000 and `/opt/saros-api` are intentionally untouched.
-Nginx routes `/v1`, health, OpenAPI, and Swagger to the API, with other paths
-going to web. The template names only `fractonica.com` because the current
-certificate has no `www` SAN. HSTS omits `includeSubDomains` because not every
-existing subdomain is HTTPS-only.
+Nginx routes the API resource prefixes, health, OpenAPI, and Swagger to the API,
+with other paths going to web. The template names only `fractonica.com` because
+the current certificate has no `www` SAN. HSTS omits `includeSubDomains`
+because not every existing subdomain is HTTPS-only.
 
 ## Production shape
 
 The small 1-vCPU production target is deliberately not used for image builds or
 a duplicate container stack. `build-release.sh` builds Linux/amd64 locally in pinned Node
 24.18.0, then ships the Node binary, Linux-native dependencies, compiled API,
-SSR build, migrations, OpenAPI, and a per-file SHA-256 manifest. Production
+SSR build, canonical schema, OpenAPI, and a per-file SHA-256 manifest. Production
 never runs `npm install` or a compiler.
 
 PostgreSQL stays major-version aligned with the PostgreSQL 18 source. Never
@@ -36,8 +36,8 @@ Provisioning installs `postgresql-18`, `postgresql-client-18`, and
 
 1. Expand the root filesystem until at least 11 GiB is free before first
    provisioning. Provisioning allocates 2 GiB of swap before installing
-   packages, leaving the 8-GiB post-provision migration gate intact. Long-term,
-   use at least 20 GiB. Migration and rollback temporarily need two media trees.
+   packages. Long-term, use at least 20 GiB; restore temporarily needs two media
+   trees.
 2. Keep SSH key-only. Never copy the private key into this repo or an env file.
 3. Run the read-only audit:
 
@@ -62,7 +62,7 @@ It installs PGDG PostgreSQL 18/pgvector, creates isolated `fractonica-api` and
 writes fresh DB/JWT/session secrets, and installs
 hardened systemd units. Re-running it does not rotate existing secrets.
 
-Provisioning must finish before migration, restore, deploy, or backup. Those
+Provisioning must finish before restore, deploy, or backup. Those
 commands now verify the service accounts, directories, secrets, and PostgreSQL
 client first and print the provisioning command when the host is incomplete.
 An older script reporting `install: invalid user 'fractonica-api'` means this
@@ -70,23 +70,6 @@ one-time provisioning step was skipped or interrupted; rerun it safely.
 
 Registration defaults to `closed`. Change `/etc/fractonica/api.env` to invite
 or open registration only when intended.
-
-## First Mac-to-Linux migration
-
-1. Stop the local API and every client/agent that can write.
-2. Confirm the local PostgreSQL 18 Compose service is healthy.
-3. Provision the target, but do not deploy/start Fractonica yet.
-4. Run:
-
-   ```sh
-   REMOTE=root@fractonica.com \
-     deployment/fractonica/bin/migrate-first.sh --apply --source-quiesced
-   ```
-
-The script creates a PostgreSQL custom dump, checks the target is empty,
-restores into a temporary DB, validates pgvector, and swaps the DB and staged
-media into place. It never deletes source data. A non-empty target is refused;
-use the restore workflow in that case.
 
 ## Release pipeline
 
@@ -103,11 +86,11 @@ REMOTE=root@fractonica.com \
   deployment/fractonica/bin/deploy.sh output/releases/fractonica-<id>-linux-amd64.tar.gz
 ```
 
-Deployment verifies outer and inner checksums, runs checksum-protected SQL
-migrations under the advisory lock, atomically switches `current`, restarts the
-services, and requires API readiness plus a web response. A failed gate restores
-the previous code symlink. SQL is forward-only, so migrations must use
-expand/contract sequencing and remain compatible with the previous release.
+Deployment verifies outer and inner checksums, checks the canonical database
+shape, atomically switches `current`, restarts the services, and requires API
+readiness plus a web response. On the first deploy, `db/schema.sql` is applied
+to the empty database; a nonempty database with a different shape is rejected.
+A failed health gate restores the previous code symlink.
 
 Verification:
 
@@ -143,6 +126,17 @@ REMOTE=root@fractonica.com \
     --destination-is-encrypted /Volumes/EncryptedBackup/fractonica/$(date +%F)
 ```
 
+To package the same restorable snapshot as one compressed artifact, add
+`--compress` and use a new `.tar.gz` path:
+
+```sh
+REMOTE=root@fractonica.com \
+  deployment/fractonica/bin/backup-to-local.sh --apply \
+    --destination-is-encrypted \
+    /Volumes/EncryptedBackup/fractonica/fractonica-$(date +%F).tar.gz \
+    --compress
+```
+
 Copy each backup to a second independent encrypted location. Test restores regularly:
 
 ```sh
@@ -150,16 +144,39 @@ REMOTE=root@fractonica.com \
   deployment/fractonica/bin/restore-to-host.sh --apply /path/to/verified/backup
 ```
 
-Restore verifies manifests, stages database and media, swaps both, then runs
-health checks. A failed health gate swaps the previous DB and media back. It
-requires enough free disk for both media trees.
+The restore command accepts either the unpacked backup directory or the
+compressed `.tar.gz`. Restore verifies outer and inner manifests, stages
+database and media, swaps both, then runs health checks. A failed health gate
+swaps the previous DB and media back. It requires enough free disk for both
+media trees.
 
-Deploy, first migration, backup, and restore share the atomic lock directory
-`/run/lock/fractonica-maintenance.lock.d`; they cannot overlap. The lock normally
-clears through a trap and also disappears on reboot because `/run` is volatile.
-If a killed workstation leaves it stale, first verify that no maintenance
-process or transfer is active, inspect its `owner` file, then remove only that
-directory before retrying:
+### Human-readable archives
+
+A readable archive has the opposite purpose from a backup: it is not
+restorable, contains no SQL dump, and omits credentials and operational state.
+Its records, events, catalogs, and media are plain folders and JSON, plus a
+dependency-free static explorer at the unpacked root:
+
+```sh
+REMOTE=root@fractonica.com \
+  deployment/fractonica/bin/archive-to-local.sh --apply \
+    --destination-is-encrypted \
+    /Volumes/EncryptedBackup/fractonica/fractonica-readable-$(date +%F).tar.gz
+```
+
+After unpacking, open `index.html` directly or run any static server in the
+archive root, such as `python3 -m http.server 8000`. The production archive
+command uses the maintenance lock, stops API writes during its database/media
+snapshot, verifies media bytes and checksums, restarts and health-checks the API,
+then transfers the `.tar.gz` and a matching `.sha256` sidecar. Private content
+remains ciphertext because the server does not hold user decryption keys.
+
+Deploy, backup, readable archive, and restore share the atomic
+lock directory `/run/lock/fractonica-maintenance.lock.d`; they cannot overlap.
+The lock normally clears through a trap and also disappears on reboot because
+`/run` is volatile. If a killed workstation leaves it stale, first verify that
+no maintenance process or transfer is active, inspect its `owner` file, then
+remove only that directory before retrying:
 
 ```sh
 ssh root@fractonica.com 'cat /run/lock/fractonica-maintenance.lock.d/owner'
@@ -175,5 +192,5 @@ ssh root@fractonica.com 'rm /run/lock/fractonica-maintenance.lock.d/owner && rmd
 - Expose only 22/80/443. PostgreSQL and application ports stay on loopback.
 - Monitor disk, swap, PostgreSQL, systemd restart counts, `/health/ready`, and
   off-host backup age. Pause large media uploads at 80% disk utilization.
-- Never modify an applied SQL migration. Add a new numbered migration; the
-  runner rejects changed or missing history.
+- Treat `sync-server/db/schema.sql` as the single database definition. Create a
+  fresh database whenever that definition changes.

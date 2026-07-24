@@ -111,7 +111,7 @@ export async function registerAuthRoutes(
   });
 
   app.post<{ Body: RegisterBody }>(
-    "/v1/auth/register",
+    "/auth/register",
     {
       config: {
         rateLimit: {
@@ -142,14 +142,14 @@ export async function registerAuthRoutes(
       return reply
         .header("cache-control", "no-store")
         .header("pragma", "no-cache")
-        .header("location", "/v1/me")
+        .header("location", "/me")
         .status(201)
         .send(session);
     },
   );
 
   app.post<{ Body: LoginBody }>(
-    "/v1/auth/login",
+    "/auth/login",
     {
       config: {
         rateLimit: {
@@ -183,7 +183,7 @@ export async function registerAuthRoutes(
   );
 
   app.post<{ Body: RefreshBody }>(
-    "/v1/auth/refresh",
+    "/auth/refresh",
     {
       config: {
         rateLimit: {
@@ -213,7 +213,7 @@ export async function registerAuthRoutes(
   );
 
   app.post<{ Body: RefreshBody }>(
-    "/v1/auth/logout",
+    "/auth/logout",
     {
       schema: {
         body: {

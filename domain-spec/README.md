@@ -12,10 +12,10 @@ against, this contract.
 
 ## Files
 
-- [`catalog.json`](catalog.json) is the canonical, versioned data catalog.
+- [`catalog.json`](catalog.json) is the canonical data catalog.
 - [`catalog.schema.json`](catalog.schema.json) is its JSON Schema Draft 2020-12
   contract.
-- [`conformance/v1.json`](conformance/v1.json) contains behavior vectors copied
+- [`conformance/vectors.json`](conformance/vectors.json) contains behavior vectors copied
   from current XCTest expectations and implementation boundary behavior.
 - [`conformance/vectors.schema.json`](conformance/vectors.schema.json) validates
   the vector envelope.
@@ -42,28 +42,15 @@ concisely, including unique semantic IDs, valid token references, contiguous
 event ranges, non-overlapping producer allocations, and role/order agreement.
 
 It also executes the catalog-driven reference implementation against the
-conformance vectors. The final SHA-256 is suitable for diagnostics or as the
-basis of a future catalog endpoint ETag; it is not a substitute for
-`catalogVersion`.
+conformance vectors. The final SHA-256 is available for build diagnostics and
+cache validation.
 
-## Compatibility and versioning
+## Canonical source
 
-There are two versions with different purposes:
-
-- `schemaVersion` changes only when the structure itself becomes incompatible.
-  Consumers must reject unsupported schema versions.
-- `catalogVersion` follows semantic versioning. A major version can change an
-  existing meaning or algorithm, a minor version can add types, tokens, or
-  allocations, and a patch version can clarify descriptions without changing
-  behavior.
-
-Published IDs are permanent. A time-unit ID, semantic-token ID, rarity ID, or
-numeric event type must never be reassigned to a different meaning. Deprecated
-entries remain resolvable.
-
-Every consumer should expose both versions in diagnostics. Persisted resources
-that depend on an interpretation should store `catalogVersion` in metadata when
-reproducibility matters.
+There is one catalog and one vector set. Consumers generate their bindings from
+these files and reject malformed input. Published IDs remain stable because
+persisted records use them directly; a time-unit ID, semantic-token ID, rarity
+ID, or numeric event type must not be reassigned to a different meaning.
 
 ## Temporal model
 
@@ -89,10 +76,9 @@ The base period is `6585.3211` days. Unit duration is:
 basePeriod.seconds / 8^unit.exponent
 ```
 
-This means the unit whose legacy ID is `saros` is the average cycle divided by
-`8^7`; it is not the full 6585-day cycle. The single-l spelling `mili` is also a
-canonical legacy ID. Human-facing aliases can be corrected without changing
-the persisted identifier.
+This means the unit identified as `saros` is the average cycle divided by
+`8^7`; it is not the full 6585-day cycle. The persisted single-l identifier
+`mili` is intentional. Human-facing labels can differ from stored identifiers.
 
 ## Rarity model
 
@@ -125,15 +111,15 @@ The glyph section contains all geometry needed by an SVG or native renderer:
 - coordinate direction and rotation convention;
 - socket/core dimensions and symmetric frame-padding rules;
 - all eight arm polygons;
-- the exact legacy seven-depth core hole;
+- the exact depth-seven core hole;
 - the inset rule used for other depths;
 - digit-to-socket ordering, fill rule, split-color semantics, and accessibility
   value normalization.
 
 Renderers should turn the catalog into immutable geometry primitives. They
 must not contain rarity classification or time-unit logic. Geometry cache keys
-must include `geometryVersion` and depth. Visual tests should cover every depth,
-digit, semantic color mode, and malformed-input normalization case.
+use depth. Visual tests should cover every depth, digit, semantic color mode,
+and malformed-input normalization case.
 
 ## Numeric event-type registry
 
@@ -158,8 +144,7 @@ An automated public account such as `@sun` should use the workflow below:
 2. Before publishing a durable integration, allocate the producer a block in
    `events.producerAllocations` or register shared meanings in the reviewed
    range.
-3. Add each public meaning to `events.entries` in a minor catalog release.
-   Never renumber it afterward.
+3. Add each public meaning to `events.entries`. Never renumber it afterward.
 
 Experimental metadata lives inside the event's existing `metadata` object:
 
@@ -170,7 +155,6 @@ Experimental metadata lives inside the event's existing `metadata` object:
     "eventType": {
       "namespace": "com.fractonica.sun",
       "name": "solar-flare",
-      "version": 1,
       "label": "Solar flare"
     }
   }
@@ -197,6 +181,5 @@ untrusted label or semantic token as authoritative styling.
    the current UI cannot interpret them.
 
 The realtime feed can then transport records and events without coupling its
-wire protocol to a particular frontend release: known meanings enrich
-immediately, while unknown meanings remain lossless until a newer catalog is
-available.
+wire protocol to a particular frontend build: known meanings enrich
+immediately, while unknown meanings remain lossless.

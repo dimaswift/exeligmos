@@ -57,7 +57,7 @@ export async function registerSocialRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get<{ Params: LoginPath }>(
-    "/v1/public/users/:login",
+    "/public/users/:login",
     { schema: { params: loginPathSchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -67,7 +67,7 @@ export async function registerSocialRoutes(
   );
 
   app.get<{ Querystring: SubscriptionQuerystring }>(
-    "/v1/subscriptions",
+    "/subscriptions",
     { schema: { querystring: subscriptionQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["subscriptions:read"]);
@@ -77,7 +77,7 @@ export async function registerSocialRoutes(
   );
 
   app.put<{ Params: TargetUserPath; Body: SubscriptionInput }>(
-    "/v1/subscriptions/:targetUserId",
+    "/subscriptions/:targetUserId",
     {
       schema: {
         params: targetUserPathSchema,
@@ -100,7 +100,7 @@ export async function registerSocialRoutes(
   );
 
   app.delete<{ Params: TargetUserPath }>(
-    "/v1/subscriptions/:targetUserId",
+    "/subscriptions/:targetUserId",
     {
       schema: {
         params: targetUserPathSchema,
@@ -123,7 +123,7 @@ export async function registerSocialRoutes(
   );
 
   app.get<{ Querystring: ActivityQuerystring }>(
-    "/v1/public/activity",
+    "/public/activity",
     { schema: { querystring: activityQuerySchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -133,7 +133,7 @@ export async function registerSocialRoutes(
   );
 
   app.get<{ Querystring: ActivityQuerystring }>(
-    "/v1/activity",
+    "/activity",
     { schema: { querystring: activityQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["subscriptions:read"]);

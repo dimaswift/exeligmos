@@ -811,7 +811,6 @@ function CardFooter({
   deviceId,
   mediaCount,
   revision,
-  templateVersion,
   updatedAt,
 }: {
   readonly activity?: ActivityChange;
@@ -819,7 +818,6 @@ function CardFooter({
   readonly deviceId?: string;
   readonly mediaCount?: number;
   readonly revision: number;
-  readonly templateVersion?: number;
   readonly updatedAt: string;
 }) {
   return (
@@ -838,7 +836,6 @@ function CardFooter({
         <span title={deviceId}>Device {compactIdentifier(deviceId)}</span>
       )}
       {mediaCount === undefined ? null : <span>{mediaCount} media</span>}
-      {templateVersion === undefined ? null : <span>Template v{templateVersion}</span>}
     </footer>
   );
 }

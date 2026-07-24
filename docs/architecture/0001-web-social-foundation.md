@@ -92,7 +92,7 @@ but none of them reimplement rarity, time-unit, or glyph rules.
 
 ### Temporal and glyph authority
 
-A versioned language-neutral domain catalog defines supported harmonic depths,
+A language-neutral canonical domain catalog defines supported harmonic depths,
 time-unit identities, rarity semantics, event-type identities, glyph constants,
 and semantic style roles. TypeScript and Swift bindings are generated or checked
 against the catalog. Golden conformance vectors preserve the current Swift

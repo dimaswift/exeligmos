@@ -1,6 +1,6 @@
 {
   "name": "fractonica-sync-server",
-  "version": "2.0.0-alpha.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,11 +8,10 @@
     "npm": ">=11.0.0"
   },
   "scripts": {
-    "start": "npm run start:v2",
+    "start": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
     "boot": "node --env-file-if-exists=.env scripts/boot.mjs",
     "boot:dev": "node --env-file-if-exists=.env scripts/boot.mjs --dev",
-    "dev:v2": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
-    "start:v2": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -20,10 +19,11 @@
     "test:integration": "node --import tsx --test test/integration/*.test.ts",
     "test:contract": "redocly lint openapi/openapi.yaml",
     "check": "npm run typecheck && npm test && npm run test:contract",
-    "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",
-    "db:migrate:prod": "node --env-file-if-exists=.env --enable-source-maps dist/db/migrate.js",
-    "import:legacy": "node --env-file-if-exists=.env --import tsx src/legacy-import/cli.ts",
-    "import:legacy:prod": "node --env-file-if-exists=.env --enable-source-maps dist/legacy-import/cli.js"
+    "db:setup": "node --env-file-if-exists=.env --import tsx src/db/setup.ts",
+    "db:setup:prod": "node --env-file-if-exists=.env --enable-source-maps dist/db/setup.js",
+    "archive": "node --env-file-if-exists=.env --import tsx src/archive/cli.ts",
+    "archive:all": "bash scripts/archive-all.sh",
+    "archive:prod": "node --env-file-if-exists=.env --enable-source-maps dist/archive/cli.js"
   },
   "dependencies": {
     "@fastify/rate-limit": "^10.3.0",

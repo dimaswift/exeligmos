@@ -35,7 +35,7 @@ export function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
       url: "postgresql://test:test@localhost:5432/exeligmos_test",
       poolMax: 2,
       // Integration files run concurrently against one PostgreSQL instance;
-      // leave enough acquisition headroom for migration and Argon2-heavy tests.
+      // leave enough acquisition headroom for schema and Argon2-heavy tests.
       connectionTimeoutMs: 2_000,
       idleTimeoutMs: 1_000,
       readinessTimeoutMs: 100,

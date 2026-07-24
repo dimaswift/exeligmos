@@ -15,15 +15,11 @@ export interface UpdateUserInput {
 
 export interface EncryptionProfileView {
   readonly userId: string;
-  readonly cryptoVersion: 1;
-  readonly keyVersion: 1;
   readonly keyCheck: string;
   readonly createdAt: string;
 }
 
 export interface CreateEncryptionProfileInput {
-  readonly cryptoVersion: 1;
-  readonly keyVersion: 1;
   readonly keyCheck: string;
 }
 
@@ -91,7 +87,7 @@ export interface Page<View> {
   readonly nextCursor?: string;
 }
 
-export interface Versioned<View> {
+export interface ResourceState<View> {
   readonly view: View;
   readonly etag: string;
 }

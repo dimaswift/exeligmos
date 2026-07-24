@@ -58,7 +58,7 @@ const record = {
       byteLength: 128,
       sha256: "a".repeat(64),
       createdAt: "2026-07-15T12:32:00Z",
-      publicContentUrl: "/v1/public/media/50000000-0000-4000-8000-000000000005",
+      publicContentUrl: "/public/media/50000000-0000-4000-8000-000000000005",
     },
   ],
   metadata: { strength: "X1", provider: "NOAA" },
@@ -97,7 +97,7 @@ const recordActivity = {
   resourceId: record.id,
   operation: "upsert",
   revision: 2,
-  resourceUrl: `/v1/public/records/${record.id}`,
+  resourceUrl: `/public/records/${record.id}`,
 } satisfies ApiSchemas["PublicActivityItem"] & { resourceType: "record" };
 
 describe("activity presentation", () => {
@@ -217,8 +217,6 @@ describe("activity presentation", () => {
       references: [reference],
       encryption: {
         algorithm: "A256GCM",
-        cryptoVersion: 1,
-        keyVersion: 1,
         nonce: "private-nonce",
         ciphertext: "private-ciphertext",
         contentType: "application/vnd.exeligmos.record+json",
@@ -280,7 +278,7 @@ describe("activity presentation", () => {
         ...recordActivity,
         resourceType: "user",
         resourceId: actor.id,
-        resourceUrl: "/v1/public/users/sun",
+        resourceUrl: "/public/users/sun",
       },
     } satisfies HydratedActivityRow;
     const userMarkup = renderToStaticMarkup(<HydratedActivityItem row={userRow} />);

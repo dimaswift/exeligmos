@@ -30,20 +30,20 @@ const splitGlyph = createOctalGlyph({
 });
 ```
 
-Unknown or legacy rarity input is resolved through the catalog and safely falls back to its common
-rarity. Style constructors reject unknown semantic color tokens.
+Unknown rarity input is resolved through the catalog and safely falls back to its common rarity.
+Style constructors reject unknown semantic color tokens.
 
-## Compatibility behavior
+## Canonical behavior
 
 - Glyph input retains the **rightmost** octal digits and pads on the **left**. This deliberately
   differs from persisted address normalization in `@fractonica/temporal-core`.
-- Presentation depth is clamped to the catalog-supported glyph range (`3...8` in catalog 1.0.0).
+- Presentation depth is clamped to the catalog-supported glyph range (`3...8`).
 - Socket order at depth `d` is `[0, d-1, d-2, ..., 1]`; split paint is selected by digit index, not
   socket index.
 - Digit zero produces no arm polygon.
 - The core and its hole are one even-odd path; arms are separate fill-only paths. Renderers must not
   add strokes.
-- Geometry is deterministic, deeply frozen, and cached by `geometryVersion:depth`.
+- Geometry is deterministic, deeply frozen, and cached by depth.
 - Stable frame bounds include every arm template, so changing the address never changes layout.
 
 ## Rendering
@@ -64,5 +64,5 @@ semantic token variables without changing geometry.
 
 The package tests execute every generated glyph conformance vector and cover all depths, all arm
 digits, exact frame bounds, malformed input, split mapping, rarity overrides, immutability, and the
-legacy seven-depth core hole. Renderer tests additionally enforce fill-only accessible SVG and
+exact depth-seven core hole. Renderer tests additionally enforce fill-only accessible SVG and
 deterministic server rendering.

@@ -10,7 +10,7 @@ import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { HttpProblem, registerProblemHandlers } from "../../src/http/problem.js";
 import { LocalMediaStorage } from "../../src/media/storage.js";
 import { registerMediaRoutes } from "../../src/routes/media.js";
@@ -24,10 +24,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const base = testConfig();
     const database = createPostgresDatabase({ ...base.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -114,7 +111,7 @@ test(
     try {
       const invalidContentType = await app.inject({
         method: "POST",
-        url: "/v1/media-upload-sessions",
+        url: "/media-upload-sessions",
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": `media-invalid-content-type-${randomUUID()}`,
@@ -136,7 +133,7 @@ test(
       const createKey = `media-create-${randomUUID()}`;
       const reservationRequest = {
         method: "POST" as const,
-        url: "/v1/media-upload-sessions",
+        url: "/media-upload-sessions",
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": createKey,
@@ -160,7 +157,7 @@ test(
 
       const wrongDevice = await app.inject({
         method: "GET",
-        url: `/v1/media-upload-sessions/${upload.id}`,
+        url: `/media-upload-sessions/${upload.id}`,
         headers: { authorization: "Bearer wrong-device" },
       });
       assert.equal(wrongDevice.statusCode, 403, wrongDevice.body);
@@ -196,7 +193,7 @@ test(
 
       const uploadStatus = await app.inject({
         method: "GET",
-        url: `/v1/media-upload-sessions/${upload.id}`,
+        url: `/media-upload-sessions/${upload.id}`,
         headers: { authorization: "Bearer owner" },
       });
       assert.equal(uploadStatus.statusCode, 200, uploadStatus.body);
@@ -205,7 +202,7 @@ test(
 
       const completionRequest = {
         method: "POST" as const,
-        url: `/v1/media-upload-sessions/${upload.id}/complete`,
+        url: `/media-upload-sessions/${upload.id}/complete`,
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": `media-complete-${randomUUID()}`,
@@ -218,12 +215,12 @@ test(
       assert.deepEqual(completedReplay.json(), completed.json());
       const media = completed.json<MediaBody>();
       assert.equal(media.id, upload.mediaId);
-      assert.equal(media.publicContentUrl, `/v1/public/media/${media.id}/content`);
+      assert.equal(media.publicContentUrl, `/public/media/${media.id}/content`);
       const mediaEtag = requiredHeader(completed.headers.etag);
 
       const otherTenantMetadata = await app.inject({
         method: "GET",
-        url: `/v1/media/${media.id}`,
+        url: `/media/${media.id}`,
         headers: { authorization: "Bearer other" },
       });
       assert.equal(otherTenantMetadata.statusCode, 404, otherTenantMetadata.body);
@@ -246,7 +243,7 @@ test(
       const conflictingDigest = sha256(conflictingBytes);
       const conflictingReservation = await app.inject({
         method: "POST",
-        url: "/v1/media-upload-sessions",
+        url: "/media-upload-sessions",
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": `media-conflict-create-${randomUUID()}`,
@@ -275,7 +272,7 @@ test(
       })).statusCode, 204);
       const conflictingCompletion = await app.inject({
         method: "POST",
-        url: `/v1/media-upload-sessions/${conflictingUpload.id}/complete`,
+        url: `/media-upload-sessions/${conflictingUpload.id}/complete`,
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": `media-conflict-complete-${randomUUID()}`,
@@ -290,13 +287,13 @@ test(
       assert.deepEqual(retainedDownload.rawPayload, bytes);
       assert.equal((await app.inject({
         method: "DELETE",
-        url: `/v1/media-upload-sessions/${conflictingUpload.id}`,
+        url: `/media-upload-sessions/${conflictingUpload.id}`,
         headers: { authorization: "Bearer owner" },
       })).statusCode, 204);
 
       const hiddenUnattached = await app.inject({
         method: "GET",
-        url: `/v1/public/media/${media.id}/content`,
+        url: `/public/media/${media.id}/content`,
       });
       assert.equal(hiddenUnattached.statusCode, 404, hiddenUnattached.body);
 
@@ -315,7 +312,7 @@ test(
 
       const publicDownload = await app.inject({
         method: "GET",
-        url: `/v1/public/media/${media.id}/content`,
+        url: `/public/media/${media.id}/content`,
       });
       assert.equal(publicDownload.statusCode, 200, publicDownload.body);
       assert.deepEqual(publicDownload.rawPayload, bytes);
@@ -330,7 +327,7 @@ test(
 
       const attachedDelete = await app.inject({
         method: "DELETE",
-        url: `/v1/media/${media.id}`,
+        url: `/media/${media.id}`,
         headers: {
           authorization: "Bearer owner",
           "if-match": mediaEtag,
@@ -343,7 +340,7 @@ test(
       await sql.query("UPDATE records SET deleted_at = clock_timestamp() WHERE id = $1", [recordId]);
       const retainedDelete = await app.inject({
         method: "DELETE",
-        url: `/v1/media/${media.id}`,
+        url: `/media/${media.id}`,
         headers: {
           authorization: "Bearer owner",
           "if-match": mediaEtag,
@@ -356,7 +353,7 @@ test(
       const deleteKey = `media-delete-${randomUUID()}`;
       const deleteRequest = {
         method: "DELETE" as const,
-        url: `/v1/media/${media.id}`,
+        url: `/media/${media.id}`,
         headers: {
           authorization: "Bearer owner",
           "if-match": mediaEtag,
@@ -369,7 +366,7 @@ test(
       assert.equal(deletedReplay.statusCode, 204, deletedReplay.body);
       const recompleteDeleted = await app.inject({
         method: "POST",
-        url: `/v1/media-upload-sessions/${upload.id}/complete`,
+        url: `/media-upload-sessions/${upload.id}/complete`,
         headers: {
           authorization: "Bearer owner",
           "idempotency-key": `media-recomplete-deleted-${randomUUID()}`,
@@ -405,7 +402,7 @@ async function verifyPrivateAndAbortFlows(
   const privateMediaId = randomUUID();
   const reservation = await app.inject({
     method: "POST",
-    url: "/v1/media-upload-sessions",
+    url: "/media-upload-sessions",
     headers: {
       authorization: "Bearer owner",
       "idempotency-key": `private-create-${randomUUID()}`,
@@ -419,8 +416,6 @@ async function verifyPrivateAndAbortFlows(
       sha256: sha256(privateBytes),
       encryption: {
         algorithm: "A256GCM",
-        cryptoVersion: 1,
-        keyVersion: 1,
         nonce: Buffer.alloc(12, 2).toString("base64"),
       },
     },
@@ -442,7 +437,7 @@ async function verifyPrivateAndAbortFlows(
   assert.equal(receive.statusCode, 204, receive.body);
   const completed = await app.inject({
     method: "POST",
-    url: `/v1/media-upload-sessions/${upload.id}/complete`,
+    url: `/media-upload-sessions/${upload.id}/complete`,
     headers: {
       authorization: "Bearer owner",
       "idempotency-key": `private-complete-${randomUUID()}`,
@@ -452,14 +447,14 @@ async function verifyPrivateAndAbortFlows(
   assert.equal(completed.json().encryption.algorithm, "A256GCM");
   const hidden = await app.inject({
     method: "GET",
-    url: `/v1/public/media/${privateMediaId}/content`,
+    url: `/public/media/${privateMediaId}/content`,
   });
   assert.equal(hidden.statusCode, 404, hidden.body);
 
   const abortedBytes = Buffer.from("temporary");
   const abortedReservation = await app.inject({
     method: "POST",
-    url: "/v1/media-upload-sessions",
+    url: "/media-upload-sessions",
     headers: {
       authorization: "Bearer owner",
       "idempotency-key": `abort-create-${randomUUID()}`,
@@ -476,14 +471,14 @@ async function verifyPrivateAndAbortFlows(
   const abortedUpload = abortedReservation.json() as UploadBody;
   const abortRequest = {
     method: "DELETE" as const,
-    url: `/v1/media-upload-sessions/${abortedUpload.id}`,
+    url: `/media-upload-sessions/${abortedUpload.id}`,
     headers: { authorization: "Bearer owner" },
   };
   assert.equal((await app.inject(abortRequest)).statusCode, 204);
   assert.equal((await app.inject(abortRequest)).statusCode, 204);
   const completeAborted = await app.inject({
     method: "POST",
-    url: `/v1/media-upload-sessions/${abortedUpload.id}/complete`,
+    url: `/media-upload-sessions/${abortedUpload.id}/complete`,
     headers: {
       authorization: "Bearer owner",
       "idempotency-key": `abort-complete-${randomUUID()}`,

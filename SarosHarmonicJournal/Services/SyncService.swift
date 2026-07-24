@@ -362,12 +362,12 @@ final class SyncService {
 
     private let urlSession: URLSession
     private let credentials: SyncCredentialVault
-    private let stateStore: SyncV2StateStore
+    private let stateStore: SyncStateStore
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
         self.credentials = SyncCredentialVault()
-        self.stateStore = SyncV2StateStore()
+        self.stateStore = SyncStateStore()
     }
 
     // MARK: - Authentication
@@ -385,7 +385,7 @@ final class SyncService {
                 password: password
             ),
             to: server,
-            path: "/v1/auth/login",
+            path: "/auth/login",
             method: "POST",
             timeoutInterval: 5,
             expectedStatus: [200]
@@ -418,7 +418,7 @@ final class SyncService {
         let response: SyncAuthSessionResponse = try await sendJSON(
             input,
             to: server,
-            path: "/v1/auth/register",
+            path: "/auth/register",
             method: "POST",
             timeoutInterval: 5,
             expectedStatus: [201]
@@ -446,7 +446,7 @@ final class SyncService {
             let request = try jsonRequest(
                 SyncRefreshRequest(refreshToken: current.refreshToken),
                 server: server,
-                path: "/v1/auth/logout",
+                path: "/auth/logout",
                 method: "POST"
             )
             var authorizedRequest = request
@@ -593,7 +593,7 @@ final class SyncService {
     }
 
     private func accountStats(from server: URL) async throws -> SyncAccountStats {
-        var request = URLRequest(url: try endpoint(server, path: "/v1/sync/stats"))
+        var request = URLRequest(url: try endpoint(server, path: "/sync/stats"))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await authorizedData(request, server: server)
@@ -679,7 +679,7 @@ final class SyncService {
         var entryByPublicID = publicEntryIndex(entryByID.values, ownerID: user.id)
 
         while true {
-            var components = URLComponents(url: try endpoint(server, path: "/v1/sync/changes"), resolvingAgainstBaseURL: false)
+            var components = URLComponents(url: try endpoint(server, path: "/sync/changes"), resolvingAgainstBaseURL: false)
             // Payload decoding is detached and unchanged fields are not
             // written. A larger replay page amortizes SwiftData saves and
             // observable-query invalidations without increasing media memory,
@@ -844,12 +844,12 @@ final class SyncService {
                     let downloaded = try await restoreMedia(
                         remote.media,
                         existing: existing?.mediaItems ?? [],
-                        preferredTypes: SyncV2PayloadMapper.mediaTypes(from: remote),
+                        preferredTypes: SyncPayloadMapper.mediaTypes(from: remote),
                         server: server
                     )
                     mediaCount += downloaded.downloadCount
                     for _ in 0..<downloaded.downloadCount { progress?(.restoredMedia) }
-                    let snapshot = try SyncV2PayloadMapper.entrySnapshot(
+                    let snapshot = try SyncPayloadMapper.entrySnapshot(
                         from: remote,
                         localMedia: downloaded.items,
                         tags: tagByID
@@ -1098,7 +1098,7 @@ final class SyncService {
         while true {
             let url = try collectionPageURL(
                 server: server,
-                path: "/v1/tags",
+                path: "/tags",
                 limit: 200,
                 cursor: tagCursor
             )
@@ -1175,7 +1175,7 @@ final class SyncService {
         while true {
             let url = try collectionPageURL(
                 server: server,
-                path: "/v1/records",
+                path: "/records",
                 limit: 10,
                 cursor: recordCursor
             )
@@ -1238,12 +1238,12 @@ final class SyncService {
                 let downloaded = try await restoreMedia(
                     remote.media,
                     existing: existing?.mediaItems ?? [],
-                    preferredTypes: SyncV2PayloadMapper.mediaTypes(from: remote),
+                    preferredTypes: SyncPayloadMapper.mediaTypes(from: remote),
                     server: server
                 )
                 mediaCount += downloaded.downloadCount
                 for _ in 0..<downloaded.downloadCount { progress?(.restoredMedia) }
-                let snapshot = try SyncV2PayloadMapper.entrySnapshot(
+                let snapshot = try SyncPayloadMapper.entrySnapshot(
                     from: remote,
                     localMedia: downloaded.items,
                     tags: tagByID
@@ -1412,7 +1412,6 @@ final class SyncService {
                         tagIDs: (snapshot.tagIDs ?? []).compactMap { tagIDByCompactID[$0] },
                         mediaIDs: mediaIDs,
                         metadata: .object([
-                            "payloadSchema": .string("journal-entry-v1"),
                             "clientVersion": .string(appVersion)
                         ]),
                         source: SyncSourceInput(
@@ -1448,7 +1447,7 @@ final class SyncService {
                     guard let etag = try await currentETag(
                         resourceType: "record",
                         resourceID: publicID,
-                        path: "/v1/records/\(publicID)",
+                        path: "/records/\(publicID)",
                         server: server,
                         userID: user.id
                     ) else {
@@ -1494,13 +1493,12 @@ final class SyncService {
                         sortOrder: Int(tag.compactID, radix: 8) ?? 0,
                         metadata: .object([
                             "journalTag": try jsonValue(from: snapshot),
-                            "payloadSchema": .string("journal-tag-v1")
                         ])
                     )
                     let etag = try await currentETag(
                         resourceType: "tag",
                         resourceID: tag.id.uuidString,
-                        path: "/v1/tags/\(tag.id.uuidString)",
+                        path: "/tags/\(tag.id.uuidString)",
                         server: server,
                         userID: user.id
                     )
@@ -1530,7 +1528,7 @@ final class SyncService {
                     guard let etag = try await currentETag(
                         resourceType: "tag",
                         resourceID: id.uuidString,
-                        path: "/v1/tags/\(id.uuidString)",
+                        path: "/tags/\(id.uuidString)",
                         server: server,
                         userID: user.id
                     ) else {
@@ -1568,7 +1566,7 @@ final class SyncService {
                 var request = try jsonRequest(
                     encodedBody: batchData,
                     server: server,
-                    path: "/v1/sync/batches",
+                    path: "/sync/batches",
                     method: "POST"
                 )
                 request.setValue("sync-\(attemptedCommandID.uuidString)", forHTTPHeaderField: "Idempotency-Key")
@@ -1749,7 +1747,7 @@ final class SyncService {
                 "emoji": .string(local.emoji)
             ])
         )
-        var create = try jsonRequest(body, server: server, path: "/v1/devices", method: "POST")
+        var create = try jsonRequest(body, server: server, path: "/devices", method: "POST")
         if let timeoutInterval { create.timeoutInterval = timeoutInterval }
         create.setValue("ios-device-\(deviceID.uuidString)", forHTTPHeaderField: "Idempotency-Key")
         let (createData, createResponse) = try await authorizedData(create, server: server)
@@ -1757,14 +1755,14 @@ final class SyncService {
             try require(createResponse, data: createData, expectedStatus: [201])
         }
         if createResponse.statusCode == 409 {
-            var get = URLRequest(url: try endpoint(server, path: "/v1/devices/\(deviceID.uuidString)"))
+            var get = URLRequest(url: try endpoint(server, path: "/devices/\(deviceID.uuidString)"))
             get.httpMethod = "GET"
             if let timeoutInterval { get.timeoutInterval = timeoutInterval }
             let (data, response) = try await authorizedData(get, server: server)
             try require(response, data: data, expectedStatus: [200])
         }
 
-        var bind = URLRequest(url: try endpoint(server, path: "/v1/devices/\(deviceID.uuidString)/current-session"))
+        var bind = URLRequest(url: try endpoint(server, path: "/devices/\(deviceID.uuidString)/current-session"))
         bind.httpMethod = "PUT"
         if let timeoutInterval { bind.timeoutInterval = timeoutInterval }
         let (bindData, bindResponse) = try await authorizedData(bind, server: server)
@@ -1779,7 +1777,7 @@ final class SyncService {
         deviceID: UUID,
         server: URL
     ) async throws -> (id: UUID, didUpload: Bool) {
-        var existingRequest = URLRequest(url: try endpoint(server, path: "/v1/media/\(item.id.uuidString)"))
+        var existingRequest = URLRequest(url: try endpoint(server, path: "/media/\(item.id.uuidString)"))
         existingRequest.httpMethod = "GET"
         let (existingData, existingResponse) = try await authorizedData(existingRequest, server: server)
         if existingResponse.statusCode == 200 {
@@ -1808,7 +1806,7 @@ final class SyncService {
         var create = try jsonRequest(
             createBody,
             server: server,
-            path: "/v1/media-upload-sessions",
+            path: "/media-upload-sessions",
             method: "POST"
         )
         create.setValue("media-\(item.id.uuidString)", forHTTPHeaderField: "Idempotency-Key")
@@ -1829,7 +1827,7 @@ final class SyncService {
         try require(uploadResponse, data: uploadData, expectedStatus: [204])
 
         var complete = URLRequest(
-            url: try endpoint(server, path: "/v1/media-upload-sessions/\(upload.id.uuidString)/complete")
+            url: try endpoint(server, path: "/media-upload-sessions/\(upload.id.uuidString)/complete")
         )
         complete.httpMethod = "POST"
         complete.setValue("media-complete-\(item.id.uuidString)", forHTTPHeaderField: "Idempotency-Key")
@@ -1900,7 +1898,7 @@ final class SyncService {
     // MARK: - Resource mapping
 
     private func makeTag(from remote: SyncTagResource, existing: [JournalTag]) -> JournalTag {
-        if let snapshot = SyncV2PayloadMapper.tagSnapshot(from: remote) {
+        if let snapshot = SyncPayloadMapper.tagSnapshot(from: remote) {
             return JournalTag(syncSnapshot: snapshot)
         }
         let compact = String(min(max(remote.sortOrder, 0), 511), radix: 8)
@@ -1923,7 +1921,7 @@ final class SyncService {
     }
 
     private func apply(_ remote: SyncTagResource, to tag: JournalTag) {
-        if let snapshot = SyncV2PayloadMapper.tagSnapshot(from: remote) {
+        if let snapshot = SyncPayloadMapper.tagSnapshot(from: remote) {
             apply(snapshot, to: tag)
             return
         }
@@ -2157,7 +2155,7 @@ final class SyncService {
         try await sendJSON(
             SyncRefreshRequest(refreshToken: refreshToken),
             to: server,
-            path: "/v1/auth/refresh",
+            path: "/auth/refresh",
             method: "POST",
             expectedStatus: [200]
         )
@@ -2537,7 +2535,7 @@ final class SyncService {
 
 // MARK: - Owner and server/agent payload projection
 
-enum SyncV2PayloadMapper {
+enum SyncPayloadMapper {
     static func entrySnapshot(
         from remote: SyncRecordResource,
         localMedia: [JournalMediaItem],
@@ -2711,7 +2709,7 @@ private actor SyncCredentialVault {
 }
 
 private struct SyncKeychainStore {
-    private let service = "app.exeligmos.sync.v2"
+    private let service = "app.fractonica.sync"
 
     func save(_ session: SyncStoredSession, account: String) throws {
         let data = try JSONEncoder().encode(session)
@@ -2765,10 +2763,10 @@ private struct SyncKeychainStore {
     }
 }
 
-final class SyncV2StateStore {
+final class SyncStateStore {
     private let defaults: UserDefaults
-    private let localStoreServerKey = "exeligmos.v2.local-store-owner.server"
-    private let localStoreUserKey = "exeligmos.v2.local-store-owner.user-id"
+    private let localStoreServerKey = "fractonica.sync.local-store-owner.server"
+    private let localStoreUserKey = "fractonica.sync.local-store-owner.user-id"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -2802,7 +2800,7 @@ final class SyncV2StateStore {
     }
 
     func deviceID(server: URL, userID: UUID) -> UUID {
-        let key = "exeligmos.v2.device.\(namespace(server: server, userID: userID))"
+        let key = "fractonica.sync.device.\(namespace(server: server, userID: userID))"
         if let value = defaults.string(forKey: key), let id = UUID(uuidString: value) {
             return id
         }
@@ -2873,7 +2871,7 @@ final class SyncV2StateStore {
         server: URL,
         userID: UUID
     ) -> String {
-        "exeligmos.v2.etag.\(namespace(server: server, userID: userID)).\(resourceType).\(resourceID)"
+        "fractonica.sync.etag.\(namespace(server: server, userID: userID)).\(resourceType).\(resourceID)"
     }
 
     private func namespace(server: URL, userID: UUID) -> String {

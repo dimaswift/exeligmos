@@ -25,7 +25,7 @@ export interface AuthBoundary {
 export async function loginWithPassword(login: string, password: string): Promise<AuthSession> {
   const client = createBackendApiClient();
   return readBackendData(
-    () => client.POST("/v1/auth/login", { body: { login, password } }),
+    () => client.POST("/auth/login", { body: { login, password } }),
     "Login failed.",
   );
 }
@@ -58,7 +58,7 @@ export async function requireAuth(request: Request): Promise<AuthBoundary> {
 
 export async function revokeBackendSession(auth: StoredAuthSession): Promise<void> {
   const client = createBackendApiClient({ accessToken: auth.accessToken });
-  await client.POST("/v1/auth/logout", { body: { refreshToken: auth.refreshToken } });
+  await client.POST("/auth/logout", { body: { refreshToken: auth.refreshToken } });
 }
 
 export function assertSameOrigin(request: Request): void {
@@ -76,7 +76,7 @@ function refreshBackendSession(refreshToken: string): Promise<AuthSession> {
 
   const client = createBackendApiClient();
   const flight = readBackendData(
-    () => client.POST("/v1/auth/refresh", { body: { refreshToken } }),
+    () => client.POST("/auth/refresh", { body: { refreshToken } }),
     "Session refresh failed.",
   );
   refreshFlights.set(refreshToken, flight);

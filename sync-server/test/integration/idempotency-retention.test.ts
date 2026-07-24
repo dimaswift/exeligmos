@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import { Client, type QueryResultRow } from "pg";
@@ -13,7 +12,7 @@ import type {
   Queryable,
 } from "../../src/db/database.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { executeIdempotentJson } from "../../src/owner-security/idempotency.js";
 import { executeIdempotentMutation } from "../../src/resources/shared.js";
 import { testConfig } from "../helpers.js";
@@ -25,10 +24,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
 
     const sql = new Client({ connectionString: databaseUrl });
     await sql.connect();

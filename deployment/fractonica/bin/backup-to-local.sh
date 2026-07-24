@@ -1,30 +1,53 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ "${1:-}" == --apply && "${2:-}" == --destination-is-encrypted && -n "${3:-}" ]] || {
-  echo "Usage: $0 --apply --destination-is-encrypted DESTINATION" >&2
+[[ "${1:-}" == --apply && "${2:-}" == --destination-is-encrypted && -n "${3:-}" \
+  && ( "$#" == 3 || ( "$#" == 4 && "${4:-}" == --compress ) ) ]] || {
+  echo "Usage: $0 --apply --destination-is-encrypted DESTINATION [--compress]" >&2
   echo "The destination must provide encryption at rest (for example FileVault or encrypted APFS)." >&2
   exit 2
 }
 remote="${REMOTE:-root@fractonica.com}"
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/maintenance-lock.sh"
 fractonica_require_remote_provisioned "$remote"
-destination="$3"
-if [[ -e "$destination" ]] && find "$destination" -mindepth 1 -print -quit | grep -q .; then
-  echo "backup destination must be new or empty: $destination" >&2; exit 1
+requested_destination="$3"
+compress=0
+work=""
+if [[ "${4:-}" == --compress ]]; then
+  compress=1
+  [[ "$requested_destination" == *.tar.gz ]] || {
+    echo "compressed backup destination must end in .tar.gz: $requested_destination" >&2
+    exit 2
+  }
+  [[ ! -e "$requested_destination" && ! -e "$requested_destination.sha256" ]] || {
+    echo "backup destination already exists: $requested_destination" >&2
+    exit 1
+  }
+  mkdir -p "$(dirname "$requested_destination")"
+  work="$(mktemp -d "$(dirname "$requested_destination")/.fractonica-backup.XXXXXX")"
+  destination="$work/fractonica-backup"
+else
+  destination="$requested_destination"
+  if [[ -e "$destination" ]] && find "$destination" -mindepth 1 -print -quit | grep -q .; then
+    echo "backup destination must be new or empty: $destination" >&2; exit 1
+  fi
 fi
 mkdir -p "$destination/media"
 chmod 0700 "$destination"
 stopped=0
-fractonica_acquire_remote_lock "$remote" backup
+lock_acquired=0
 cleanup() {
   if (( stopped )); then
     ssh "$remote" systemctl start fractonica-api.service >/dev/null 2>&1 \
       || echo "CRITICAL: fractonica-api did not restart; intervene on $remote" >&2
   fi
-  fractonica_release_remote_lock "$remote"
+  (( lock_acquired == 0 )) || fractonica_release_remote_lock "$remote"
+  [[ -z "$work" ]] || rm -rf "$work"
+  (( compress == 0 )) || rm -f "$requested_destination.partial"
 }
 trap cleanup EXIT
+fractonica_acquire_remote_lock "$remote" backup
+lock_acquired=1
 
 # Warm copy while writes continue, then a short write freeze for the final delta.
 rsync -a --checksum --partial "$remote:/var/lib/fractonica/media/" "$destination/media/"
@@ -43,8 +66,6 @@ ssh "$remote" "runuser -u postgres -- psql -At -d fractonica -c \"COPY (SELECT s
 ssh "$remote" "runuser -u postgres -- psql -At -F '|' -d fractonica -c \"SELECT pg_encoding_to_char(encoding), CASE datlocprovider WHEN 'c' THEN 'libc' ELSE datlocprovider::text END, datcollate, datctype, coalesce(datcollversion, '') FROM pg_database WHERE datname = current_database()\"" \
   > "$destination/database-locale.txt"
 ssh "$remote" cat /opt/fractonica/current/RELEASE_ID > "$destination/release-id.txt"
-ssh "$remote" "runuser -u postgres -- psql -At -d fractonica -c \"SELECT coalesce(json_agg(json_build_object('version', version, 'checksum', checksum) ORDER BY version), '[]'::json) FROM schema_migrations\"" \
-  > "$destination/schema-migrations.json"
 ssh "$remote" systemctl start fractonica-api.service
 stopped=0
 for _ in {1..30}; do
@@ -75,6 +96,14 @@ printf 'remote=%s\ncreated_at=%s\n' "$remote" "$(date -u +%FT%TZ)" > "$destinati
 (cd "$destination" && shasum -a 256 \
   BACKUP database-counts.json database-counts.tsv database-locale.txt \
   database-media.tsv database.dump.sha256 media.sha256 release-id.txt \
-  schema-migrations.json \
   > BACKUP.sha256)
-echo "backup complete: $destination"
+if (( compress )); then
+  tar -C "$work" -czf "$requested_destination.partial" fractonica-backup
+  mv "$requested_destination.partial" "$requested_destination"
+  artifact_sha="$(shasum -a 256 "$requested_destination" | awk '{print $1}')"
+  printf '%s  %s\n' "$artifact_sha" "$(basename "$requested_destination")" \
+    > "$requested_destination.sha256"
+  echo "compressed backup complete: $requested_destination"
+else
+  echo "backup complete: $destination"
+fi

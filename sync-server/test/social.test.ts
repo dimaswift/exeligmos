@@ -91,7 +91,7 @@ test("public activity advances a durable high-water cursor without embedding pay
   ]);
   const page = await new PublicActivityService(database).listPublic({ limit: 10 });
   assert.equal(page.hasMore, false);
-  assert.equal(page.data[0]?.resourceUrl, `/v1/public/records/${recordId}`);
+  assert.equal(page.data[0]?.resourceUrl, `/public/records/${recordId}`);
   assert.equal("payload" in (page.data[0] ?? {}), false);
   assert.ok(page.nextCursor.length > 10);
   assert.match(database.queries[2]?.text ?? "", /ORDER BY activity\.sequence ASC/);

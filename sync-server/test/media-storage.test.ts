@@ -109,16 +109,12 @@ test("media row mapping keeps private crypto opaque and public URLs representati
   const privateRow = row({
     visibility: "private",
     cipher_algorithm: "A256GCM",
-    crypto_version: 1,
-    key_version: 1,
     nonce: Buffer.alloc(12, 7),
     plaintext_content_type: "image/jpeg",
   });
   const privateResource = mapMediaRow(privateRow);
   assert.deepEqual(privateResource.encryption, {
     algorithm: "A256GCM",
-    cryptoVersion: 1,
-    keyVersion: 1,
     nonce: Buffer.alloc(12, 7).toString("base64"),
     plaintextContentType: "image/jpeg",
   });
@@ -127,7 +123,7 @@ test("media row mapping keeps private crypto opaque and public URLs representati
 
   const publicResource = mapMediaRow(row({}));
   assert.equal(publicResource.encryption, undefined);
-  assert.equal(publicResource.publicContentUrl, `/v1/public/media/${mediaId}/content`);
+  assert.equal(publicResource.publicContentUrl, `/public/media/${mediaId}/content`);
 });
 
 function row(overrides: Partial<MediaRow>): MediaRow {
@@ -143,8 +139,6 @@ function row(overrides: Partial<MediaRow>): MediaRow {
     sha256: Buffer.alloc(32, 1),
     storage_key: mediaStorageKey(userId, mediaId),
     cipher_algorithm: null,
-    crypto_version: null,
-    key_version: null,
     nonce: null,
     plaintext_content_type: null,
     revision: 3,

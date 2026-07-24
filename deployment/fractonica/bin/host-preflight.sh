@@ -23,7 +23,7 @@ if [[ ! -e /etc/fractonica/api.env ]] && (( min_free_kib < 11534336 )); then
   min_free_kib=11534336
 fi
 (( free_kib >= min_free_kib )) || {
-  echo "ERROR: at least $min_free_kib KiB free is required before migration"; exit 1;
+  echo "ERROR: at least $min_free_kib KiB free is required before deployment"; exit 1;
 }
 if (( swap_kib < min_swap_kib )); then
   if [[ -e /etc/fractonica/api.env ]]; then

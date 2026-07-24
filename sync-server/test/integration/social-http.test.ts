@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -8,7 +7,7 @@ import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { registerProblemHandlers } from "../../src/http/problem.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { generateRecordPublicId } from "../../src/resources/records.js";
@@ -25,10 +24,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const base = testConfig();
     const database = createPostgresDatabase({ ...base.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -100,14 +96,14 @@ test(
         "SELECT login FROM users WHERE id = $1",
         [sunId],
       )).rows[0]?.login;
-      const profile = await app.inject({ method: "GET", url: `/v1/public/users/${sunLogin}` });
+      const profile = await app.inject({ method: "GET", url: `/public/users/${sunLogin}` });
       assert.equal(profile.statusCode, 200, profile.body);
       assert.equal(profile.json().publicRecordCount, 1);
       assert.equal(profile.json().publicEventCount, 1);
 
       const publicRecord = await app.inject({
         method: "GET",
-        url: `/v1/public/records/${sunRecordId}`,
+        url: `/public/records/${sunRecordId}`,
       });
       assert.equal(publicRecord.statusCode, 200, publicRecord.body);
       assert.equal(publicRecord.json().author.id, sunId);
@@ -116,19 +112,19 @@ test(
 
       const publicEvent = await app.inject({
         method: "GET",
-        url: `/v1/public/events/${sunEventId}`,
+        url: `/public/events/${sunEventId}`,
       });
       assert.equal(publicEvent.statusCode, 200, publicEvent.body);
       assert.equal(publicEvent.json().author.id, sunId);
       assert.equal("deviceId" in publicEvent.json(), false);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/public/events/${required(privateSunEvent.rows[0]?.id)}`,
+        url: `/public/events/${required(privateSunEvent.rows[0]?.id)}`,
       })).statusCode, 404);
 
       const subscribed = await app.inject({
         method: "PUT",
-        url: `/v1/subscriptions/${sunId}`,
+        url: `/subscriptions/${sunId}`,
         headers: { "idempotency-key": `subscribe-${randomUUID()}` },
         payload: { includeRecords: true, includeEvents: true },
       });
@@ -136,7 +132,7 @@ test(
       assert.equal(subscribed.json().targetUser.id, sunId);
       assert.equal(subscribed.json().targetUser.status, "active");
 
-      const following = await app.inject({ method: "GET", url: "/v1/activity" });
+      const following = await app.inject({ method: "GET", url: "/activity" });
       assert.equal(following.statusCode, 200, following.body);
       assert.deepEqual(
         new Set(following.json().data.map((item: { resourceType: string }) => item.resourceType)),
@@ -146,7 +142,7 @@ test(
 
       const referenced = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: { "idempotency-key": `reference-${randomUUID()}` },
         payload: {
           deviceId: ownerDeviceId,
@@ -164,7 +160,7 @@ test(
 
       const missingReference = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: { "idempotency-key": `missing-reference-${randomUUID()}` },
         payload: {
           deviceId: ownerDeviceId,
@@ -186,15 +182,15 @@ test(
 
       const privateTarget = await sql.query<{ id: string; public_id: string }>(
         `INSERT INTO records (
-           user_id, device_id, visibility, cipher_algorithm, crypto_version,
-           key_version, nonce, ciphertext, encrypted_content_type
-         ) VALUES ($1, $2, 'private', 'A256GCM', 1, 1, $3, $4,
+           user_id, device_id, visibility, cipher_algorithm,
+           nonce, ciphertext, encrypted_content_type
+         ) VALUES ($1, $2, 'private', 'A256GCM', $3, $4,
            'application/vnd.exeligmos.record+json') RETURNING id, public_id`,
         [ownerId, ownerDeviceId, Buffer.alloc(12, 1), Buffer.alloc(16, 2)],
       );
       const leaked = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: { "idempotency-key": `private-reference-${randomUUID()}` },
         payload: {
           deviceId: ownerDeviceId,
@@ -215,7 +211,7 @@ test(
       );
       const disabledTargetSubscriptions = await app.inject({
         method: "GET",
-        url: "/v1/subscriptions",
+        url: "/subscriptions",
       });
       assert.equal(disabledTargetSubscriptions.statusCode, 200, disabledTargetSubscriptions.body);
       assert.equal(disabledTargetSubscriptions.json().data.length, 1);
@@ -230,7 +226,7 @@ test(
 
       const deletedSubscription = await app.inject({
         method: "DELETE",
-        url: `/v1/subscriptions/${sunId}`,
+        url: `/subscriptions/${sunId}`,
         headers: {
           "if-match": required(subscribed.headers.etag),
           "idempotency-key": `unsubscribe-${randomUUID()}`,
@@ -239,7 +235,7 @@ test(
       assert.equal(deletedSubscription.statusCode, 204, deletedSubscription.body);
       const subscriptionsAfterDelete = await app.inject({
         method: "GET",
-        url: "/v1/subscriptions",
+        url: "/subscriptions",
       });
       assert.equal(subscriptionsAfterDelete.statusCode, 200, subscriptionsAfterDelete.body);
       assert.equal(subscriptionsAfterDelete.json().data.length, 0);

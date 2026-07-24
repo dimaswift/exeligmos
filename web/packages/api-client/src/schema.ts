@@ -38,7 +38,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/register": {
+    "/auth/register": {
         parameters: {
             query?: never;
             header?: never;
@@ -60,7 +60,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/login": {
+    "/auth/login": {
         parameters: {
             query?: never;
             header?: never;
@@ -77,7 +77,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/refresh": {
+    "/auth/refresh": {
         parameters: {
             query?: never;
             header?: never;
@@ -98,7 +98,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/logout": {
+    "/auth/logout": {
         parameters: {
             query?: never;
             header?: never;
@@ -115,7 +115,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/me": {
+    "/me": {
         parameters: {
             query?: never;
             header?: never;
@@ -132,12 +132,12 @@ export interface paths {
         /**
          * Update authenticated user preferences
          * @description JWT-only. Updates the Saros-series anchor used by temporal clocks and
-         *     record presentation. Supply the strong ETag returned by `GET /v1/me`.
+         *     record presentation. Supply the strong ETag returned by `GET /me`.
          */
         patch: operations["updateCurrentUser"];
         trace?: never;
     };
-    "/v1/me/encryption-profile": {
+    "/me/encryption-profile": {
         parameters: {
             query?: never;
             header?: never;
@@ -154,7 +154,7 @@ export interface paths {
         put?: never;
         /**
          * Initialize mnemonic recovery for this user
-         * @description JWT-only and create-once in crypto profile v1. The client generates the
+         * @description JWT-only and create-once. The client generates the
          *     mnemonic locally and sends only its derived key-check value. The same
          *     idempotency key and body return the original response; a different
          *     initialization after setup returns 409.
@@ -166,7 +166,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/api-keys": {
+    "/api-keys": {
         parameters: {
             query?: never;
             header?: never;
@@ -199,7 +199,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/api-keys/{apiKeyId}": {
+    "/api-keys/{apiKeyId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -222,7 +222,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/devices": {
+    "/devices": {
         parameters: {
             query?: never;
             header?: never;
@@ -236,7 +236,7 @@ export interface paths {
          * Register a client or automation device
          * @description API keys are issued only after their logical device exists. Registration
          *     does not bind the caller's login session. A first-party client binds its
-         *     own current session with `PUT /v1/devices/{deviceId}/current-session`;
+         *     own current session with `PUT /devices/{deviceId}/current-session`;
          *     creating an automation device must not rebind the human operator.
          */
         post: operations["registerDevice"];
@@ -246,7 +246,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/devices/{deviceId}": {
+    "/devices/{deviceId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -272,7 +272,7 @@ export interface paths {
         patch: operations["updateDevice"];
         trace?: never;
     };
-    "/v1/devices/{deviceId}/current-session": {
+    "/devices/{deviceId}/current-session": {
         parameters: {
             query?: never;
             header?: never;
@@ -299,7 +299,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tags": {
+    "/tags": {
         parameters: {
             query?: never;
             header?: never;
@@ -317,7 +317,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tags/{tagId}": {
+    "/tags/{tagId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -341,18 +341,18 @@ export interface paths {
         patch: operations["updateTag"];
         trace?: never;
     };
-    "/v1/templates": {
+    "/templates": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List current template versions */
+        /** List templates */
         get: operations["listTemplates"];
         put?: never;
         /**
-         * Create a versioned public-record template
+         * Create a public-record template
          * @description Templates render only public payloads; private callers render locally before encryption.
          */
         post: operations["createTemplate"];
@@ -362,7 +362,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/templates/{templateId}": {
+    "/templates/{templateId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -371,7 +371,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a template version */
+        /** Get a template */
         get: operations["getTemplate"];
         put?: never;
         post?: never;
@@ -382,14 +382,11 @@ export interface paths {
         delete: operations["deleteTemplate"];
         options?: never;
         head?: never;
-        /**
-         * Create the next immutable template version
-         * @description Prior versions remain addressable for reproducible record attribution.
-         */
-        patch: operations["createTemplateVersion"];
+        /** Update a template */
+        patch: operations["updateTemplate"];
         trace?: never;
     };
-    "/v1/media-upload-sessions": {
+    "/media-upload-sessions": {
         parameters: {
             query?: never;
             header?: never;
@@ -412,7 +409,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/media-upload-sessions/{uploadId}": {
+    "/media-upload-sessions/{uploadId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -432,7 +429,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/media-upload-sessions/{uploadId}/content": {
+    "/media-upload-sessions/{uploadId}/content": {
         parameters: {
             query?: never;
             header?: never;
@@ -455,7 +452,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/media-upload-sessions/{uploadId}/complete": {
+    "/media-upload-sessions/{uploadId}/complete": {
         parameters: {
             query?: never;
             header?: never;
@@ -477,7 +474,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/media/{mediaId}": {
+    "/media/{mediaId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -501,7 +498,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/media/{mediaId}/content": {
+    "/media/{mediaId}/content": {
         parameters: {
             query?: never;
             header?: never;
@@ -523,7 +520,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/public/media/{mediaId}/content": {
+    "/public/media/{mediaId}/content": {
         parameters: {
             query?: never;
             header?: never;
@@ -545,7 +542,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sync/stats": {
+    "/sync/stats": {
         parameters: {
             query?: never;
             header?: never;
@@ -570,7 +567,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sync/changes": {
+    "/sync/changes": {
         parameters: {
             query?: never;
             header?: never;
@@ -597,7 +594,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sync/batches": {
+    "/sync/batches": {
         parameters: {
             query?: never;
             header?: never;
@@ -621,7 +618,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/records": {
+    "/records": {
         parameters: {
             query?: never;
             header?: never;
@@ -658,7 +655,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/records/{recordId}": {
+    "/records/{recordId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -702,7 +699,7 @@ export interface paths {
         patch: operations["updateRecord"];
         trace?: never;
     };
-    "/v1/public/records": {
+    "/public/records": {
         parameters: {
             query?: never;
             header?: never;
@@ -722,7 +719,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/public/records/{recordId}": {
+    "/public/records/{recordId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -741,7 +738,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/events": {
+    "/events": {
         parameters: {
             query?: never;
             header?: never;
@@ -770,7 +767,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/events/{eventId}": {
+    "/events/{eventId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -791,7 +788,7 @@ export interface paths {
         patch: operations["updateEvent"];
         trace?: never;
     };
-    "/v1/public/events": {
+    "/public/events": {
         parameters: {
             query?: never;
             header?: never;
@@ -811,7 +808,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/public/events/{eventId}": {
+    "/public/events/{eventId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -828,7 +825,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/public/users/{login}": {
+    "/public/users/{login}": {
         parameters: {
             query?: never;
             header?: never;
@@ -850,7 +847,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/subscriptions": {
+    "/subscriptions": {
         parameters: {
             query?: never;
             header?: never;
@@ -867,7 +864,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/subscriptions/{targetUserId}": {
+    "/subscriptions/{targetUserId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -887,7 +884,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/public/activity": {
+    "/public/activity": {
         parameters: {
             query?: never;
             header?: never;
@@ -920,7 +917,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/activity": {
+    "/activity": {
         parameters: {
             query?: never;
             header?: never;
@@ -956,7 +953,7 @@ export interface components {
             status: "ready";
             checks: components["schemas"]["ReadinessChecks"];
         };
-        /** @description RFC 9457 Problem Details with stable legacy protocol extensions. */
+        /** @description RFC 9457 Problem Details with stable application extensions. */
         Problem: {
             /**
              * Format: uri-reference
@@ -1001,8 +998,7 @@ export interface components {
         };
         /**
          * @description Must serialize to at most 32768 UTF-8 bytes. Object keys and string
-         *     values must be PostgreSQL-compatible Unicode text; U+0000 and unpaired
-         *     UTF-16 surrogates are rejected.
+         *     values must not contain U+0000 or unpaired UTF-16 surrogates.
          * @default {}
          */
         ResourceMetadata: {
@@ -1029,20 +1025,12 @@ export interface components {
         /** @description Case-insensitive account login stored in normalized form. */
         LoginName: string;
         CreateEncryptionProfileRequest: {
-            /** @constant */
-            cryptoVersion: 1;
-            /** @constant */
-            keyVersion: 1;
-            /** @description 32-byte value defined by crypto profile v1. */
+            /** @description Canonical 32-byte key-check value. */
             keyCheck: string;
         };
         EncryptionProfile: {
             /** Format: uuid */
             readonly userId: string;
-            /** @constant */
-            cryptoVersion: 1;
-            /** @constant */
-            keyVersion: 1;
             keyCheck: string;
             /** Format: date-time */
             readonly createdAt: string;
@@ -1240,7 +1228,7 @@ export interface components {
         /** @description Record resources use RecordPublicId; all other resource types use UUIDs. */
         ResourceIdentifier: components["schemas"]["RecordPublicId"] | string;
         /** @enum {string} */
-        SourceKind: "client" | "agent" | "import" | "server";
+        SourceKind: "client" | "agent" | "server";
         SourceReference: {
             kind: components["schemas"]["SourceKind"];
             provider: string;
@@ -1288,11 +1276,11 @@ export interface components {
         };
         /**
          * @description Server-readable journal payload. Known fields support the first-party
-         *     client; additional domain fields are preserved for forward-compatible
-         *     agents and migrated records. The compact JSON representation must not
+         *     client; additional domain fields are preserved as submitted. The
+         *     compact JSON representation must not
          *     exceed 262144 UTF-8 bytes, including a payload rendered from a template.
-         *     Object keys and string values must be PostgreSQL-compatible Unicode text;
-         *     U+0000 and unpaired UTF-16 surrogates are rejected.
+         *     Object keys and string values must not contain U+0000 or unpaired
+         *     UTF-16 surrogates.
          */
         PublicRecordPayload: {
             text?: string;
@@ -1306,28 +1294,21 @@ export interface components {
         TemplateRenderRequest: {
             /** Format: uuid */
             templateId: string;
-            /** @description Omit to render the current version. */
-            version?: number;
             variables: components["schemas"]["JsonObject"];
         };
         TemplateAttribution: {
             /** Format: uuid */
             templateId: string;
-            version: number;
         };
         /**
          * @description AES-256-GCM ciphertext including its authentication tag. Associated
          *     data canonically binds user, record, device, revision, opaque media
-         *     IDs, crypto version, key version, and content type; clients must follow
-         *     the linked crypto profile exactly.
+         *     IDs, and content type; clients must follow the linked cryptographic
+         *     profile exactly.
          */
         CiphertextEnvelope: {
             /** @constant */
             algorithm: "A256GCM";
-            /** @constant */
-            cryptoVersion: 1;
-            /** @constant */
-            keyVersion: 1;
             /** @description Exactly 12 bytes after base64 decoding. */
             nonce: string;
             /**
@@ -1386,7 +1367,7 @@ export interface components {
             id: components["schemas"]["RecordPublicId"];
             /**
              * Format: uuid
-             * @description Required client-generated UUID used by crypto profile v1.
+             * @description Required client-generated UUID used by encryption.
              */
             originId: string;
             /** Format: uuid */
@@ -1407,7 +1388,7 @@ export interface components {
             readonly id: components["schemas"]["RecordPublicId"];
             /**
              * Format: uuid
-             * @description Owner-only immutable UUID used for storage identity and crypto profile v1.
+             * @description Owner-only immutable UUID used for storage identity and encryption.
              */
             readonly originId: string;
             /** Format: uuid */
@@ -1752,7 +1733,6 @@ export interface components {
                 [key: string]: unknown;
             };
             metadata: components["schemas"]["JsonObject"];
-            readonly version: number;
             /** Format: int64 */
             readonly revision: number;
             /** Format: date-time */
@@ -1769,10 +1749,6 @@ export interface components {
         MediaEncryption: {
             /** @constant */
             algorithm: "A256GCM";
-            /** @constant */
-            cryptoVersion: 1;
-            /** @constant */
-            keyVersion: 1;
             /** @description Exactly 12 bytes after base64 decoding. */
             nonce: string;
             /** @description Optional privacy tradeoff disclosed by the encrypting client. */
@@ -1953,7 +1929,7 @@ export interface components {
              */
             kind: "upsertRecord";
             clientMutationId: components["schemas"]["MutationId"];
-            /** @description Optional compatibility hint. Record synchronization is client-authoritative: an active or deleted relay copy with the same ID is replaced by the submitted local record even when this value is absent or stale. */
+            /** @description Optional current-state hint. Record synchronization is client-authoritative: an active or deleted relay copy with the same ID is replaced by the submitted local record even when this value is absent or stale. */
             ifMatch?: string;
             record: components["schemas"]["CreateRecordRequest"];
         };
@@ -1986,7 +1962,7 @@ export interface components {
              */
             kind: "upsertTemplate";
             clientMutationId: components["schemas"]["MutationId"];
-            /** @description Required when creating a new template version. */
+            /** @description Required when replacing an existing template. */
             ifMatch?: string;
             template: components["schemas"]["CreateTemplateRequest"];
         };
@@ -3208,7 +3184,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current template versions ordered by name and ID. */
+            /** @description Templates ordered by name and ID. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -3278,7 +3254,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Template version 1 created. */
+            /** @description Template created. */
             201: {
                 headers: {
                     Location?: string;
@@ -3301,10 +3277,7 @@ export interface operations {
     };
     getTemplate: {
         parameters: {
-            query?: {
-                /** @description Omit for the current version. */
-                version?: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 templateId: components["parameters"]["TemplateId"];
@@ -3313,7 +3286,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Requested or current template version. */
+            /** @description Template resource. */
             200: {
                 headers: {
                     ETag: components["headers"]["ETag"];
@@ -3373,7 +3346,7 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
-    createTemplateVersion: {
+    updateTemplate: {
         parameters: {
             query?: never;
             header: {
@@ -3403,7 +3376,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New current template version created. */
+            /** @description Template updated. */
             200: {
                 headers: {
                     ETag: components["headers"]["ETag"];

@@ -22,7 +22,7 @@ import type {
   DeviceView,
   Page,
   UpdateDeviceInput,
-  Versioned,
+  ResourceState,
 } from "./models.js";
 
 interface DeviceRow extends QueryResultRow {
@@ -98,13 +98,13 @@ export class DeviceService {
     };
   }
 
-  async get(userId: string, deviceId: string): Promise<Versioned<DeviceView>> {
+  async get(userId: string, deviceId: string): Promise<ResourceState<DeviceView>> {
     assertUuid(deviceId, "deviceId");
     const row = await findDevice(this.database, userId, deviceId, false);
     if (row === undefined) {
       throw notFound();
     }
-    return versionedDevice(row);
+    return deviceState(row);
   }
 
   async register(options: {
@@ -149,16 +149,16 @@ export class DeviceService {
               detail: "The supplied device ID already exists.",
             });
           }
-          const versioned = versionedDevice(row);
+          const state = deviceState(row);
           await audit(client, options.principal, options.requestId, "device.register", row.id);
 
           return {
             status: 201,
             headers: {
-              etag: versioned.etag,
-              location: `/v1/devices/${row.id}`,
+              etag: state.etag,
+              location: `/devices/${row.id}`,
             },
-            body: versioned.view,
+            body: state.view,
           };
         },
       }),
@@ -171,7 +171,7 @@ export class DeviceService {
     readonly ifMatch: string | undefined;
     readonly input: UpdateDeviceInput;
     readonly requestId: string;
-  }): Promise<Versioned<DeviceView>> {
+  }): Promise<ResourceState<DeviceView>> {
     assertUuid(options.deviceId, "deviceId");
     validateUpdateDevice(options.input);
 
@@ -216,7 +216,7 @@ export class DeviceService {
         throw notFound();
       }
       await audit(client, options.principal, options.requestId, "device.update", row.id);
-      return versionedDevice(row);
+      return deviceState(row);
     });
   }
 
@@ -335,7 +335,7 @@ async function findDevice(
   return result.rows[0];
 }
 
-function versionedDevice(row: DeviceRow): Versioned<DeviceView> {
+function deviceState(row: DeviceRow): ResourceState<DeviceView> {
   return { view: deviceView(row), etag: deviceEtag(row) };
 }
 

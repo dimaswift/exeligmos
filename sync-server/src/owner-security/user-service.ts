@@ -14,7 +14,7 @@ import type {
   EncryptionProfileView,
   UpdateUserInput,
   UserView,
-  Versioned,
+  ResourceState,
 } from "./models.js";
 
 interface UserRow extends QueryResultRow {
@@ -29,8 +29,6 @@ interface UserRow extends QueryResultRow {
 
 interface EncryptionProfileRow extends QueryResultRow {
   readonly user_id: string;
-  readonly crypto_version: 1;
-  readonly key_version: 1;
   readonly key_check: Buffer;
   readonly created_at: Date | string;
 }
@@ -38,13 +36,13 @@ interface EncryptionProfileRow extends QueryResultRow {
 export class UserSecurityService {
   constructor(private readonly database: Database) {}
 
-  async getCurrentUser(userId: string): Promise<Versioned<UserView>> {
+  async getCurrentUser(userId: string): Promise<ResourceState<UserView>> {
     const row = await findActiveUser(this.database, userId, false);
     if (row === undefined) {
       throw authenticationInvalid();
     }
 
-    return versionedUser(row);
+    return userState(row);
   }
 
   async updateCurrentUser(options: {
@@ -52,7 +50,7 @@ export class UserSecurityService {
     readonly ifMatch: string | undefined;
     readonly input: UpdateUserInput;
     readonly requestId: string;
-  }): Promise<Versioned<UserView>> {
+  }): Promise<ResourceState<UserView>> {
     validateSarosAnchor(options.input.sarosAnchor);
 
     return this.database.transaction(async (client) => {
@@ -94,13 +92,13 @@ export class UserSecurityService {
           }),
         ],
       );
-      return versionedUser(row);
+      return userState(row);
     });
   }
 
   async getEncryptionProfile(userId: string): Promise<EncryptionProfileView> {
     const result = await this.database.query<EncryptionProfileRow>(
-      `SELECT user_id, crypto_version, key_version, key_check, created_at
+      `SELECT user_id, key_check, created_at
        FROM user_encryption_profiles
        WHERE user_id = $1`,
       [userId],
@@ -135,11 +133,11 @@ export class UserSecurityService {
         execute: async () => {
           const result = await client.query<EncryptionProfileRow>(
             `INSERT INTO user_encryption_profiles (
-               user_id, crypto_version, key_version, key_check
+               user_id, key_check
              )
-             VALUES ($1, 1, 1, $2)
+             VALUES ($1, $2)
              ON CONFLICT DO NOTHING
-             RETURNING user_id, crypto_version, key_version, key_check, created_at`,
+             RETURNING user_id, key_check, created_at`,
             [options.principal.userId, keyCheck],
           );
           const row = result.rows[0];
@@ -147,7 +145,7 @@ export class UserSecurityService {
             throw new OwnerSecurityProblem({
               status: 409,
               code: "encryption_profile_already_initialized",
-              detail: "Crypto profile v1 is create-once for this user.",
+              detail: "The encryption profile is create-once for this user.",
             });
           }
 
@@ -191,7 +189,7 @@ async function findActiveUser(
   return result.rows[0];
 }
 
-function versionedUser(row: UserRow): Versioned<UserView> {
+function userState(row: UserRow): ResourceState<UserView> {
   return {
     view: {
       id: row.id,
@@ -230,8 +228,6 @@ function authenticationInvalid(): OwnerSecurityProblem {
 function validateEncryptionProfile(input: CreateEncryptionProfileInput): void {
   const bytes = Buffer.from(input.keyCheck, "base64");
   if (
-    input.cryptoVersion !== 1 ||
-    input.keyVersion !== 1 ||
     !/^[A-Za-z0-9+/]{43}=$/.test(input.keyCheck) ||
     bytes.byteLength !== 32 ||
     bytes.toString("base64") !== input.keyCheck
@@ -239,7 +235,7 @@ function validateEncryptionProfile(input: CreateEncryptionProfileInput): void {
     throw new OwnerSecurityProblem({
       status: 422,
       code: "invalid_encryption_profile",
-      detail: "Crypto profile v1 requires a canonical base64-encoded 32-byte key check.",
+      detail: "The encryption profile requires a canonical base64-encoded 32-byte key check.",
     });
   }
 }
@@ -247,8 +243,6 @@ function validateEncryptionProfile(input: CreateEncryptionProfileInput): void {
 function encryptionProfileView(row: EncryptionProfileRow): EncryptionProfileView {
   return {
     userId: row.user_id,
-    cryptoVersion: row.crypto_version,
-    keyVersion: row.key_version,
     keyCheck: row.key_check.toString("base64"),
     createdAt: isoTimestamp(row.created_at),
   };

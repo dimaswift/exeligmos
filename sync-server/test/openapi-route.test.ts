@@ -12,7 +12,7 @@ test("the checked-in OpenAPI contract and Swagger explorer are served", async ()
   const [contract, docs, cryptoProfile, stylesheet, initializer, favicon] = await Promise.all([
     app.inject({ method: "GET", url: "/openapi.yaml" }),
     app.inject({ method: "GET", url: "/docs" }),
-    app.inject({ method: "GET", url: "/docs/crypto-v1.md" }),
+    app.inject({ method: "GET", url: "/docs/crypto.md" }),
     app.inject({ method: "GET", url: "/docs/swagger-ui.css" }),
     app.inject({ method: "GET", url: "/docs/swagger-initializer.js" }),
     app.inject({ method: "GET", url: "/docs/favicon-32x32.png" }),
@@ -22,7 +22,7 @@ test("the checked-in OpenAPI contract and Swagger explorer are served", async ()
   assert.equal(contract.statusCode, 200);
   assert.match(contract.headers["content-type"] ?? "", /^application\/yaml/);
   assert.match(contract.body, /^openapi: 3\.1\.0/m);
-  assert.match(contract.body, /\/v1\/records:/);
+  assert.match(contract.body, /\/records:/);
   assert.equal(docs.statusCode, 200);
   assert.match(docs.headers["content-type"] ?? "", /^text\/html/);
   assert.match(docs.body, /id="swagger-ui"/);

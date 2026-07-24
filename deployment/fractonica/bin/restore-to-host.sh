@@ -1,8 +1,49 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ "${1:-}" == --apply && -n "${2:-}" ]] || { echo "Usage: $0 --apply BACKUP_DIRECTORY" >&2; exit 2; }
-backup="$(cd "$2" && pwd)"
+[[ "${1:-}" == --apply && -n "${2:-}" ]] || {
+  echo "Usage: $0 --apply BACKUP_DIRECTORY_OR_TAR_GZ" >&2
+  exit 2
+}
+backup_input="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+extract_work=""
+if [[ -d "$backup_input" ]]; then
+  backup="$backup_input"
+elif [[ -f "$backup_input" && "$backup_input" == *.tar.gz ]]; then
+  if [[ -f "$backup_input.sha256" ]]; then
+    expected_archive_sha="$(awk 'NR == 1 {print $1}' "$backup_input.sha256")"
+    actual_archive_sha="$(shasum -a 256 "$backup_input" | awk '{print $1}')"
+    [[ "$expected_archive_sha" =~ ^[0-9a-f]{64}$ \
+      && "$actual_archive_sha" == "$expected_archive_sha" ]] || {
+      echo "compressed backup checksum verification failed" >&2
+      exit 1
+    }
+  fi
+  while IFS= read -r entry; do
+    [[ "$entry" == fractonica-backup || "$entry" == fractonica-backup/* ]] || {
+      echo "compressed backup contains an unsafe path: $entry" >&2
+      exit 1
+    }
+    [[ "$entry" != /* && "$entry" != *"/../"* && "$entry" != "../"* ]] || {
+      echo "compressed backup contains a traversal path: $entry" >&2
+      exit 1
+    }
+  done < <(tar -tzf "$backup_input")
+  while IFS= read -r listing; do
+    entry_type="${listing:0:1}"
+    [[ "$entry_type" == "-" || "$entry_type" == "d" ]] || {
+      echo "compressed backup contains a non-file entry" >&2
+      exit 1
+    }
+  done < <(tar -tvzf "$backup_input")
+  extract_work="$(mktemp -d "$(dirname "$backup_input")/.fractonica-restore.XXXXXX")"
+  trap 'rm -rf "$extract_work"' EXIT
+  tar -xzf "$backup_input" -C "$extract_work"
+  backup="$extract_work/fractonica-backup"
+else
+  echo "backup input must be a directory or .tar.gz file: $backup_input" >&2
+  exit 2
+fi
 remote="${REMOTE:-root@fractonica.com}"
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/maintenance-lock.sh"
 fractonica_require_remote_provisioned "$remote"
@@ -28,7 +69,11 @@ free_kib="$(ssh "$remote" "df -Pk /var/lib/fractonica | awk 'NR==2 {print \$4}'"
   echo "target needs $needed_kib KiB free to stage this restore; found $free_kib" >&2; exit 1;
 }
 fractonica_acquire_remote_lock "$remote" restore
-trap 'fractonica_release_remote_lock "$remote"' EXIT
+cleanup() {
+  fractonica_release_remote_lock "$remote"
+  [[ -z "$extract_work" ]] || rm -rf "$extract_work"
+}
+trap cleanup EXIT
 incoming="/var/lib/fractonica/media.restore-$stamp"
 remote_dump="/opt/fractonica/incoming/restore-$stamp.dump"
 remote_manifest="/opt/fractonica/incoming/restore-$stamp.media.sha256"
@@ -102,21 +147,8 @@ runuser -u postgres -- "$pg_bin/pg_restore" "${restore_common[@]}" --section=pos
 vector_version="$(runuser -u postgres -- psql -At -d "$restore_db" -c \
   "SELECT extversion FROM pg_extension WHERE extname='vector'")"
 dpkg --compare-versions "$vector_version" ge 0.8
-[[ -x /opt/fractonica/current/runtime/node ]] \
-  || { echo "a current release is required before restore" >&2; exit 1; }
-runuser -u fractonica-api -- bash -c '
-  set -Eeuo pipefail
-  set -a
-  . /etc/fractonica/api.env
-  set +a
-  DATABASE_URL="${DATABASE_URL%/*}/$1"
-  export DATABASE_URL
-  export MIGRATIONS_DIR=/opt/fractonica/current/api/db/migrations
-  exec /opt/fractonica/current/runtime/node --enable-source-maps \
-    /opt/fractonica/current/api/dist/db/migrate.js
-' -- "$restore_db"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$restore_db" -c \
-  "SELECT count(*) AS applied_migrations FROM schema_migrations; SELECT count(*) AS users FROM users;"
+  "SELECT count(*) AS users FROM users;"
 actual_counts="$(runuser -u postgres -- psql -At -F $'\t' -d "$restore_db" -c \
   "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM records), (SELECT count(*) FROM media_objects)")"
 [[ "$actual_counts" == "$expected_users"$'\t'"$expected_records"$'\t'"$expected_media" ]] \
@@ -140,7 +172,7 @@ systemctl start fractonica-api.service fractonica-web.service
 ready=0
 for _ in {1..30}; do
   curl -fsS http://127.0.0.1:8788/health/ready >/dev/null \
-    && curl -fsS 'http://127.0.0.1:8788/v1/public/records?limit=1' >/dev/null \
+    && curl -fsS 'http://127.0.0.1:8788/public/records?limit=1' >/dev/null \
     && curl -fsS http://127.0.0.1:3100/ >/dev/null && { ready=1; break; }
   sleep 1
 done

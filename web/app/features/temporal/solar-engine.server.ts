@@ -22,7 +22,6 @@ type RawEclipse = readonly [
 ];
 type RawSeries = readonly [saros: number, eclipses: readonly RawEclipse[]];
 interface RawSolarData {
-  readonly schemaVersion: number;
   readonly sourceSha256: string;
   readonly series: readonly RawSeries[];
 }
@@ -30,7 +29,6 @@ interface RawSolarData {
 const solarData = rawSolarData as unknown as RawSolarData;
 
 export const solarTemporalDataMetadata = Object.freeze({
-  schemaVersion: solarData.schemaVersion,
   sourceSha256: solarData.sourceSha256,
   seriesCount: solarData.series.length,
   eclipseCount: solarData.series.reduce((sum, series) => sum + series[1].length, 0),

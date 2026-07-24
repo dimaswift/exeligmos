@@ -32,7 +32,7 @@ const API_KEY_ID = "00000000-0000-4000-8000-000000000003";
 const ACTOR_ID = "00000000-0000-4000-8000-000000000004";
 const NOW = new Date("2026-07-14T20:00:00.000Z");
 
-test("GET /v1/me accepts an API-key principal and returns a strong user ETag", async (context) => {
+test("GET /me accepts an API-key principal and returns a strong user ETag", async (context) => {
   const database = new ScriptedDatabase([
     (text, values) => {
       assert.match(text, /FROM users/);
@@ -46,7 +46,7 @@ test("GET /v1/me accepts an API-key principal and returns a strong user ETag", a
 
   const response = await app.inject({
     method: "GET",
-    url: "/v1/me",
+    url: "/me",
     headers: { authorization: "Bearer exk_example" },
   });
 
@@ -64,7 +64,7 @@ test("GET /v1/me accepts an API-key principal and returns a strong user ETag", a
   database.assertDone();
 });
 
-test("PATCH /v1/me updates the JWT user's Saros anchor with ETag protection", async (context) => {
+test("PATCH /me updates the JWT user's Saros anchor with ETag protection", async (context) => {
   const updatedAt = new Date("2026-07-14T20:00:00Z");
   const database = new ScriptedDatabase([
     (text, values) => {
@@ -99,7 +99,7 @@ test("PATCH /v1/me updates the JWT user's Saros anchor with ETag protection", as
 
   const response = await app.inject({
     method: "PATCH",
-    url: "/v1/me",
+    url: "/me",
     headers: { "if-match": `"user-${USER_ID}-r3"`, "x-request-id": "req-1" },
     payload: { sarosAnchor: 122 },
   });
@@ -111,14 +111,14 @@ test("PATCH /v1/me updates the JWT user's Saros anchor with ETag protection", as
   database.assertDone();
 });
 
-test("PATCH /v1/me is JWT-only", async (context) => {
+test("PATCH /me is JWT-only", async (context) => {
   const database = new ScriptedDatabase([]);
   const app = await ownerSecurityApp(database, new StubAuthenticator(apiKeyPrincipal()));
   context.after(() => app.close());
 
   const response = await app.inject({
     method: "PATCH",
-    url: "/v1/me",
+    url: "/me",
     headers: { "if-match": `"user-${USER_ID}-r3"` },
     payload: { sarosAnchor: 122 },
   });
@@ -141,10 +141,10 @@ test("device reads request devices:read while device mutations require JWT", asy
   const app = await ownerSecurityApp(database, authenticator);
   context.after(() => app.close());
 
-  const read = await app.inject({ method: "GET", url: `/v1/devices/${DEVICE_ID}` });
+  const read = await app.inject({ method: "GET", url: `/devices/${DEVICE_ID}` });
   const create = await app.inject({
     method: "POST",
-    url: "/v1/devices",
+    url: "/devices",
     headers: { "idempotency-key": "device-create-1" },
     payload: { name: "Agent", kind: "agent" },
   });
@@ -169,7 +169,7 @@ test("device updates enforce the current strong ETag and return it on 412", asyn
 
   const response = await app.inject({
     method: "PATCH",
-    url: `/v1/devices/${DEVICE_ID}`,
+    url: `/devices/${DEVICE_ID}`,
     headers: { "if-match": `"device-${DEVICE_ID}-r6"` },
     payload: { name: "Renamed" },
   });
@@ -289,11 +289,9 @@ test("API-key creation stores only SHA-256 secret material and returns plaintext
   database.assertDone();
 });
 
-test("encryption profile initialization stores only the v1 key check and is replayable", async () => {
+test("encryption profile initialization stores only the key check and is replayable", async () => {
   const keyCheck = Buffer.alloc(32, 7);
   const input = {
-    cryptoVersion: 1 as const,
-    keyVersion: 1 as const,
     keyCheck: keyCheck.toString("base64"),
   };
   const database = new ScriptedDatabase([
@@ -318,8 +316,6 @@ test("encryption profile initialization stores only the v1 key check and is repl
       return rows([
         {
           user_id: USER_ID,
-          crypto_version: 1,
-          key_version: 1,
           key_check: keyCheck,
           created_at: NOW,
         },
@@ -347,8 +343,6 @@ test("encryption profile initialization stores only the v1 key check and is repl
   assert.equal(result.status, 201);
   assert.deepEqual(result.body, {
     userId: USER_ID,
-    cryptoVersion: 1,
-    keyVersion: 1,
     keyCheck: input.keyCheck,
     createdAt: NOW.toISOString(),
   });

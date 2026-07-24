@@ -6,8 +6,6 @@
   "type": "object",
   "required": [
     "$schema",
-    "schemaVersion",
-    "catalogVersion",
     "status",
     "provenance",
     "radix",
@@ -21,12 +19,6 @@
   "properties": {
     "$schema": {
       "const": "./catalog.schema.json"
-    },
-    "schemaVersion": {
-      "const": 1
-    },
-    "catalogVersion": {
-      "$ref": "#/$defs/semver"
     },
     "status": {
       "enum": ["foundation", "stable", "deprecated"]
@@ -72,10 +64,6 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "semver": {
-      "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
-    },
     "identifier": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
@@ -226,7 +214,7 @@
         "sourceKind": {
           "enum": ["swift-system", "explicit-srgb", "catalog"]
         },
-        "legacySwiftColor": {
+        "swiftColor": {
           "type": "string",
           "minLength": 1
         },
@@ -623,7 +611,6 @@
     "glyph": {
       "type": "object",
       "required": [
-        "geometryVersion",
         "supportedDepth",
         "coordinateSystem",
         "normalization",
@@ -636,9 +623,6 @@
         "accessibility"
       ],
       "properties": {
-        "geometryVersion": {
-          "$ref": "#/$defs/semver"
-        },
         "supportedDepth": {
           "$ref": "#/$defs/integerRange"
         },
@@ -715,14 +699,14 @@
         },
         "coreHole": {
           "type": "object",
-          "required": ["legacyExactDepth", "legacyExactPoints", "otherDepths"],
+          "required": ["exactDepth", "exactPoints", "otherDepths"],
           "properties": {
-            "legacyExactDepth": {
+            "exactDepth": {
               "type": "integer",
               "minimum": 1,
               "maximum": 8
             },
-            "legacyExactPoints": {
+            "exactPoints": {
               "type": "array",
               "minItems": 3,
               "items": {
@@ -944,7 +928,7 @@
             },
             "required": {
               "type": "array",
-              "const": ["namespace", "name", "version"]
+              "const": ["namespace", "name"]
             },
             "optional": {
               "type": "array",

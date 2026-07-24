@@ -22,7 +22,7 @@ async function loadContract(): Promise<JsonObject> {
   return object(parse(await readFile(contractPath, "utf8")), "OpenAPI document must be an object");
 }
 
-test("OpenAPI contract exposes the complete v2 resource surface", async () => {
+test("OpenAPI contract exposes the complete resource surface", async () => {
   const contract = await loadContract();
   assert.equal(contract.openapi, "3.1.0");
 
@@ -30,28 +30,28 @@ test("OpenAPI contract exposes the complete v2 resource surface", async () => {
   const requiredPaths = [
     "/health/live",
     "/health/ready",
-    "/v1/auth/register",
-    "/v1/auth/login",
-    "/v1/auth/refresh",
-    "/v1/me",
-    "/v1/me/encryption-profile",
-    "/v1/api-keys",
-    "/v1/devices",
-    "/v1/records",
-    "/v1/records/{recordId}",
-    "/v1/public/records",
-    "/v1/public/records/{recordId}",
-    "/v1/events",
-    "/v1/events/{eventId}",
-    "/v1/public/events",
-    "/v1/public/events/{eventId}",
-    "/v1/public/users/{login}",
-    "/v1/subscriptions",
-    "/v1/subscriptions/{targetUserId}",
-    "/v1/public/activity",
-    "/v1/activity",
-    "/v1/sync/changes",
-    "/v1/sync/batches",
+    "/auth/register",
+    "/auth/login",
+    "/auth/refresh",
+    "/me",
+    "/me/encryption-profile",
+    "/api-keys",
+    "/devices",
+    "/records",
+    "/records/{recordId}",
+    "/public/records",
+    "/public/records/{recordId}",
+    "/events",
+    "/events/{eventId}",
+    "/public/events",
+    "/public/events/{eventId}",
+    "/public/users/{login}",
+    "/subscriptions",
+    "/subscriptions/{targetUserId}",
+    "/public/activity",
+    "/activity",
+    "/sync/changes",
+    "/sync/batches",
   ];
 
   for (const requiredPath of requiredPaths) {
@@ -75,7 +75,7 @@ test("OpenAPI contract exposes the complete v2 resource surface", async () => {
   assert.ok(operationIds.length >= 40, "contract should retain the complete API surface");
   assert.equal(new Set(operationIds).size, operationIds.length, "operationId values must be unique");
 
-  const syncChanges = object(object(paths["/v1/sync/changes"], "sync path").get, "sync GET");
+  const syncChanges = object(object(paths["/sync/changes"], "sync path").get, "sync GET");
   const syncParameters = array(syncChanges.parameters, "sync parameters");
   const resourceTypeParameter = object(syncParameters[2], "sync resourceType parameter");
   assert.equal(
@@ -90,12 +90,12 @@ test("OpenAPI exposes the per-user Saros anchor and ETag-protected update", asyn
   const components = object(contract.components, "components must be defined");
   const schemas = object(components.schemas, "schemas must be defined");
 
-  const me = object(paths["/v1/me"], "/v1/me must exist");
-  const update = object(me.patch, "PATCH /v1/me must exist");
+  const me = object(paths["/me"], "/me must exist");
+  const update = object(me.patch, "PATCH /me must exist");
   assert.equal(update.operationId, "updateCurrentUser");
   assert.deepEqual(update.security, [{ JwtBearer: [] }]);
   assert.equal(
-    object(array(update.parameters, "PATCH /v1/me parameters")[0], "If-Match parameter").$ref,
+    object(array(update.parameters, "PATCH /me parameters")[0], "If-Match parameter").$ref,
     "#/components/parameters/IfMatch",
   );
 
@@ -133,7 +133,7 @@ test("OpenAPI documents the initial latest activity snapshot and live resume con
   );
   assert.match(String(snapshot.description), /high-water mark/);
 
-  for (const pathName of ["/v1/public/activity", "/v1/activity"]) {
+  for (const pathName of ["/public/activity", "/activity"]) {
     const operation = object(object(paths[pathName], pathName).get, `${pathName} GET`);
     const operationParameters = array(operation.parameters, `${pathName} parameters`);
     assert.ok(
@@ -147,7 +147,7 @@ test("OpenAPI documents the initial latest activity snapshot and live resume con
   }
 
   const publicEventParameters = array(
-    object(object(paths["/v1/public/events"], "public events path").get, "public events GET")
+    object(object(paths["/public/events"], "public events path").get, "public events GET")
       .parameters,
     "public events parameters",
   );
@@ -212,11 +212,6 @@ test("OpenAPI contract keeps private records opaque and events lightweight", asy
     "encryption",
   ]);
   assert.ok(!("source" in object(privatePatch.properties, "private patch properties")));
-
-  const envelope = object(schemas.CiphertextEnvelope, "CiphertextEnvelope must exist");
-  const envelopeProperties = object(envelope.properties, "ciphertext properties must exist");
-  assert.equal(object(envelopeProperties.cryptoVersion, "crypto version must exist").const, 1);
-  assert.equal(object(envelopeProperties.keyVersion, "key version must exist").const, 1);
 
   const mediaUpload = object(schemas.CreateMediaUploadRequest, "media upload schema must exist");
   assert.deepEqual(
@@ -287,13 +282,13 @@ test("OpenAPI contract defines both JWT and scoped API-key bearer authentication
   assert.match(String(apiKey.description), /device-bound, scoped/);
 
   const createRecord = object(
-    object(object(contract.paths, "paths must exist")["/v1/records"], "record path must exist").post,
+    object(object(contract.paths, "paths must exist")["/records"], "record path must exist").post,
     "create record operation must exist",
   );
   assert.deepEqual(createRecord["x-required-scopes"], ["records:write"]);
 
   const listEvents = object(
-    object(object(contract.paths, "paths must exist")["/v1/events"], "event path must exist").get,
+    object(object(contract.paths, "paths must exist")["/events"], "event path must exist").get,
     "list events operation must exist",
   );
   assert.deepEqual(listEvents["x-required-scopes"], ["events:read"]);

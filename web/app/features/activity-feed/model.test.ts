@@ -54,8 +54,6 @@ describe("activity feed model", () => {
         references: [],
         encryption: {
           algorithm: "A256GCM",
-          cryptoVersion: 1,
-          keyVersion: 1,
           nonce: "nonce",
           ciphertext: "secret-ciphertext",
           contentType: "application/vnd.exeligmos.record+json",

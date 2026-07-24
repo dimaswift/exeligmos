@@ -83,9 +83,9 @@ describe("feed cursor query", () => {
     expect(links.previousHref).toBeNull();
   });
 
-  it("offers a safe return to the first page for a legacy cursor without history", () => {
+  it("offers a safe return to the first page for an unknown cursor", () => {
     const links = feedPageLinks(
-      new URL("https://app.example/feed?recordsCursor=legacy-page"),
+      new URL("https://app.example/feed?recordsCursor=unknown-page"),
       "recordsCursor",
       undefined,
     );

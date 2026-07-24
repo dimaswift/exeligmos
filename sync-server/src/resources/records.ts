@@ -66,7 +66,7 @@ export function assertRecordPublicId(value: string, name = "record id"): void {
 }
 
 export interface SourceReference {
-  readonly kind: "client" | "agent" | "import" | "server";
+  readonly kind: "client" | "agent" | "server";
   readonly provider: string;
   readonly externalId?: string;
   readonly url?: string;
@@ -75,14 +75,11 @@ export interface SourceReference {
 
 export interface TemplateRenderRequest {
   readonly templateId: string;
-  readonly version?: number;
   readonly variables: JsonObject;
 }
 
 export interface CiphertextEnvelope {
   readonly algorithm: "A256GCM";
-  readonly cryptoVersion: 1;
-  readonly keyVersion: 1;
   readonly nonce: string;
   readonly ciphertext: string;
   readonly contentType: "application/vnd.exeligmos.record+json";
@@ -150,8 +147,6 @@ export interface MediaObject {
   readonly sha256: string;
   readonly encryption?: {
     readonly algorithm: "A256GCM";
-    readonly cryptoVersion: 1;
-    readonly keyVersion: 1;
     readonly nonce: string;
     readonly plaintextContentType?: string;
   };
@@ -163,7 +158,7 @@ export interface MediaObject {
 
 interface RecordCommon {
   readonly id: string;
-  /** Owner-only UUID used for storage identity and crypto profile v1. */
+  /** Owner-only UUID used for storage identity and encryption. */
   readonly originId: string;
   readonly userId: string;
   readonly deviceId: string;
@@ -179,7 +174,7 @@ export interface PublicRecordResource extends RecordCommon {
   readonly author: PublicUserSummary;
   readonly endedAt?: string;
   readonly payload: JsonObject;
-  readonly template?: { readonly templateId: string; readonly version: number };
+  readonly template?: { readonly templateId: string };
   readonly tagIds: readonly string[];
   readonly tags: readonly PublicTagSummary[];
   readonly media: readonly MediaObject[];
@@ -213,7 +208,7 @@ export interface PublicRecordProjection {
   readonly occurredAt: string;
   readonly endedAt?: string;
   readonly payload: JsonObject;
-  readonly template?: { readonly templateId: string; readonly version: number };
+  readonly template?: { readonly templateId: string };
   readonly tagIds: readonly string[];
   readonly tags: readonly PublicTagSummary[];
   readonly media: readonly PublicMediaObject[];
@@ -271,15 +266,12 @@ interface RecordRow extends QueryResultRow {
   readonly public_payload: JsonObject | null;
   readonly metadata: JsonObject;
   readonly template_id: string | null;
-  readonly template_version: number | null;
   readonly source_kind: SourceReference["kind"] | null;
   readonly source_provider: string | null;
   readonly source_external_id: string | null;
   readonly source_url: string | null;
   readonly source_metadata: JsonObject;
   readonly cipher_algorithm: string | null;
-  readonly crypto_version: number | null;
-  readonly key_version: number | null;
   readonly nonce: Buffer | null;
   readonly ciphertext: Buffer | null;
   readonly encrypted_content_type: string | null;
@@ -296,7 +288,6 @@ interface RecordRow extends QueryResultRow {
 
 interface TemplateRow extends QueryResultRow {
   readonly id: string;
-  readonly version: number;
   readonly body: JsonObject;
   readonly variable_schema: JsonObject;
 }
@@ -316,15 +307,12 @@ const RECORD_COLUMNS = `
   r.public_payload,
   r.metadata,
   r.template_id,
-  r.template_version,
   r.source_kind,
   r.source_provider,
   r.source_external_id,
   r.source_url,
   r.source_metadata,
   r.cipher_algorithm,
-  r.crypto_version,
-  r.key_version,
   r.nonce,
   r.ciphertext,
   r.encrypted_content_type,
@@ -369,16 +357,14 @@ const RECORD_COLUMNS = `
         'sha256', encode(m.sha256, 'hex'),
         'encryption', CASE WHEN m.visibility = 'private' THEN jsonb_strip_nulls(jsonb_build_object(
           'algorithm', m.cipher_algorithm,
-          'cryptoVersion', m.crypto_version,
-          'keyVersion', m.key_version,
           'nonce', encode(m.nonce, 'base64'),
           'plaintextContentType', m.plaintext_content_type
         )) END,
         'revision', m.revision,
         'createdAt', m.created_at,
-        'contentUrl', '/v1/media/' || m.id::text || '/content',
+        'contentUrl', '/media/' || m.id::text || '/content',
         'publicContentUrl', CASE WHEN r.visibility = 'public'
-          THEN '/v1/public/media/' || m.id::text || '/content' END
+          THEN '/public/media/' || m.id::text || '/content' END
       )) ORDER BY rm.position
     )
     FROM record_media rm
@@ -764,7 +750,7 @@ export async function createRecordInTransaction(
   }
   if (visibility === "private" && input.originId === undefined) {
     throw unprocessable(
-      "Private records require a client-generated originId for crypto profile v1.",
+      "Private records require a client-generated originId for encryption.",
       "private_record_origin_id_required",
     );
   }
@@ -800,7 +786,7 @@ export async function createRecordInTransaction(
   return {
     status: 201,
     headers: {
-      location: `/v1/records/${publicId}`,
+      location: `/records/${publicId}`,
       etag: resourceEtag("record", publicId, resource.revision),
     },
     body: resource,
@@ -910,8 +896,6 @@ export async function deleteRecordInTransaction(
       `UPDATE records
        SET deleted_at = clock_timestamp(),
            cipher_algorithm = NULL,
-           crypto_version = NULL,
-           key_version = NULL,
            nonce = NULL,
            ciphertext = NULL,
            encrypted_content_type = NULL
@@ -971,8 +955,6 @@ export function mapRecordRow(row: RecordRow): RecordResource {
       row.nonce === null ||
       row.ciphertext === null ||
       row.cipher_algorithm !== "A256GCM" ||
-      row.crypto_version !== 1 ||
-      row.key_version !== 1 ||
       row.encrypted_content_type !== "application/vnd.exeligmos.record+json"
     ) {
       throw new Error("Private record has an invalid encryption envelope");
@@ -982,8 +964,6 @@ export function mapRecordRow(row: RecordRow): RecordResource {
       visibility: "private",
       encryption: {
         algorithm: "A256GCM",
-        cryptoVersion: 1,
-        keyVersion: 1,
         nonce: row.nonce.toString("base64"),
         ciphertext: row.ciphertext.toString("base64"),
         contentType: "application/vnd.exeligmos.record+json",
@@ -1002,12 +982,11 @@ export function mapRecordRow(row: RecordRow): RecordResource {
     occurredAt: isoDate(row.event_at),
     ...(row.end_at === null ? {} : { endedAt: isoDate(row.end_at) }),
     payload: row.public_payload,
-    ...(row.template_id === null || row.template_version === null
+    ...(row.template_id === null
       ? {}
       : {
           template: {
             templateId: row.template_id,
-            version: row.template_version,
           },
         }),
     tagIds: row.tag_ids,
@@ -1080,11 +1059,11 @@ async function createPublicRecord(
       queryable.query(
         `INSERT INTO records (
            id, public_id, user_id, device_id, visibility, event_at, end_at,
-           public_payload, metadata, template_id, template_version, source_kind,
+           public_payload, metadata, template_id, source_kind,
            source_provider, source_external_id, source_url, source_metadata
          ) VALUES (
            $1, $2, $3, $4, 'public', $5::timestamptz, $6::timestamptz,
-           $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb
+           $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14::jsonb
          )
          ON CONFLICT (public_id) DO NOTHING
          RETURNING id`,
@@ -1098,7 +1077,6 @@ async function createPublicRecord(
           JSON.stringify(content.payload),
           JSON.stringify(metadata),
           content.templateId,
-          content.templateVersion,
           source?.kind ?? null,
           source?.provider ?? null,
           source?.externalId ?? null,
@@ -1140,8 +1118,8 @@ async function createPrivateRecord(
       queryable.query(
         `INSERT INTO records (
            id, public_id, user_id, device_id, visibility, cipher_algorithm,
-           crypto_version, key_version, nonce, ciphertext, encrypted_content_type
-         ) VALUES ($1, $2, $3, $4, 'private', 'A256GCM', 1, 1, $5, $6,
+           nonce, ciphertext, encrypted_content_type
+         ) VALUES ($1, $2, $3, $4, 'private', 'A256GCM', $5, $6,
            'application/vnd.exeligmos.record+json')
          ON CONFLICT (public_id) DO NOTHING
          RETURNING id`,
@@ -1221,12 +1199,11 @@ async function replacePublicRecord(
        public_payload = $6::jsonb,
        metadata = $7::jsonb,
        template_id = $8,
-       template_version = $9,
-       source_kind = $10,
-       source_provider = $11,
-       source_external_id = $12,
-       source_url = $13,
-       source_metadata = $14::jsonb,
+       source_kind = $9,
+       source_provider = $10,
+       source_external_id = $11,
+       source_url = $12,
+       source_metadata = $13::jsonb,
        updated_at = clock_timestamp()
      WHERE user_id = $1 AND id = $2`,
     [
@@ -1238,7 +1215,6 @@ async function replacePublicRecord(
       JSON.stringify(content.payload),
       JSON.stringify(metadata),
       content.templateId,
-      content.templateVersion,
       source?.kind ?? null,
       source?.provider ?? null,
       source?.externalId ?? null,
@@ -1271,8 +1247,6 @@ async function replacePrivateRecord(
        deleted_at = NULL,
        device_id = $3,
        cipher_algorithm = 'A256GCM',
-       crypto_version = 1,
-       key_version = 1,
        nonce = $4,
        ciphertext = $5,
        encrypted_content_type = 'application/vnd.exeligmos.record+json',
@@ -1421,7 +1395,6 @@ async function publicContent(
 ): Promise<{
   readonly payload: JsonObject;
   readonly templateId: string | null;
-  readonly templateVersion: number | null;
 }> {
   const hasPayload = input.payload !== undefined;
   const hasRender = input.render !== undefined;
@@ -1438,17 +1411,14 @@ async function publicContent(
         "invalid_payload",
       );
     }
-    return { payload: input.payload, templateId: null, templateVersion: null };
+    return { payload: input.payload, templateId: null };
   }
   const render = input.render as TemplateRenderRequest;
   const result = await queryable.query<TemplateRow>(
-    `SELECT t.id, tv.version, tv.body, tv.variable_schema
+    `SELECT t.id, t.body, t.variable_schema
      FROM templates t
-     JOIN template_versions tv
-       ON tv.user_id = t.user_id AND tv.template_id = t.id
-      AND tv.version = COALESCE($3::integer, t.version)
      WHERE t.user_id = $1 AND t.id = $2 AND t.deleted_at IS NULL AND t.retired_at IS NULL`,
-    [userId, render.templateId, render.version ?? null],
+    [userId, render.templateId],
   );
   const template = result.rows[0];
   if (template === undefined) {
@@ -1458,7 +1428,6 @@ async function publicContent(
   return {
     payload: renderTemplateBody(template.body, render.variables),
     templateId: template.id,
-    templateVersion: template.version,
   };
 }
 
@@ -1466,7 +1435,7 @@ function validateTemplateVariables(
   template: TemplateRow,
   variables: JsonObject,
 ): void {
-  const key = `${template.id}:${template.version}`;
+  const key = template.id;
   const schemaSignature = cursorSignature(template.variable_schema);
   let cached = templateValidatorCache.get(key);
   if (cached === undefined || cached.schemaSignature !== schemaSignature) {
@@ -1705,12 +1674,12 @@ async function assertEncryptionProfile(
   const result = await queryable.query(
     `SELECT 1
      FROM user_encryption_profiles
-     WHERE user_id = $1 AND crypto_version = 1 AND key_version = 1`,
+     WHERE user_id = $1`,
     [userId],
   );
   if (result.rowCount === 0) {
     throw unprocessable(
-      "Initialize encryption profile v1 before storing private records.",
+      "Initialize the encryption profile before storing private records.",
       "encryption_profile_required",
     );
   }
@@ -1799,8 +1768,6 @@ function validateEncryption(encryption: CiphertextEnvelope): {
 } {
   if (
     encryption.algorithm !== "A256GCM" ||
-    encryption.cryptoVersion !== 1 ||
-    encryption.keyVersion !== 1 ||
     encryption.contentType !== "application/vnd.exeligmos.record+json"
   ) {
     throw unprocessable(

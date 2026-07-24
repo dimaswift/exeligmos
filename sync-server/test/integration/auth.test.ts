@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import type { QueryResultRow } from "pg";
 
 import type { AuthConfig } from "../../src/config.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { HttpProblem } from "../../src/http/problem.js";
 import {
   createAuthService,
@@ -32,10 +31,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const database = createPostgresDatabase({
       url: databaseUrl,
       poolMax: 4,

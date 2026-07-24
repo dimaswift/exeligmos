@@ -26,7 +26,7 @@ export interface MediaStorage {
   delete(key: string): Promise<void>;
 }
 
-/** Canonical immutable object key used by the legacy importer. */
+/** Canonical immutable object key for stored media. */
 export function mediaStorageKey(userId: string, mediaId: string): string {
   if (!isCanonicalUuid(userId) || !isCanonicalUuid(mediaId)) {
     throw new Error("Media storage keys require canonical lowercase UUIDs");

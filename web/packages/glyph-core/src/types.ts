@@ -48,7 +48,6 @@ export interface GlyphAccessibility {
 
 export interface GlyphModel {
   readonly kind: "octal";
-  readonly geometryVersion: string;
   readonly depth: number;
   readonly normalizedValue: string;
   readonly viewBox: readonly [x: number, y: number, width: number, height: number];

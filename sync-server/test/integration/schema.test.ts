@@ -1,25 +1,19 @@
 import assert from "node:assert/strict";
-import path from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { Client, type DatabaseError } from "pg";
 
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
 
 test(
-  "initial migration enforces pgvector, privacy, revisions, changes, and lightweight events",
+  "canonical schema enforces pgvector, privacy, revisions, changes, and lightweight events",
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    const migrationDirectory = path.resolve(process.cwd(), "db/migrations");
-    await runMigrations({ databaseUrl, directory: migrationDirectory });
-    assert.deepEqual(
-      await runMigrations({ databaseUrl, directory: migrationDirectory }),
-      [],
-      "the migration should already be applied and remain idempotent",
-    );
+    assert.match(await ensureDatabaseSchema({ databaseUrl }), /^(created|ready)$/);
+    assert.equal(await ensureDatabaseSchema({ databaseUrl }), "ready");
 
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
@@ -71,18 +65,14 @@ test(
       assert.equal(user.rows[0]?.saros_anchor, 141);
 
       const encryptionProfile = await client.query<{
-        crypto_version: number;
-        key_version: number;
         key_check_length: number;
       }>(
-        `INSERT INTO user_encryption_profiles (user_id, crypto_version, key_version, key_check)
-         VALUES ($1, 1, 1, $2)
-         RETURNING crypto_version, key_version, octet_length(key_check) AS key_check_length`,
+        `INSERT INTO user_encryption_profiles (user_id, key_check)
+         VALUES ($1, $2)
+         RETURNING octet_length(key_check) AS key_check_length`,
         [userId, Buffer.alloc(32, 1)],
       );
       assert.deepEqual(encryptionProfile.rows[0], {
-        crypto_version: 1,
-        key_version: 1,
         key_check_length: 32,
       });
       await assert.rejects(
@@ -188,9 +178,9 @@ test(
 
       const privateRecord = await client.query<{ id: string }>(
         `INSERT INTO records (
-           user_id, device_id, visibility, cipher_algorithm, crypto_version,
-           key_version, nonce, ciphertext, encrypted_content_type
-         ) VALUES ($1, $2, 'private', 'A256GCM', 1, 1, $3, $4,
+           user_id, device_id, visibility, cipher_algorithm,
+           nonce, ciphertext, encrypted_content_type
+         ) VALUES ($1, $2, 'private', 'A256GCM', $3, $4,
            'application/vnd.exeligmos.record+json')
          RETURNING id`,
         [userId, deviceId, Buffer.alloc(12, 1), Buffer.alloc(16, 2)],
@@ -217,9 +207,9 @@ test(
       await assert.rejects(
         client.query(
           `INSERT INTO records (
-             user_id, device_id, visibility, cipher_algorithm, crypto_version,
-             key_version, nonce, encrypted_content_type
-           ) VALUES ($1, $2, 'private', 'A256GCM', 1, 1, $3,
+             user_id, device_id, visibility, cipher_algorithm,
+             nonce, encrypted_content_type
+           ) VALUES ($1, $2, 'private', 'A256GCM', $3,
              'application/vnd.exeligmos.record+json')`,
           [userId, deviceId, Buffer.alloc(12, 1)],
         ),
@@ -229,9 +219,9 @@ test(
       await assert.rejects(
         client.query(
           `INSERT INTO records (
-             user_id, device_id, visibility, cipher_algorithm, key_version,
+             user_id, device_id, visibility, cipher_algorithm,
              nonce, ciphertext, encrypted_content_type
-           ) VALUES ($1, $2, 'private', 'A256GCM', 1, $3, $4,
+           ) VALUES ($1, $2, 'private', 'UNSUPPORTED', $3, $4,
              'application/vnd.exeligmos.record+json')`,
           [userId, deviceId, Buffer.alloc(12, 1), Buffer.alloc(16, 2)],
         ),
@@ -242,8 +232,8 @@ test(
         client.query(
           `INSERT INTO records (
              user_id, device_id, visibility, event_at, cipher_algorithm,
-             crypto_version, key_version, nonce, ciphertext, encrypted_content_type
-           ) VALUES ($1, $2, 'private', now(), 'A256GCM', 1, 1, $3, $4,
+             nonce, ciphertext, encrypted_content_type
+           ) VALUES ($1, $2, 'private', now(), 'A256GCM', $3, $4,
              'application/vnd.exeligmos.record+json')`,
           [userId, deviceId, Buffer.alloc(12, 1), Buffer.alloc(16, 2)],
         ),
@@ -365,11 +355,11 @@ test(
       const privateMedia = await client.query<{ id: string }>(
         `INSERT INTO media_objects (
            user_id, device_id, visibility, file_name, content_type, byte_size,
-           sha256, storage_key, cipher_algorithm, crypto_version, key_version,
+           sha256, storage_key, cipher_algorithm,
            nonce, plaintext_content_type
          ) VALUES (
            $1, $2, 'private', 'private.enc', 'application/octet-stream', 144,
-           $3, 'integration/private.enc', 'A256GCM', 1, 1, $4, 'image/jpeg'
+           $3, 'integration/private.enc', 'A256GCM', $4, 'image/jpeg'
          )
          RETURNING id`,
         [userId, deviceId, Buffer.alloc(32, 6), Buffer.alloc(12, 2)],
@@ -434,8 +424,6 @@ test(
         `UPDATE records
          SET deleted_at = now(),
              cipher_algorithm = NULL,
-             crypto_version = NULL,
-             key_version = NULL,
              nonce = NULL,
              ciphertext = NULL,
              encrypted_content_type = NULL
@@ -449,8 +437,6 @@ test(
       const privateTombstone = await client.query<{
         deleted: boolean;
         cipher_algorithm: string | null;
-        crypto_version: number | null;
-        key_version: number | null;
         nonce: Buffer | null;
         ciphertext: Buffer | null;
         encrypted_content_type: string | null;
@@ -462,8 +448,6 @@ test(
         `SELECT
            r.deleted_at IS NOT NULL AS deleted,
            r.cipher_algorithm,
-           r.crypto_version,
-           r.key_version,
            r.nonce,
            r.ciphertext,
            r.encrypted_content_type,
@@ -489,13 +473,11 @@ test(
       assert.deepEqual(
         [
           privateTombstoneRow.cipher_algorithm,
-          privateTombstoneRow.crypto_version,
-          privateTombstoneRow.key_version,
           privateTombstoneRow.nonce,
           privateTombstoneRow.ciphertext,
           privateTombstoneRow.encrypted_content_type,
         ],
-        [null, null, null, null, null, null],
+        [null, null, null, null],
       );
       assert.equal(typeof privateTombstoneRow.live_snapshot.nonce, "string");
       assert.equal(typeof privateTombstoneRow.live_snapshot.ciphertext, "string");
@@ -563,11 +545,11 @@ test(
       }>(
         `INSERT INTO media_upload_sessions (
            user_id, device_id, requested_media_id, file_name, content_type,
-           byte_size, sha256, cipher_algorithm, crypto_version, key_version,
+           byte_size, sha256, cipher_algorithm,
            nonce, plaintext_content_type, expires_at
          ) VALUES (
            $1, $2, $3, 'upload.enc', 'application/octet-stream',
-           272, $4, 'A256GCM', 1, 1, $5, 'image/jpeg', now() + interval '1 hour'
+           272, $4, 'A256GCM', $5, 'image/jpeg', now() + interval '1 hour'
          )
          RETURNING status, requested_media_id, media_id`,
         [
@@ -587,10 +569,10 @@ test(
         client.query(
           `INSERT INTO media_upload_sessions (
              user_id, device_id, file_name, content_type, byte_size, sha256,
-             cipher_algorithm, crypto_version, key_version, nonce, expires_at
+             cipher_algorithm, nonce, expires_at
            ) VALUES (
              $1, $2, 'invalid.enc', 'application/octet-stream', 272, $3,
-             'A256GCM', 1, 1, $4, now() + interval '1 hour'
+             'A256GCM', $4, now() + interval '1 hour'
            )`,
           [userId, deviceId, Buffer.alloc(32, 9), Buffer.alloc(12, 4)],
         ),

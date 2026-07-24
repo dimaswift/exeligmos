@@ -52,7 +52,7 @@ test("record-filtered activity includes identifier-only user lifecycle controls"
     resourceId: userId,
     operation: "delete",
     revision: 4,
-    resourceUrl: "/v1/public/users/sun",
+    resourceUrl: "/public/users/sun",
   }]);
   assert.equal("payload" in (page.data[0] ?? {}), false);
 });

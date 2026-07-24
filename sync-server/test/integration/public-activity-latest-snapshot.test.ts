@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -8,7 +7,7 @@ import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { registerProblemHandlers } from "../../src/http/problem.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { registerSocialRoutes } from "../../src/routes/social.js";
@@ -21,10 +20,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const base = testConfig();
     const database = createPostgresDatabase({ ...base.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -90,7 +86,7 @@ test(
 
       const oldest = await app.inject({
         method: "GET",
-        url: `/v1/public/activity?userId=${targetId}&limit=1`,
+        url: `/public/activity?userId=${targetId}&limit=1`,
       });
       assert.equal(oldest.statusCode, 200, oldest.body);
       assert.deepEqual(oldest.json<ActivityPage>().data.map((item) => item.sequence), [
@@ -100,7 +96,7 @@ test(
 
       const latest = await app.inject({
         method: "GET",
-        url: `/v1/public/activity?userId=${targetId}&snapshot=latest&limit=2`,
+        url: `/public/activity?userId=${targetId}&snapshot=latest&limit=2`,
       });
       assert.equal(latest.statusCode, 200, latest.body);
       const latestPage = latest.json<ActivityPage>();
@@ -113,14 +109,14 @@ test(
 
       const conflicting = await app.inject({
         method: "GET",
-        url: `/v1/public/activity?userId=${targetId}&snapshot=latest&cursor=${encodeURIComponent(latestPage.nextCursor)}`,
+        url: `/public/activity?userId=${targetId}&snapshot=latest&cursor=${encodeURIComponent(latestPage.nextCursor)}`,
       });
       assert.equal(conflicting.statusCode, 400, conflicting.body);
       assert.equal(conflicting.json().code, "invalid_request");
 
       const unsupported = await app.inject({
         method: "GET",
-        url: `/v1/public/activity?userId=${targetId}&snapshot=oldest`,
+        url: `/public/activity?userId=${targetId}&snapshot=oldest`,
       });
       assert.equal(unsupported.statusCode, 400, unsupported.body);
       assert.equal(unsupported.json().code, "validation_error");
@@ -133,7 +129,7 @@ test(
       );
       const publicResume = await app.inject({
         method: "GET",
-        url: `/v1/public/activity?userId=${targetId}&cursor=${encodeURIComponent(latestPage.nextCursor)}`,
+        url: `/public/activity?userId=${targetId}&cursor=${encodeURIComponent(latestPage.nextCursor)}`,
       });
       assert.equal(publicResume.statusCode, 200, publicResume.body);
       const publicResumePage = publicResume.json<ActivityPage>();
@@ -141,7 +137,7 @@ test(
 
       const following = await app.inject({
         method: "GET",
-        url: "/v1/activity?snapshot=latest&limit=2",
+        url: "/activity?snapshot=latest&limit=2",
       });
       assert.equal(following.statusCode, 200, following.body);
       const followingPage = following.json<ActivityPage>();
@@ -159,7 +155,7 @@ test(
       const liveRecordId = required(liveRecord.rows[0]?.public_id);
       const followingResume = await app.inject({
         method: "GET",
-        url: `/v1/activity?cursor=${encodeURIComponent(followingPage.nextCursor)}`,
+        url: `/activity?cursor=${encodeURIComponent(followingPage.nextCursor)}`,
       });
       assert.equal(followingResume.statusCode, 200, followingResume.body);
       assert.deepEqual(
@@ -176,7 +172,7 @@ test(
       );
       const orphanFiltered = await app.inject({
         method: "GET",
-        url: `/v1/activity?cursor=${encodeURIComponent(orphanCursor)}`,
+        url: `/activity?cursor=${encodeURIComponent(orphanCursor)}`,
       });
       assert.equal(orphanFiltered.statusCode, 200, orphanFiltered.body);
       assert.deepEqual(orphanFiltered.json<ActivityPage>().data, []);

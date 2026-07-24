@@ -436,15 +436,9 @@ struct ContinuousActivitySession: Codable, Hashable, Identifiable {
 
 enum ContinuousActivityLogger {
     static let sessionKey = "continuousActivityLogger.session"
-    private static let startDateKey = "continuousActivityLogger.startDate"
 
     static var startDate: Date? {
-        if let session = sessions.first {
-            return session.startDate
-        }
-        let timestamp = UserDefaults.standard.double(forKey: startDateKey)
-        guard timestamp > 0 else { return nil }
-        return Date(timeIntervalSince1970: timestamp)
+        sessions.first?.startDate
     }
 
     static var sessions: [ContinuousActivitySession] {
@@ -460,16 +454,11 @@ enum ContinuousActivityLogger {
     }
 
     static func sessions(from data: Data) -> [ContinuousActivitySession] {
-        guard !data.isEmpty else {
-            return legacySession().map { [$0] } ?? []
-        }
+        guard !data.isEmpty else { return [] }
         if let decoded = try? JSONDecoder().decode([ContinuousActivitySession].self, from: data) {
             return decoded.sorted { $0.startDate < $1.startDate }
         }
-        if let decoded = try? JSONDecoder().decode(ContinuousActivitySession.self, from: data) {
-            return [decoded]
-        }
-        return legacySession().map { [$0] } ?? []
+        return []
     }
 
     @discardableResult
@@ -588,7 +577,6 @@ enum ContinuousActivityLogger {
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: sessionKey)
-        UserDefaults.standard.removeObject(forKey: startDateKey)
     }
 
     private static func append(_ session: ContinuousActivitySession) {
@@ -603,7 +591,6 @@ enum ContinuousActivityLogger {
         } else if let data = try? JSONEncoder().encode(sessions.sorted(by: { $0.startDate < $1.startDate })) {
             UserDefaults.standard.set(data, forKey: sessionKey)
         }
-        UserDefaults.standard.removeObject(forKey: startDateKey)
     }
 
     private static func window(for session: ContinuousActivitySession, endDate: Date) -> ContinuousActivityWindow {
@@ -618,22 +605,6 @@ enum ContinuousActivityLogger {
         )
     }
 
-    private static func legacySession() -> ContinuousActivitySession? {
-        let timestamp = UserDefaults.standard.double(forKey: startDateKey)
-        guard timestamp > 0 else { return nil }
-        return ContinuousActivitySession(
-            id: UUID(),
-            kind: .timer,
-            startDate: Date(timeIntervalSince1970: timestamp),
-            endDate: nil,
-            template: .random,
-            sarosCountdownSelection: .timerDefault,
-            completedAt: nil,
-            draftText: nil,
-            mediaItems: [],
-            updatedAt: Date(timeIntervalSince1970: timestamp)
-        )
-    }
 }
 
 private struct FeedView: View {

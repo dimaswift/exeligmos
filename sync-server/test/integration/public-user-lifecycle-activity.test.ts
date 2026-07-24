@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -8,7 +7,7 @@ import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { registerProblemHandlers } from "../../src/http/problem.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { registerRecordRoutes } from "../../src/routes/records.js";
@@ -22,10 +21,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const base = testConfig();
     const database = createPostgresDatabase({ ...base.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -78,7 +74,7 @@ test(
 
       const initial = await app.inject({
         method: "GET",
-        url: "/v1/activity?resourceType=record",
+        url: "/activity?resourceType=record",
       });
       assert.equal(initial.statusCode, 200, initial.body);
       const initialCursor = required(initial.json().nextCursor as string | undefined);
@@ -92,7 +88,7 @@ test(
 
       const disabled = await app.inject({
         method: "GET",
-        url: `/v1/activity?resourceType=record&cursor=${encodeURIComponent(initialCursor)}`,
+        url: `/activity?resourceType=record&cursor=${encodeURIComponent(initialCursor)}`,
       });
       assert.equal(disabled.statusCode, 200, disabled.body);
       assert.deepEqual(disabled.json().data, [{
@@ -103,18 +99,18 @@ test(
         resourceId: targetId,
         operation: "delete",
         revision: 2,
-        resourceUrl: `/v1/public/users/${targetLogin}`,
+        resourceUrl: `/public/users/${targetLogin}`,
       }]);
       assert.ok(Number.isSafeInteger(disabled.json().data[0]?.sequence));
       assert.match(disabled.json().data[0]?.publishedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
       assert.equal("payload" in disabled.json().data[0], false);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/public/users/${targetLogin}`,
+        url: `/public/users/${targetLogin}`,
       })).statusCode, 404);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/public/records/${recordId}`,
+        url: `/public/records/${recordId}`,
       })).statusCode, 404);
 
       const disabledCursor = required(disabled.json().nextCursor as string | undefined);
@@ -125,7 +121,7 @@ test(
 
       const restored = await app.inject({
         method: "GET",
-        url: `/v1/activity?resourceType=record&cursor=${encodeURIComponent(disabledCursor)}`,
+        url: `/activity?resourceType=record&cursor=${encodeURIComponent(disabledCursor)}`,
       });
       assert.equal(restored.statusCode, 200, restored.body);
       assert.equal(restored.json().data.length, 1);
@@ -133,14 +129,14 @@ test(
       assert.equal(restored.json().data[0]?.resourceId, targetId);
       assert.equal(restored.json().data[0]?.operation, "upsert");
       assert.equal(restored.json().data[0]?.revision, 3);
-      assert.equal(restored.json().data[0]?.resourceUrl, `/v1/public/users/${targetLogin}`);
+      assert.equal(restored.json().data[0]?.resourceUrl, `/public/users/${targetLogin}`);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/public/users/${targetLogin}`,
+        url: `/public/users/${targetLogin}`,
       })).statusCode, 200);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/public/records/${recordId}`,
+        url: `/public/records/${recordId}`,
       })).statusCode, 200);
     } finally {
       try {

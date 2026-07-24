@@ -108,8 +108,6 @@ test("record service validates decoded private ciphertext size on create and pat
     .toString("base64");
   const encryption = {
     algorithm: "A256GCM" as const,
-    cryptoVersion: 1 as const,
-    keyVersion: 1 as const,
     nonce: Buffer.alloc(12, 1).toString("base64"),
     ciphertext: oversizedCiphertext,
     contentType: "application/vnd.exeligmos.record+json" as const,
@@ -241,15 +239,12 @@ class SizeGuardDatabase implements Database {
       public_payload: isPrivate ? null : { text: "existing" },
       metadata: {},
       template_id: null,
-      template_version: null,
       source_kind: null,
       source_provider: null,
       source_external_id: null,
       source_url: null,
       source_metadata: {},
       cipher_algorithm: isPrivate ? "A256GCM" : null,
-      crypto_version: isPrivate ? 1 : null,
-      key_version: isPrivate ? 1 : null,
       nonce: isPrivate ? Buffer.alloc(12) : null,
       ciphertext: isPrivate ? Buffer.alloc(16) : null,
       encrypted_content_type: isPrivate

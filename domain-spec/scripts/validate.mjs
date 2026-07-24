@@ -6,28 +6,25 @@ import Ajv2020 from "ajv/dist/2020.js";
 const paths = {
   catalog: new URL("catalog.json", new URL("../", import.meta.url)),
   catalogSchema: new URL("catalog.schema.json", new URL("../", import.meta.url)),
-  vectors: new URL("conformance/v1.json", new URL("../", import.meta.url)),
-  vectorsSchema: new URL("conformance/vectors.schema.json", new URL("../", import.meta.url)),
-  package: new URL("package.json", new URL("../", import.meta.url))
+  vectors: new URL("conformance/vectors.json", new URL("../", import.meta.url)),
+  vectorsSchema: new URL("conformance/vectors.schema.json", new URL("../", import.meta.url))
 };
 
-const [catalogText, catalogSchemaText, vectorsText, vectorsSchemaText, packageText] = await Promise.all([
+const [catalogText, catalogSchemaText, vectorsText, vectorsSchemaText] = await Promise.all([
   readFile(paths.catalog, "utf8"),
   readFile(paths.catalogSchema, "utf8"),
   readFile(paths.vectors, "utf8"),
-  readFile(paths.vectorsSchema, "utf8"),
-  readFile(paths.package, "utf8")
+  readFile(paths.vectorsSchema, "utf8")
 ]);
 
 const catalog = parseJson(catalogText, "catalog.json");
 const catalogSchema = parseJson(catalogSchemaText, "catalog.schema.json");
-const vectors = parseJson(vectorsText, "conformance/v1.json");
+const vectors = parseJson(vectorsText, "conformance/vectors.json");
 const vectorsSchema = parseJson(vectorsSchemaText, "conformance/vectors.schema.json");
-const packageJson = parseJson(packageText, "package.json");
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 validateSchemaInstance(ajv, catalogSchema, catalog, "catalog.json");
-validateSchemaInstance(ajv, vectorsSchema, vectors, "conformance/v1.json");
+validateSchemaInstance(ajv, vectorsSchema, vectors, "conformance/vectors.json");
 
 validateCatalogInvariants();
 runConformanceVectors();
@@ -43,7 +40,7 @@ const operationCounts = Object.entries(
   .map(([operation, count]) => `${operation}=${count}`)
   .join(", ");
 
-console.log(`Validated ${vectors.vectors.length} conformance vectors against catalog ${catalog.catalogVersion}.`);
+console.log(`Validated ${vectors.vectors.length} conformance vectors against the canonical catalog.`);
 console.log(`Operations: ${operationCounts}`);
 console.log(`Catalog SHA-256: ${fingerprint}`);
 
@@ -72,9 +69,6 @@ function validateSchemaInstance(validator, schema, instance, label) {
 }
 
 function validateCatalogInvariants() {
-  assert(catalog.catalogVersion === packageJson.version, "package.json version must match catalogVersion");
-  assert(catalog.catalogVersion === vectors.catalogVersion, "conformance catalogVersion must match catalogVersion");
-
   const radixDigits = [...catalog.radix.digits];
   assert(radixDigits.length === catalog.radix.value, "radix.digits length must equal radix.value");
   assert(
@@ -156,8 +150,8 @@ function validateCatalogInvariants() {
   const armDigits = uniqueBy(catalog.glyph.arms, "digit", "glyph arm");
   assertDeepEqual([...armDigits], [0, 1, 2, 3, 4, 5, 6, 7], "glyph arm digit order");
   assert(
-    catalog.glyph.coreHole.legacyExactDepth === 7 && catalog.glyph.coreHole.legacyExactPoints.length === 8,
-    "legacy seven-depth core hole must retain its eight exact points"
+    catalog.glyph.coreHole.exactDepth === 7 && catalog.glyph.coreHole.exactPoints.length === 8,
+    "the exact depth-seven core hole must retain its eight points"
   );
 
   requireToken(catalog.events.unknownDisplay.semanticColorToken, "events.unknownDisplay");
@@ -224,7 +218,7 @@ function validateCatalogInvariants() {
 
   assertDeepEqual(
     catalog.events.providerMetadata.required,
-    ["namespace", "name", "version"],
+    ["namespace", "name"],
     "provider event metadata required fields"
   );
 }
@@ -445,8 +439,8 @@ function glyphFrameBounds({ depth: rawDepth }) {
     end: rotate(baseEnd, index * rotationStep)
   }));
   const points = sockets.flatMap((socket) => [socket.start, socket.end]);
-  if (depth === catalog.glyph.coreHole.legacyExactDepth) {
-    points.push(...catalog.glyph.coreHole.legacyExactPoints);
+  if (depth === catalog.glyph.coreHole.exactDepth) {
+    points.push(...catalog.glyph.coreHole.exactPoints);
   }
   for (let socketIndex = 0; socketIndex < depth; socketIndex += 1) {
     for (const arm of catalog.glyph.arms) {

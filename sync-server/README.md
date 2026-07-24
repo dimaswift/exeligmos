@@ -1,17 +1,14 @@
 # Fractonica Sync Server
 
-Fractonica v2 is a multi-user PostgreSQL service for first-party clients and
-user-authorized automation agents. Its public contract is OpenAPI 3.1, records
-are public by default or may be stored as opaque client-encrypted ciphertext,
-and PostgreSQL includes pgvector for later similarity search.
-
-There is deliberately no v1 wire or storage compatibility in this design. The
-legacy relay is a frozen migration source. The v2 server never reads it at
-runtime and the repeatable importer treats it as read-only.
+Fractonica is a multi-user PostgreSQL service for first-party clients and
+user-authorized automation agents. Its canonical public contract is OpenAPI
+3.1. Records are public by default or may be stored as opaque
+client-encrypted ciphertext, and PostgreSQL includes pgvector for later
+similarity search.
 
 ## Current implementation status
 
-The running Phase 3 server implements the complete checked-in v2 contract:
+The server implements the complete checked-in contract:
 
 - process liveness, PostgreSQL/pgvector readiness, and served API documentation;
 - login/password registration, login, rotating refresh tokens, logout, and
@@ -25,7 +22,7 @@ The running Phase 3 server implements the complete checked-in v2 contract:
 - unauthenticated public-record list and read projections;
 - authenticated lightweight event list, create, read, patch, and soft-delete
   operations;
-- user-owned tag CRUD and immutable, historical template versions with strict
+- user-owned tag CRUD and template history with strict
   JSON Schema validation and Mustache rendering;
 - reserved, streamed, SHA-256-verified public/private media upload sessions,
   immutable media objects, and owner/public downloads;
@@ -39,24 +36,13 @@ The running Phase 3 server implements the complete checked-in v2 contract:
   and ordered change-log emission behind those handlers.
 
 The checked-in [`openapi/openapi.yaml`](openapi/openapi.yaml) is both the complete
-v2 contract and the implemented HTTP surface. It is safe to use for client
+contract and the implemented HTTP surface. It is safe to use for client
 generation after reviewing the private-content crypto profile.
-
-## Brand and frozen protocol identifiers
-
-The product name is **Fractonica**. A small set of `exeligmos` identifiers is
-deliberately retained because it is part of the existing v2 wire, storage, or
-cryptographic contract: problem-detail URNs, the encrypted-record media type,
-HKDF context strings, database functions and advisory-lock keys, JWT defaults,
-and legacy-import provider values. Renaming those values in place would break
-stored ciphertext, clients, migration checksums, or active credentials. New
-user-facing names and internal package metadata use Fractonica; compatibility
-identifiers are documented and may only change in a versioned protocol migration.
 
 ## Requirements
 
 - Node.js 24 or newer and npm 11 or newer
-- Docker with Compose v2 for the local PostgreSQL/pgvector database
+- Docker with Compose for the local PostgreSQL/pgvector database
 
 ## Local setup
 
@@ -76,7 +62,8 @@ the Ed25519 JWT key exactly once and place its base64 value in
 openssl genpkey -algorithm ED25519 -outform DER | base64 | tr -d '\n'
 ```
 
-The normal boot command makes Docker/PostgreSQL ready, runs migrations, waits
+The normal boot command makes Docker/PostgreSQL ready, checks the canonical
+schema, waits
 for `/health/ready`, and then keeps the compiled server running:
 
 ```sh
@@ -99,29 +86,89 @@ To perform the database steps manually instead:
 
 ```sh
 docker compose up -d postgres
-npm run db:migrate
+npm run db:setup
 ```
 
-The migration runner serializes concurrent invocations with a PostgreSQL
-advisory lock, runs each migration transactionally, and refuses to continue if
-an applied file's SHA-256 checksum has changed.
+Schema setup creates the database only when it is empty. A nonempty database
+with a different shape is rejected; there is no conversion path.
 
 For development, run the TypeScript process with watch mode:
 
 ```sh
-npm run dev:v2
+npm run dev
 ```
 
-For the compiled v2 server, build first and then use the standard start command:
+For the compiled server, build first and then use the standard start command:
 
 ```sh
 npm run build
 npm start
 ```
 
-`npm start` is equivalent to `npm run start:v2` and starts the PostgreSQL v2
-server on port 8788 by default. The folder relay executable has been removed;
-its frozen `data/` hierarchy is accepted only by the migration command.
+`npm start` starts the PostgreSQL server on port 8788 by default.
+
+## Readable archives
+
+A readable archive is deliberately different from a server backup. It is not
+restorable and excludes password hashes, sessions, API-key hashes, rate-limit
+state, sync receipts, audit rows, embeddings, and incomplete uploads. It
+contains every user's records, referenced media, events, tags, templates,
+subscriptions, references, and devices as ordinary JSON and files. The archive
+is a direct snapshot of the one active data source; it does not include database
+change bookkeeping or duplicate historical copies.
+
+Stop the API and any other writers before taking a local archive, then choose a
+new destination directory:
+
+```sh
+npm run archive -- --output /Volumes/EncryptedArchive/fractonica-readable-$(date +%F)
+```
+
+The destination root contains `index.html`, `app.js`, `app.css`, and
+`archive-data.js`. They have no package, framework, CDN, SQL, or API
+dependencies. You may open `index.html` directly or run any ordinary static
+file server from that directory:
+
+```sh
+cd /path/to/fractonica-readable-archive
+python3 -m http.server 8000
+```
+
+Records remain directly navigable without the explorer under
+`users/<login>--<id>/records/YYYY/MM/DD/<record-id>/record.json`. Each record's
+attachments are copied into the adjacent `media/` folder so the record remains
+self-contained when navigating in Finder; media not attached to any record is
+retained under the user's `unattached-media/<media-id>/` directory.
+`manifest.json` describes the format and `SHA256SUMS` covers every generated
+data, media, and explorer file. Ready media is copied only after its byte length
+and SHA-256 match PostgreSQL.
+
+For journal records, the exporter also promotes their stored Saros context into
+the readable record envelope and explorer index. The explorer shows canonical
+8-digit octal phases without requiring the glyph renderer and can search or
+filter by the closest or any nearby Saros series, octal phase, rarity, or
+eclipse type.
+
+For a complete local archive without command-line arguments, edit
+`archive_parent_directory` near the top of `scripts/archive-all.sh`, then run:
+
+```sh
+npm run archive:all
+```
+
+Each run writes a new timestamped, directly navigable archive folder beneath
+that configured directory. Existing archives are never overwritten.
+
+Private records and private media remain A256GCM ciphertext. This is required:
+the server stores no user decryption keys. Decrypt those files with a
+key-holding client; the archive explorer labels them instead of trying to
+render ciphertext as media.
+
+For the production host, use
+`deployment/fractonica/bin/archive-to-local.sh`; it takes the shared maintenance
+lock, briefly stops API writes, builds and verifies the archive on the host,
+restarts and health-checks the API, and transfers a checksummed `.tar.gz` to an
+explicitly encrypted local destination.
 
 Confirm both health states:
 
@@ -145,7 +192,7 @@ The running server publishes documentation without requiring authentication:
   support for JWTs and API keys;
 - `GET /openapi.yaml` serves the exact checked-in OpenAPI 3.1 contract for API
   explorers and client generators;
-- `GET /docs/crypto-v1.md` serves the normative mnemonic, key derivation, record,
+- `GET /docs/crypto.md` serves the normative mnemonic, key derivation, record,
   and media encryption profile, including deterministic test vectors.
 
 For local development, open `http://localhost:8788/docs`, select **Authorize**,
@@ -172,12 +219,11 @@ provided npm scripts and is excluded from Git and Docker build contexts.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NODE_ENV` | `development` | `development`, `test`, or `production`. |
-| `HOST` / `PORT` | `0.0.0.0` / `8788` | v2 listen address. |
+| `HOST` / `PORT` | `0.0.0.0` / `8788` | Listen address. |
 | `LOG_LEVEL` | `info` | Structured Fastify log level; credential fields are redacted. |
 | `TRUST_PROXY_HOPS` | `0` | Exact number of trusted reverse-proxy hops. `0` uses the direct peer address. |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | Graceful shutdown deadline. |
-| `DATABASE_URL` | required | PostgreSQL connection URL used by the app and migration runner. |
-| `MIGRATIONS_DIR` | `db/migrations` | Migration directory, resolved from the migration runner's working directory. |
+| `DATABASE_URL` | required | PostgreSQL connection URL used by the app and schema setup. |
 | `DB_POOL_MAX` | `10` | Maximum PostgreSQL connections per server process. |
 | `DB_CONNECTION_TIMEOUT_MS` | `5000` | Pool connection timeout. |
 | `DB_IDLE_TIMEOUT_MS` | `30000` | Pool idle-connection timeout. |
@@ -185,7 +231,7 @@ provided npm scripts and is excluded from Git and Docker build contexts.
 | `DB_STATEMENT_TIMEOUT_MS` | `15000` | Maximum PostgreSQL statement runtime for application connections. |
 | `DB_LOCK_TIMEOUT_MS` | `5000` | Maximum time an application statement may wait for a PostgreSQL lock. |
 | `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | `15000` | Maximum idle time allowed inside an application transaction. |
-| `MEDIA_STORAGE_ROOT` | `var/media` | Persistent root for v2 media bytes. Keep it outside the read-only legacy `data/` source. |
+| `MEDIA_STORAGE_ROOT` | `var/media` | Persistent root for media bytes. |
 | `MEDIA_MAX_BYTE_LENGTH` | `5368709120` | Maximum declared media upload size, constrained to 1 byte through 5 GiB. |
 | `MEDIA_UPLOAD_TTL_SECONDS` | `86400` | Reservation lifetime before incomplete media uploads expire. |
 | `AUTH_REGISTRATION_MODE` | `open` | `open`, `invite`, or `closed`. Use `invite` or `closed` for a private deployment. |
@@ -251,9 +297,8 @@ storage rather than buffering in memory. Storage amplification is also bounded:
   default), and both `Content-Length` and SHA-256 must match its reservation.
 
 The services validate final values, including rendered template payloads and
-merged patches, before writing. Migration constraints apply the same numeric
-bounds to PostgreSQL JSONB/ciphertext storage so direct SQL and future handlers
-cannot bypass them.
+merged patches, before writing. Database constraints apply the same numeric
+bounds to JSONB and ciphertext storage so direct SQL cannot bypass them.
 
 The server generates API-key secrets itself with 256 bits of randomness. There
 is no API-key master-secret environment variable: only SHA-256 hashes and
@@ -269,9 +314,9 @@ disablement, and bound-device revocation take effect immediately.
 Login sessions begin without a device binding because a new client may need to
 register its logical device first. A first-party client should:
 
-1. authenticate with `POST /v1/auth/register` or `POST /v1/auth/login`;
-2. register or locate its device through `/v1/devices`;
-3. call `PUT /v1/devices/{deviceId}/current-session` with its JWT.
+1. authenticate with `POST /auth/register` or `POST /auth/login`;
+2. register or locate its device through `/devices`;
+3. call `PUT /devices/{deviceId}/current-session` with its JWT.
 
 The `PUT` is JWT-only and idempotently sets or replaces the binding for the
 current refresh-token family. Revoking that device then revokes its active API
@@ -299,7 +344,7 @@ must be retried:
 
 ```sh
 curl --fail-with-body -sS \
-  -X POST "$BASE_URL/v1/devices" \
+  -X POST "$BASE_URL/devices" \
   -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: device-$DEVICE_ID" \
@@ -311,7 +356,7 @@ Issue the agent key with only the scopes it needs:
 ```sh
 KEY_REQUEST_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 curl --fail-with-body -sS \
-  -X POST "$BASE_URL/v1/api-keys" \
+  -X POST "$BASE_URL/api-keys" \
   -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: api-key-$KEY_REQUEST_ID" \
@@ -330,7 +375,7 @@ The agent can now create a public record. Public is the default visibility, so
 
 ```sh
 curl --fail-with-body -sS \
-  -X POST "$BASE_URL/v1/records" \
+  -X POST "$BASE_URL/records" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: record-$RECORD_REQUEST_ID" \
@@ -342,19 +387,19 @@ Fetch the user's records with the same key:
 ```sh
 curl --fail-with-body -sS \
   -H "Authorization: Bearer $API_KEY" \
-  "$BASE_URL/v1/records?limit=25&sourceProvider=noaa-swpc"
+  "$BASE_URL/records?limit=25&sourceProvider=noaa-swpc"
 ```
 
 An API key may assert only its bound `deviceId`; using another owned device ID
-returns a device-binding error. Use the analogous `/v1/events` operations for
+returns a device-binding error. Use the analogous `/events` operations for
 lightweight intervals that need no media, templates, encryption, or embeddings.
 
 ## Public profiles, subscriptions, and activity cursors
 
-Public profiles resolve by stable login at `GET /v1/public/users/{login}`.
+Public profiles resolve by stable login at `GET /public/users/{login}`.
 Authenticated users can follow another user with `PUT
-/v1/subscriptions/{targetUserId}` and consume either the global `GET
-/v1/public/activity` cursor or the subscription-filtered `GET /v1/activity`
+/subscriptions/{targetUserId}` and consume either the global `GET
+/public/activity` cursor or the subscription-filtered `GET /activity`
 cursor. Activity entries are identifier-only notifications; record and event
 payloads remain behind their own public resource URLs.
 
@@ -376,7 +421,7 @@ must discard its cursor and rebuild after such maintenance.
 
 API-key creation intentionally differs from ordinary replayable mutations:
 
-- the first successful `POST /v1/api-keys` returns 201 with `key` metadata and
+- the first successful `POST /api-keys` returns 201 with `key` metadata and
   the plaintext `secret`;
 - the server stores only the secret hash and cannot retrieve the plaintext;
 - replaying the same `Idempotency-Key` with the same body returns 409 with code
@@ -395,8 +440,8 @@ For example, a replay after a lost 201 response includes:
 ```
 
 API-key inspection and revocation are JWT-only. If the original secret was not
-saved, use `apiKeyId` with `GET /v1/api-keys/{apiKeyId}` to inspect the orphaned
-credential or `DELETE /v1/api-keys/{apiKeyId}` to revoke it, then create a
+saved, use `apiKeyId` with `GET /api-keys/{apiKeyId}` to inspect the orphaned
+credential or `DELETE /api-keys/{apiKeyId}` to revoke it, then create a
 replacement with a new idempotency key. The secret is never returned again.
 
 ## Catalog, media, and synchronization
@@ -413,18 +458,16 @@ media bytes, and authorization/idempotency headers are never included in these
 diagnostic summaries. Filter the JSON server output by the `event` field while
 reproducing an upload.
 
-Tags are ordinary revisioned resources. Templates retain immutable historical
-versions: `PATCH /v1/templates/{templateId}` creates the next version, while a
-version query retrieves the exact earlier definition. Template variables are
+Tags and templates are ordinary revisioned resources. Template variables are
 validated against JSON Schema 2020-12 before Mustache renders a public record.
 Partials and asynchronous/custom execution are intentionally unavailable.
 
 Media uses a four-step, retry-safe lifecycle:
 
-1. reserve metadata with `POST /v1/media-upload-sessions`;
+1. reserve metadata with `POST /media-upload-sessions`;
 2. stream the exact bytes as `application/octet-stream` to the returned
    `uploadUrl`, including `Content-Length` and `X-Content-SHA256`;
-3. finalize with `POST /v1/media-upload-sessions/{uploadId}/complete`;
+3. finalize with `POST /media-upload-sessions/{uploadId}/complete`;
 4. attach the returned `mediaId` in a public or private record mutation.
 
 Bytes are atomically written only after length and SHA-256 validation. Completed
@@ -434,25 +477,25 @@ attached to an active public record; owner downloads always require
 
 The sync API is a relay for offline-first clients, not an authority over their
 local stores. Clients persist local CRUD first, then submit those operations to
-`POST /v1/sync/batches`. The server stores accepted state and exposes the
+`POST /sync/batches`. The server stores accepted state and exposes the
 resulting commands to the owner's other devices and, where public/subscribed,
 feed consumers. Missing rows in a collection snapshot never imply deletion;
 clients remove local data only after receiving an explicit delete tombstone.
 
-`GET /v1/sync/stats` returns owner-scoped record, event, tag, template, and media
+`GET /sync/stats` returns owner-scoped record, event, tag, template, and media
 totals plus a command-feed cursor captured at the same starting boundary. A
 restoring client captures these statistics first, merges the bounded owner
-collection pages into local storage, and then requests `GET /v1/sync/changes`
+collection pages into local storage, and then requests `GET /sync/changes`
 from that cursor. This makes the totals usable for progress while the command
 feed catches every write committed during the snapshot without replaying the
 entire retained history.
 
-`GET /v1/sync/changes` returns that commit-ordered, cursor-based owner command
+`GET /sync/changes` returns that commit-ordered, cursor-based owner command
 feed with full current resources for upserts and minimal tombstones for deletes.
 A cursor older than a retained high-water mark returns `410 cursor_expired`;
 the client must capture fresh statistics, repeat the same merge-only owner
 snapshot, and resume from the fresh cursor. `POST
-/v1/sync/batches` accepts at most 20 record/event/tag/template mutations and
+/sync/batches` accepts at most 20 record/event/tag/template mutations and
 supports either all-or-nothing atomic execution or ordered per-item results.
 `clientMutationId` receipts last 30 days, so a retry cannot silently apply a
 different mutation body. Record upserts are deliberately client-authoritative:
@@ -460,32 +503,15 @@ when the same record ID already exists (including a relay tombstone), the
 submitted local record replaces it and succeeds without requiring an ETag.
 Events, tags, and templates retain conditional replacement semantics.
 
-## Legacy migration
-
-The repeatable migration tool is documented in
-[`docs/legacy-import.md`](docs/legacy-import.md). It provides:
-
-- a read-only dry run over the folder source;
-- exact counts and a stable SHA-256 over every imported JSON document and media
-  byte;
-- explicit destination user and device mapping;
-- atomic, verified media copies and provenance-preserving public records;
-- persisted run state, safe resume, and a completed-run verification mode that
-  re-hashes stored media without creating new revisions.
-
-Run `npm run import:legacy -- --help` for the command synopsis. Animacy data is
-explicitly excluded from migration and remains only in the frozen source
-backup.
-
 ## Record privacy and lightweight events
 
 Password authentication and private-record encryption are separate. On first
 setup, a client offers a machine-generated 12-word BIP-39 recovery mnemonic,
 keeps it off the server, and uploads only a non-secret key-check value. A new
 device needs both a valid login and those words to decrypt private content. The
-exact byte-level interoperability rules are in [`docs/crypto-v1.md`](docs/crypto-v1.md).
+exact byte-level interoperability rules are in [`docs/crypto.md`](docs/crypto.md).
 
-Public record payloads can reference tags, media, versioned templates, metadata,
+Public record payloads can reference tags, media, templates, metadata,
 and future embeddings. A private record exposes operational identity, an
 AES-256-GCM ciphertext envelope, and opaque encrypted-media attachment IDs;
 occurrence time, payload, tags, source, media descriptions, and semantic
@@ -497,7 +523,7 @@ timestamps, label, numeric type, JSON metadata, user, and device. They have
 revision and synchronization history but no media, templates, encryption
 envelope, or embeddings.
 
-The schema includes pgvector and model-versioned public-record embedding rows.
+The schema includes pgvector and model-identified public-record embedding rows.
 No embedding generation or similarity-search HTTP endpoint is implemented yet;
 model-specific indexes wait until model and dimensionality are selected.
 
@@ -510,7 +536,7 @@ npm run check
 ```
 
 Run live PostgreSQL integration tests against a disposable or dedicated test
-database after applying migrations:
+database after creating the canonical schema:
 
 ```sh
 TEST_DATABASE_URL=postgresql://user:password@localhost:5432/test_database \
@@ -521,12 +547,11 @@ Build the production JavaScript and container image with:
 
 ```sh
 npm run build
-docker build -t fractonica-sync-server:v2 .
+docker build -t fractonica-sync-server .
 ```
 
-The image runs as the unprivileged `node` user. Migrations are an explicit
-deployment step; the server never mutates its schema at startup. Run
-`npm run db:migrate:prod` in a one-off container before starting a new release.
+The image runs as the unprivileged `node` user. `npm run db:setup:prod` creates
+the canonical schema only for an empty database.
 
 Stop and remove the local database, including its volume, with:
 
@@ -534,12 +559,7 @@ Stop and remove the local database, including its volume, with:
 docker compose down -v
 ```
 
-## Cutover and future similarity search
-
-Before production cutover, freeze writes to the old installation, take a
-filesystem backup, run the final importer dry run and apply with the same source
-checksum, then run it once more in verification mode. Keep the backup until a
-v2 client has completed a fresh snapshot and media spot-check.
+## Future similarity search
 
 Similarity search remains deliberately deferred. The schema and pgvector
 extension are ready, but model selection, dimensions, generation jobs, and

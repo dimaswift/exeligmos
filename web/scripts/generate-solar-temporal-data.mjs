@@ -136,7 +136,6 @@ if (indexedEclipses.size !== eclipseCount) {
 }
 
 const output = {
-  schemaVersion: 1,
   sourceSha256: sourceHash.digest("hex"),
   series,
 };

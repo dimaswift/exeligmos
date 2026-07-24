@@ -23,7 +23,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (range !== null) headers.set("Range", range);
 
   const response = await fetch(
-    new URL(`/v1/public/media/${encodeURIComponent(params.mediaId)}/content`, backendApiBaseUrl()),
+    new URL(`/public/media/${encodeURIComponent(params.mediaId)}/content`, backendApiBaseUrl()),
     { headers, signal: request.signal },
   );
   if (!response.ok && response.status !== 206) {

@@ -68,7 +68,7 @@ export async function registerOwnerSecurityRoutes(
   const apiKeys = new ApiKeyService(options.database, options.apiKeys);
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
-  app.get("/v1/me", async (request, reply) =>
+  app.get("/me", async (request, reply) =>
     withOwnerSecurityErrors(reply, async () => {
       const principal = await options.authenticator.authenticate(request);
       await requestLimiter.checkAuthenticatedRead(request, principal);
@@ -78,7 +78,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.patch<{ Body: UpdateUserInput; Headers: IfMatchHeaders }>(
-    "/v1/me",
+    "/me",
     { schema: updateUserSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -94,7 +94,7 @@ export async function registerOwnerSecurityRoutes(
       }),
   );
 
-  app.get("/v1/me/encryption-profile", async (request, reply) =>
+  app.get("/me/encryption-profile", async (request, reply) =>
     withOwnerSecurityErrors(reply, async () => {
       const principal = await authenticateJwt(options.authenticator, request);
       await requestLimiter.checkAuthenticatedRead(request, principal);
@@ -106,7 +106,7 @@ export async function registerOwnerSecurityRoutes(
     Body: CreateEncryptionProfileInput;
     Headers: IdempotencyHeaders;
   }>(
-    "/v1/me/encryption-profile",
+    "/me/encryption-profile",
     { schema: encryptionProfileCreateSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -124,7 +124,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.get<{ Querystring: ListQuery }>(
-    "/v1/devices",
+    "/devices",
     { schema: listSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -144,7 +144,7 @@ export async function registerOwnerSecurityRoutes(
     Body: CreateDeviceInput;
     Headers: IdempotencyHeaders;
   }>(
-    "/v1/devices",
+    "/devices",
     { schema: createDeviceSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -162,7 +162,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.get<{ Params: DeviceParams }>(
-    "/v1/devices/:deviceId",
+    "/devices/:deviceId",
     { schema: deviceParamsSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -178,7 +178,7 @@ export async function registerOwnerSecurityRoutes(
     Headers: IfMatchHeaders;
     Body: UpdateDeviceInput;
   }>(
-    "/v1/devices/:deviceId",
+    "/devices/:deviceId",
     { schema: updateDeviceSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -196,7 +196,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.delete<{ Params: DeviceParams; Headers: IfMatchHeaders }>(
-    "/v1/devices/:deviceId",
+    "/devices/:deviceId",
     { schema: deleteDeviceSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -213,7 +213,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.put<{ Params: DeviceParams }>(
-    "/v1/devices/:deviceId/current-session",
+    "/devices/:deviceId/current-session",
     { schema: deviceParamsSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -229,7 +229,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.get<{ Querystring: ListQuery }>(
-    "/v1/api-keys",
+    "/api-keys",
     { schema: listSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -246,7 +246,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.post<{ Body: CreateApiKeyInput; Headers: IdempotencyHeaders }>(
-    "/v1/api-keys",
+    "/api-keys",
     { schema: createApiKeySchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -267,7 +267,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.get<{ Params: ApiKeyParams }>(
-    "/v1/api-keys/:apiKeyId",
+    "/api-keys/:apiKeyId",
     { schema: apiKeyParamsSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -279,7 +279,7 @@ export async function registerOwnerSecurityRoutes(
   );
 
   app.delete<{ Params: ApiKeyParams }>(
-    "/v1/api-keys/:apiKeyId",
+    "/api-keys/:apiKeyId",
     { schema: apiKeyParamsSchema },
     async (request, reply) =>
       withOwnerSecurityErrors(reply, async () => {
@@ -388,10 +388,8 @@ const encryptionProfileCreateSchema = {
   headers: IDEMPOTENCY_HEADER_SCHEMA,
   body: {
     type: "object",
-    required: ["cryptoVersion", "keyVersion", "keyCheck"],
+    required: ["keyCheck"],
     properties: {
-      cryptoVersion: { type: "integer", const: 1 },
-      keyVersion: { type: "integer", const: 1 },
       keyCheck: {
         type: "string",
         minLength: 44,

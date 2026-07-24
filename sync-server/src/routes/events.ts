@@ -61,7 +61,7 @@ export async function registerEventRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get<{ Querystring: EventQuerystring }>(
-    "/v1/events",
+    "/events",
     { schema: { querystring: eventQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["events:read"]);
@@ -71,7 +71,7 @@ export async function registerEventRoutes(
   );
 
   app.post<{ Body: CreateEventInput }>(
-    "/v1/events",
+    "/events",
     { schema: { headers: idempotencyHeadersSchema, body: createEventSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["events:write"]);
@@ -87,7 +87,7 @@ export async function registerEventRoutes(
   );
 
   app.get<{ Params: EventPath }>(
-    "/v1/events/:eventId",
+    "/events/:eventId",
     { schema: { params: eventPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["events:read"]);
@@ -100,7 +100,7 @@ export async function registerEventRoutes(
   );
 
   app.patch<{ Params: EventPath; Body: UpdateEventInput }>(
-    "/v1/events/:eventId",
+    "/events/:eventId",
     {
       schema: {
         params: eventPathSchema,
@@ -125,7 +125,7 @@ export async function registerEventRoutes(
   );
 
   app.delete<{ Params: EventPath }>(
-    "/v1/events/:eventId",
+    "/events/:eventId",
     { schema: { params: eventPathSchema, headers: conditionalMutationHeadersSchema } },
     async (request, reply) =>
       withPreconditionHeader(reply, async () => {
@@ -143,7 +143,7 @@ export async function registerEventRoutes(
   );
 
   app.get<{ Querystring: PublicEventQuerystring }>(
-    "/v1/public/events",
+    "/public/events",
     { schema: { querystring: publicEventQuerySchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -153,7 +153,7 @@ export async function registerEventRoutes(
   );
 
   app.get<{ Params: EventPath }>(
-    "/v1/public/events/:eventId",
+    "/public/events/:eventId",
     { schema: { params: eventPathSchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);

@@ -46,7 +46,7 @@ export async function registerTagRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get<{ Querystring: TagQuerystring }>(
-    "/v1/tags",
+    "/tags",
     { schema: { querystring: tagQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["tags:read"]);
@@ -56,7 +56,7 @@ export async function registerTagRoutes(
   );
 
   app.post<{ Body: CreateTagInput }>(
-    "/v1/tags",
+    "/tags",
     { schema: { headers: idempotencyHeadersSchema, body: createTagSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["tags:write"]);
@@ -72,7 +72,7 @@ export async function registerTagRoutes(
   );
 
   app.get<{ Params: TagPath }>(
-    "/v1/tags/:tagId",
+    "/tags/:tagId",
     { schema: { params: tagPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["tags:read"]);
@@ -83,7 +83,7 @@ export async function registerTagRoutes(
   );
 
   app.patch<{ Params: TagPath; Body: UpdateTagInput }>(
-    "/v1/tags/:tagId",
+    "/tags/:tagId",
     {
       schema: {
         params: tagPathSchema,
@@ -108,7 +108,7 @@ export async function registerTagRoutes(
   );
 
   app.delete<{ Params: TagPath }>(
-    "/v1/tags/:tagId",
+    "/tags/:tagId",
     { schema: { params: tagPathSchema, headers: conditionalMutationHeadersSchema } },
     async (request, reply) =>
       withPreconditionHeader(reply, async () => {

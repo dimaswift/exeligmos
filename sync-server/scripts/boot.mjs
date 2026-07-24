@@ -163,7 +163,7 @@ async function waitForServer(child) {
 }
 
 async function startServer() {
-  const script = isDevelopment ? "dev:v2" : "start:v2";
+  const script = isDevelopment ? "dev" : "start";
   const child = spawn(NPM, ["run", script], {
     cwd: ROOT,
     env: process.env,
@@ -201,8 +201,8 @@ async function main() {
   await waitForDocker();
   await waitForPostgres();
 
-  console.log("Applying database migrations…");
-  await command(NPM, ["run", isDevelopment ? "db:migrate" : "db:migrate:prod"], {
+  console.log("Checking the canonical database schema…");
+  await command(NPM, ["run", isDevelopment ? "db:setup" : "db:setup:prod"], {
     timeoutMs: 120_000,
     inheritOutput: true,
   });

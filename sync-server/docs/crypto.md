@@ -1,11 +1,11 @@
-# Fractonica private-record cryptographic profile v1
+# Fractonica private-record cryptographic profile
 
-The product is named Fractonica. The `exeligmos/...` HKDF context strings and
-`application/vnd.exeligmos.record+json` media type below are frozen v1
-cryptographic identifiers. Implementations must use them verbatim so existing
-ciphertext remains decryptable and authenticated metadata remains valid.
+The `exeligmos/...` HKDF context strings and
+`application/vnd.exeligmos.record+json` media type below are cryptographic
+identifiers. Implementations must use them verbatim so ciphertext remains
+decryptable and authenticated metadata remains valid.
 
-Status: normative for the v2 API contract. Implementations should receive an
+Status: normative for the Fractonica API contract. Implementations should receive an
 independent cryptographic review before production deployment.
 
 This profile makes private record and media bytes opaque to the server while
@@ -41,8 +41,8 @@ encryption profile, a client:
    English BIP-39 mnemonic. User-authored phrases are forbidden.
 2. Shows the words once, asks the user to confirm selected positions, and never
    sends the words, seed, or a derived key to the server.
-3. Derives the values below and sends only `cryptoVersion: 1`, `keyVersion: 1`,
-   and `keyCheck` to `POST /v1/me/encryption-profile`.
+3. Derives the values below and sends only `keyCheck` to
+   `POST /me/encryption-profile`.
 4. Stores the root secret only in platform secure storage and discards transient
    plaintext copies as soon as the platform allows.
 
@@ -52,10 +52,6 @@ downloading private content. The server-side check value enables typo detection
 but cannot decrypt anything. It does permit offline testing of candidate
 mnemonics after a database compromise; the required machine-generated 128-bit
 entropy makes exhaustive search infeasible.
-
-Crypto profile v1 supports only `keyVersion = 1`. Rotation will require a new
-profile version and an explicit re-encryption migration; clients and the server
-must reject other values rather than guessing behavior.
 
 ## Root and object keys
 
@@ -84,19 +80,19 @@ HKDF `info` values are exact UTF-8 strings:
 ```text
 recordKey = HKDF-Expand-SHA256(
   userPrk,
-  "exeligmos/record-key/v1/key-version/1/" + lowercaseRecordOriginUuid,
+  "exeligmos/record-key/" + lowercaseRecordOriginUuid,
   32
 )
 
 mediaKey = HKDF-Expand-SHA256(
   userPrk,
-  "exeligmos/media-key/v1/key-version/1/" + lowercaseMediaUuid,
+  "exeligmos/media-key/" + lowercaseMediaUuid,
   32
 )
 
 checkKey = HKDF-Expand-SHA256(
   userPrk,
-  "exeligmos/key-check/v1",
+  "exeligmos/key-check",
   32
 )
 
@@ -109,12 +105,11 @@ different object IDs.
 
 ## Private record document
 
-Before encryption, clients construct an I-JSON object and canonicalize it with
-JCS. The v1 document is:
+Before encryption, clients construct the I-JSON document below and canonicalize
+it with JCS:
 
 ```json
 {
-  "schemaVersion": 1,
   "occurredAt": "2026-07-14T16:42:00Z",
   "endedAt": "2026-07-14T16:55:00Z",
   "payload": {"text": "private text"},
@@ -136,8 +131,8 @@ JCS. The v1 document is:
 }
 ```
 
-`schemaVersion`, `occurredAt`, `payload`, `tagIds`, `media`, and `metadata` are
-required. `endedAt` and `source` are optional. Payload and source follow the
+`occurredAt`, `payload`, `tagIds`, `media`, and `metadata` are required.
+`endedAt` and `source` are optional. Payload and source follow the
 corresponding public OpenAPI shapes, but remain encrypted. Each media item
 requires `id`; its other fields are optional encrypted descriptions.
 
@@ -145,16 +140,13 @@ The request's clear `mediaIds` must be the same IDs as the encrypted `media`
 array, sorted lexicographically by lowercase UUID. Clients must reject a
 decrypted record if those sets differ.
 
-The JCS-canonical record associated-data object is below. For compatibility
-with crypto profile v1, its `recordId` member contains the owner-only
-`originId` UUID, not the five-character API `id`.
+The JCS-canonical record associated-data object is below. Its `recordId` member
+contains the owner-only `originId` UUID, not the five-character API `id`.
 
 ```json
 {
   "contentType": "application/vnd.exeligmos.record+json",
-  "cryptoVersion": 1,
   "deviceId": "lowercase device UUID",
-  "keyVersion": 1,
   "mediaIds": ["sorted lowercase media UUIDs"],
   "recordId": "lowercase record UUID",
   "revision": "positive decimal revision",
@@ -200,8 +192,6 @@ associated-data object is JCS-canonical JSON:
 
 ```json
 {
-  "cryptoVersion": 1,
-  "keyVersion": 1,
   "mediaId": "lowercase media UUID",
   "userId": "lowercase user UUID"
 }
@@ -234,18 +224,18 @@ bip39Seed hex:
 userPrk hex:
   8c702a961eb1243d3bd3e1215b80ec6f797568b1ddf40531c6b7e1043e509296
 recordKey hex:
-  42f94f8dc06076f6536e1de1b26723e9d866eed0c45011047b0b16e96fbce7d7
+  dec4361bd249b37714855e92c61ef78d0653c069869bcba00b743a86653d824e
 keyCheck base64:
-  63eUGeN9cLHvLRW4Z75Cw29NXkXTACbam/abp5+04W4=
+  yH3GZ4EtLy4FaD8gQQ4ueVoz/J04wXmeAsaLd4SOGZ0=
 
 AAD UTF-8:
-  {"contentType":"application/vnd.exeligmos.record+json","cryptoVersion":1,"deviceId":"00000000-0000-4000-8000-000000000004","keyVersion":1,"mediaIds":[],"recordId":"00000000-0000-4000-8000-000000000002","revision":"1","userId":"00000000-0000-4000-8000-000000000001"}
+  {"contentType":"application/vnd.exeligmos.record+json","deviceId":"00000000-0000-4000-8000-000000000004","mediaIds":[],"recordId":"00000000-0000-4000-8000-000000000002","revision":"1","userId":"00000000-0000-4000-8000-000000000001"}
 plaintext UTF-8:
-  {"media":[],"metadata":{},"occurredAt":"2026-07-14T16:42:00Z","payload":{"text":"private test"},"schemaVersion":1,"tagIds":[]}
+  {"media":[],"metadata":{},"occurredAt":"2026-07-14T16:42:00Z","payload":{"text":"private test"},"tagIds":[]}
 nonce base64:
   AAECAwQFBgcICQoL
 ciphertext-with-tag base64:
-  fyQU1un08M3bELCLo53C/GV63LCgJsPathg2VITL9u8x24CRHnhSMIyxJ+eRjCU3AgvvnOUN+ty7qW4EUfWGQ0Ns1xyaTF/xq0rdbPQagPCbIlJptBT0xiJXpoT/xVU++O5qTAa9OjCrXHBMhpHHIEct5B2vUxaqINmjO2jDHX9rLbt8RCJAYvmK1Z1MCA==
+  rKRp2PRM8JQMHDvesd3N5yXsmfddaHELM38DGMtoRKikdag+vNFSHstz2IySb+kLj2HSCjkohuftu67GRm1A9LR3sG0sSUDXoyyU38ELsDjDgd6Jr8viH/0pfev7OCg0GFTeJTEiP+pFGBtWU3T0upQsW3d67a5xRS1ISQ==
 ```
 
 Implementations must reproduce this vector byte-for-byte before exchanging

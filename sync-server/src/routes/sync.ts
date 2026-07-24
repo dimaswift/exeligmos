@@ -47,7 +47,7 @@ export async function registerSyncRoutes(
   const requestLimiter = options.requestLimiter ?? NOOP_RESOURCE_REQUEST_LIMITER;
 
   app.get(
-    "/v1/sync/stats",
+    "/sync/stats",
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["sync:read"]);
       await requestLimiter.checkAuthenticatedRead(request, principal);
@@ -56,7 +56,7 @@ export async function registerSyncRoutes(
   );
 
   app.get<{ Querystring: ChangeQuerystring }>(
-    "/v1/sync/changes",
+    "/sync/changes",
     { schema: { querystring: changeQuerySchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["sync:read"]);
@@ -66,7 +66,7 @@ export async function registerSyncRoutes(
   );
 
   app.post<{ Body: SyncBatchInput }>(
-    "/v1/sync/batches",
+    "/sync/batches",
     {
       bodyLimit: SYNC_BATCH_BODY_LIMIT_BYTES,
       onError: async (request, _reply, error) => {

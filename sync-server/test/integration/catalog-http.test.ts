@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -8,7 +7,7 @@ import { Client } from "pg";
 
 import type { Principal } from "../../src/auth/principal.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { registerProblemHandlers } from "../../src/http/problem.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { registerTagRoutes } from "../../src/routes/tags.js";
@@ -18,14 +17,11 @@ import { testConfig } from "../helpers.js";
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
 
 test(
-  "tag and template HTTP endpoints replay writes and expose immutable template versions",
+  "tag and template HTTP endpoints replay writes and expose current resources",
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
     const baseConfig = testConfig();
     const database = createPostgresDatabase({ ...baseConfig.database, url: databaseUrl });
     const sql = new Client({ connectionString: databaseUrl });
@@ -61,7 +57,7 @@ test(
       const tagId = randomUUID();
       const tagRequest = {
         method: "POST" as const,
-        url: "/v1/tags",
+        url: "/tags",
         headers: { "idempotency-key": `tag-create-${randomUUID()}` },
         payload: {
           id: tagId,
@@ -75,10 +71,10 @@ test(
       assert.equal(tagCreated.statusCode, 201, tagCreated.body);
       assert.equal(tagReplayed.statusCode, 201, tagReplayed.body);
       assert.deepEqual(tagReplayed.json(), tagCreated.json());
-      assert.equal(tagCreated.headers.location, `/v1/tags/${tagId}`);
+      assert.equal(tagCreated.headers.location, `/tags/${tagId}`);
       const tagPatched = await app.inject({
         method: "PATCH",
-        url: `/v1/tags/${tagId}`,
+        url: `/tags/${tagId}`,
         headers: {
           "content-type": "application/merge-patch+json",
           "idempotency-key": `tag-patch-${randomUUID()}`,
@@ -92,7 +88,7 @@ test(
       const templateId = randomUUID();
       const templateCreated = await app.inject({
         method: "POST",
-        url: "/v1/templates",
+        url: "/templates",
         headers: { "idempotency-key": `template-create-${randomUUID()}` },
         payload: {
           id: templateId,
@@ -108,29 +104,29 @@ test(
         },
       });
       assert.equal(templateCreated.statusCode, 201, templateCreated.body);
-      assert.equal(templateCreated.json().version, 1);
+      assert.equal(templateCreated.json().revision, 1);
       const templateUpdated = await app.inject({
         method: "PATCH",
-        url: `/v1/templates/${templateId}`,
+        url: `/templates/${templateId}`,
         headers: {
           "content-type": "application/merge-patch+json",
-          "idempotency-key": `template-version-${randomUUID()}`,
+          "idempotency-key": `template-update-${randomUUID()}`,
           "if-match": requiredHeader(templateCreated.headers.etag),
         },
         payload: { body: { text: "Solar flare {{class}}" } },
       });
       assert.equal(templateUpdated.statusCode, 200, templateUpdated.body);
-      assert.equal(templateUpdated.json().version, 2);
-      const historical = await app.inject({
+      assert.equal(templateUpdated.json().revision, 2);
+      const current = await app.inject({
         method: "GET",
-        url: `/v1/templates/${templateId}?version=1`,
+        url: `/templates/${templateId}`,
       });
-      assert.equal(historical.statusCode, 200, historical.body);
-      assert.deepEqual(historical.json().body, { text: "Flare {{class}}" });
+      assert.equal(current.statusCode, 200, current.body);
+      assert.deepEqual(current.json().body, { text: "Solar flare {{class}}" });
 
       const retired = await app.inject({
         method: "DELETE",
-        url: `/v1/templates/${templateId}`,
+        url: `/templates/${templateId}`,
         headers: {
           "idempotency-key": `template-retire-${randomUUID()}`,
           "if-match": requiredHeader(templateUpdated.headers.etag),
@@ -139,14 +135,8 @@ test(
       assert.equal(retired.statusCode, 204, retired.body);
       assert.equal((await app.inject({
         method: "GET",
-        url: `/v1/templates/${templateId}`,
+        url: `/templates/${templateId}`,
       })).statusCode, 404);
-      const retiredHistory = await app.inject({
-        method: "GET",
-        url: `/v1/templates/${templateId}?version=1`,
-      });
-      assert.equal(retiredHistory.statusCode, 200, retiredHistory.body);
-      assert.ok(retiredHistory.json().retiredAt);
     } finally {
       try {
         await sql.query("DELETE FROM change_log WHERE user_id = $1", [userId]);

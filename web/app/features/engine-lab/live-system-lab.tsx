@@ -22,7 +22,6 @@ interface LiveSystemLabProps {
   readonly harmonicDepth: number;
   readonly intervals: readonly SarosInterval[];
   readonly solarData: {
-    readonly schemaVersion: number;
     readonly sourceSha256: string;
     readonly seriesCount: number;
     readonly eclipseCount: number;
@@ -181,10 +180,6 @@ export function LiveSystemLab({
         <summary>Engine diagnostics and provenance</summary>
         <dl>
           <div>
-            <dt>Catalog</dt>
-            <dd>{canonicalCatalog.catalogVersion}</dd>
-          </div>
-          <div>
             <dt>Solar dataset</dt>
             <dd>
               {solarData.seriesCount} series · {solarData.eclipseCount.toLocaleString()} eclipses
@@ -193,10 +188,6 @@ export function LiveSystemLab({
           <div>
             <dt>Dataset SHA-256</dt>
             <dd>{solarData.sourceSha256}</dd>
-          </div>
-          <div>
-            <dt>Schema</dt>
-            <dd>{solarData.schemaVersion}</dd>
           </div>
         </dl>
       </details>

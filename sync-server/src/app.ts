@@ -100,8 +100,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     reply.header("referrer-policy", "no-referrer");
 
     if (
-      request.url.startsWith("/v1/") &&
-      !request.url.startsWith("/v1/public/") &&
+      request.url.startsWith("/") &&
+      !request.url.startsWith("/public/") &&
       !reply.hasHeader("cache-control")
     ) {
       reply.header("cache-control", "no-store");

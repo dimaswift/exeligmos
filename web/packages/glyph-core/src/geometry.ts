@@ -117,7 +117,6 @@ export function createOctalGlyph(options: CreateOctalGlyphOptions): GlyphModel {
     rawLabel === undefined || rawLabel === "" ? glyphCatalog.accessibility.label : rawLabel;
   return deepFreezeModel({
     kind: "octal",
-    geometryVersion: glyphCatalog.geometryVersion,
     depth,
     normalizedValue,
     viewBox: [geometry.frame.x, geometry.frame.y, geometry.frame.width, geometry.frame.height],
@@ -155,7 +154,7 @@ export function pathData(path: Pick<GlyphPath, "contours">): string {
 }
 
 function getGeometry(depth: number): Geometry {
-  const key = `${glyphCatalog.geometryVersion}:${depth}`;
+  const key = String(depth);
   const cached = geometryCache.get(key);
   if (cached !== undefined) {
     return cached;
@@ -169,8 +168,8 @@ function makeGeometry(depth: number): Geometry {
   const sockets = makeSockets(depth);
   const corePolygon = sockets.flatMap((socket) => [socket.start, socket.end]);
   const coreHole =
-    depth === glyphCatalog.coreHole.legacyExactDepth
-      ? glyphCatalog.coreHole.legacyExactPoints.map(tupleToPoint)
+    depth === glyphCatalog.coreHole.exactDepth
+      ? glyphCatalog.coreHole.exactPoints.map(tupleToPoint)
       : insetConvexPolygon(corePolygon, glyphCatalog.constants.insetThickness);
   const armPolygons = sockets.map((_, socketIndex) =>
     glyphCatalog.arms.map((arm) => {

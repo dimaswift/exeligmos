@@ -15,7 +15,7 @@ or events.
 
 - `SarosHarmonicJournal.xcodeproj` and `SarosHarmonicJournal/` — SwiftUI capture
   client, local persistence, sync, clock, glyph, and media features.
-- `sync-server/` — PostgreSQL/pgvector Fastify API, migrations, authentication,
+- `sync-server/` — PostgreSQL/pgvector Fastify API, canonical schema, authentication,
   OpenAPI contract, public profiles, subscriptions, typed references, and the
   durable public-activity cursor.
 - `web/` — React Router Framework Mode SSR application and modular TypeScript
@@ -54,8 +54,8 @@ cd sync-server
 cp .env.example .env
 docker compose up -d
 npm install
-npm run db:migrate
-npm run dev:v2
+npm run db:setup
+npm run dev
 ```
 
 The API defaults to `http://127.0.0.1:8788`. Swagger UI is available at
@@ -70,8 +70,8 @@ npm run build
 npm run test:integration
 ```
 
-See `sync-server/README.md` for environment, migration, authentication, API-key,
-legacy-import, media, and deployment details.
+See `sync-server/README.md` for environment, authentication, API-key, media,
+archive, backup, and deployment details.
 
 ## Web development
 

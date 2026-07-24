@@ -9,6 +9,7 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - exeligmos_postgres_data:/var/lib/postgresql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/fractonica.sql:ro
     healthcheck:
       test:
         - CMD-SHELL

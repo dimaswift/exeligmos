@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import test from "node:test";
 
 import { Client } from "pg";
@@ -9,7 +8,7 @@ import { buildApp } from "../../src/app.js";
 import { NOOP_AUTH_ATTEMPT_LIMITER } from "../../src/auth/rate-limit.js";
 import { NOOP_RESOURCE_REQUEST_LIMITER } from "../../src/resources/rate-limit.js";
 import { createPostgresDatabase } from "../../src/db/database.js";
-import { runMigrations } from "../../src/db/migrate.js";
+import { ensureDatabaseSchema } from "../../src/db/setup.js";
 import { generateRecordPublicId } from "../../src/resources/records.js";
 import { testConfig } from "../helpers.js";
 
@@ -20,10 +19,7 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    await runMigrations({
-      databaseUrl,
-      directory: path.resolve(process.cwd(), "db/migrations"),
-    });
+    await ensureDatabaseSchema({ databaseUrl });
 
     const baseConfig = testConfig();
     const config = {
@@ -51,11 +47,9 @@ test(
 
       const profile = await app.inject({
         method: "POST",
-        url: "/v1/me/encryption-profile",
+        url: "/me/encryption-profile",
         headers: mutationHeaders(owner.accessToken, `profile-${randomUUID()}`),
         payload: {
-          cryptoVersion: 1,
-          keyVersion: 1,
           keyCheck: Buffer.alloc(32, 5).toString("base64"),
         },
       });
@@ -115,19 +109,13 @@ test(
       );
       const templateId = template.rows[0]?.id;
       assert.ok(templateId);
-      await sql.query(
-        `INSERT INTO template_versions (user_id, template_id, version, body, variable_schema)
-         SELECT user_id, id, version, body, variable_schema
-         FROM templates WHERE id = $1`,
-        [templateId],
-      );
 
       const publicIdempotencyKey = `record-public-${randomUUID()}`;
       const requestedPublicId = generateRecordPublicId();
       const requestedPublicOriginId = randomUUID();
       const publicRequest = {
         method: "POST" as const,
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(apiKey, publicIdempotencyKey),
         payload: {
           id: requestedPublicId,
@@ -158,13 +146,13 @@ test(
       assert.equal(publicBody.deviceId, device.id);
       assert.equal(
         publicRecord.headers.location,
-        `/v1/records/${publicBody.id}`,
+        `/records/${publicBody.id}`,
       );
       const publicEtag = requiredResponseHeader(publicRecord.headers.etag);
 
       const collidingPublicRecord = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(apiKey, `record-collision-${randomUUID()}`),
         payload: {
           id: requestedPublicId,
@@ -179,7 +167,7 @@ test(
 
       const rendered = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(apiKey, `record-render-${randomUUID()}`),
         payload: {
           deviceId: device.id,
@@ -195,11 +183,11 @@ test(
         text: "Solar flare X1.7",
         context: { strength: 17 },
       });
-      assert.deepEqual(rendered.json().template, { templateId, version: 1 });
+      assert.deepEqual(rendered.json().template, { templateId });
 
       const invalidVariables = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(
           apiKey,
           `record-invalid-render-${randomUUID()}`,
@@ -227,15 +215,9 @@ test(
       );
       const invalidTemplateId = invalidTemplate.rows[0]?.id;
       assert.ok(invalidTemplateId);
-      await sql.query(
-        `INSERT INTO template_versions (user_id, template_id, version, body, variable_schema)
-         SELECT user_id, id, version, body, variable_schema
-         FROM templates WHERE id = $1`,
-        [invalidTemplateId],
-      );
       const invalidStoredSchema = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(
           apiKey,
           `record-invalid-schema-${randomUUID()}`,
@@ -255,7 +237,7 @@ test(
 
       const retroactive = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(apiKey, `record-retroactive-${randomUUID()}`),
         payload: {
           deviceId: device.id,
@@ -267,7 +249,7 @@ test(
 
       const firstPage = await app.inject({
         method: "GET",
-        url: "/v1/records?limit=1",
+        url: "/records?limit=1",
         headers: bearer(apiKey),
       });
       assert.equal(firstPage.statusCode, 200, firstPage.body);
@@ -278,7 +260,7 @@ test(
       assert.ok(firstPageBody.nextCursor);
       const secondPage = await app.inject({
         method: "GET",
-        url: `/v1/records?limit=1&cursor=${encodeURIComponent(firstPageBody.nextCursor)}`,
+        url: `/records?limit=1&cursor=${encodeURIComponent(firstPageBody.nextCursor)}`,
         headers: bearer(apiKey),
       });
       assert.equal(secondPage.statusCode, 200, secondPage.body);
@@ -286,7 +268,7 @@ test(
 
       const anonymousPublic = await app.inject({
         method: "GET",
-        url: `/v1/public/records/${publicBody.id}`,
+        url: `/public/records/${publicBody.id}`,
       });
       assert.equal(anonymousPublic.statusCode, 200, anonymousPublic.body);
       assert.equal("deviceId" in anonymousPublic.json(), false);
@@ -298,7 +280,7 @@ test(
 
       const otherTenantPublic = await app.inject({
         method: "GET",
-        url: `/v1/records/${publicBody.id}`,
+        url: `/records/${publicBody.id}`,
         headers: bearer(other.accessToken),
       });
       assert.equal(otherTenantPublic.statusCode, 404);
@@ -307,7 +289,7 @@ test(
       const privateOriginId = randomUUID();
       const privateRecord = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(apiKey, `record-private-${randomUUID()}`),
         payload: {
           id: privateId,
@@ -316,8 +298,6 @@ test(
           visibility: "private",
           encryption: {
             algorithm: "A256GCM",
-            cryptoVersion: 1,
-            keyVersion: 1,
             nonce: Buffer.alloc(12, 1).toString("base64"),
             ciphertext: Buffer.alloc(32, 2).toString("base64"),
             contentType: "application/vnd.exeligmos.record+json",
@@ -332,19 +312,19 @@ test(
 
       const anonymousPrivate = await app.inject({
         method: "GET",
-        url: `/v1/public/records/${privateId}`,
+        url: `/public/records/${privateId}`,
       });
       assert.equal(anonymousPrivate.statusCode, 404);
       const otherTenantPrivate = await app.inject({
         method: "GET",
-        url: `/v1/records/${privateId}`,
+        url: `/records/${privateId}`,
         headers: bearer(other.accessToken),
       });
       assert.equal(otherTenantPrivate.statusCode, 404);
 
       const privateWithoutProfile = await app.inject({
         method: "POST",
-        url: "/v1/records",
+        url: "/records",
         headers: mutationHeaders(
           other.accessToken,
           `private-no-profile-${randomUUID()}`,
@@ -356,8 +336,6 @@ test(
           visibility: "private",
           encryption: {
             algorithm: "A256GCM",
-            cryptoVersion: 1,
-            keyVersion: 1,
             nonce: Buffer.alloc(12, 3).toString("base64"),
             ciphertext: Buffer.alloc(32, 4).toString("base64"),
             contentType: "application/vnd.exeligmos.record+json",
@@ -376,7 +354,7 @@ test(
 
       const wrongDevice = await app.inject({
         method: "POST",
-        url: "/v1/events",
+        url: "/events",
         headers: mutationHeaders(apiKey, `wrong-device-${randomUUID()}`),
         payload: {
           deviceId: otherDevice.id,
@@ -390,7 +368,7 @@ test(
 
       const missingScope = await app.inject({
         method: "POST",
-        url: "/v1/events",
+        url: "/events",
         headers: mutationHeaders(
           recordsOnlyKey,
           `missing-scope-${randomUUID()}`,
@@ -407,7 +385,7 @@ test(
 
       const patched = await app.inject({
         method: "PATCH",
-        url: `/v1/records/${publicBody.id}`,
+        url: `/records/${publicBody.id}`,
         headers: {
           ...mutationHeaders(apiKey, `record-patch-${randomUUID()}`),
           "if-match": publicEtag,
@@ -433,7 +411,7 @@ test(
 
       const stalePatch = await app.inject({
         method: "PATCH",
-        url: `/v1/records/${publicBody.id}`,
+        url: `/records/${publicBody.id}`,
         headers: {
           ...mutationHeaders(apiKey, `record-stale-${randomUUID()}`),
           "if-match": publicEtag,
@@ -447,7 +425,7 @@ test(
       const eventIdempotencyKey = `event-${randomUUID()}`;
       const eventRequest = {
         method: "POST" as const,
-        url: "/v1/events",
+        url: "/events",
         headers: mutationHeaders(apiKey, eventIdempotencyKey),
         payload: {
           deviceId: device.id,
@@ -467,7 +445,7 @@ test(
 
       const eventList = await app.inject({
         method: "GET",
-        url: "/v1/events?type=1001&from=2026-07-14T18%3A15%3A00Z&to=2026-07-14T19%3A00%3A00Z",
+        url: "/events?type=1001&from=2026-07-14T18%3A15%3A00Z&to=2026-07-14T19%3A00%3A00Z",
         headers: bearer(apiKey),
       });
       assert.equal(eventList.statusCode, 200, eventList.body);
@@ -478,7 +456,7 @@ test(
 
       const eventPatch = await app.inject({
         method: "PATCH",
-        url: `/v1/events/${eventBody.id}`,
+        url: `/events/${eventBody.id}`,
         headers: {
           ...mutationHeaders(apiKey, `event-patch-${randomUUID()}`),
           "if-match": eventEtag,
@@ -491,7 +469,7 @@ test(
 
       const eventDelete = await app.inject({
         method: "DELETE",
-        url: `/v1/events/${eventBody.id}`,
+        url: `/events/${eventBody.id}`,
         headers: {
           ...mutationHeaders(apiKey, `event-delete-${randomUUID()}`),
           "if-match": requiredResponseHeader(eventPatch.headers.etag),
@@ -500,14 +478,14 @@ test(
       assert.equal(eventDelete.statusCode, 204, eventDelete.body);
       const deletedEvent = await app.inject({
         method: "GET",
-        url: `/v1/events/${eventBody.id}`,
+        url: `/events/${eventBody.id}`,
         headers: bearer(apiKey),
       });
       assert.equal(deletedEvent.statusCode, 404);
 
       const privateDelete = await app.inject({
         method: "DELETE",
-        url: `/v1/records/${privateId}`,
+        url: `/records/${privateId}`,
         headers: {
           ...mutationHeaders(apiKey, `record-private-delete-${randomUUID()}`),
           "if-match": privateEtag,
@@ -519,8 +497,6 @@ test(
         revision: string;
         deleted: boolean;
         cipher_algorithm: string | null;
-        crypto_version: number | null;
-        key_version: number | null;
         nonce: Buffer | null;
         ciphertext: Buffer | null;
         encrypted_content_type: string | null;
@@ -533,8 +509,6 @@ test(
            r.revision,
            r.deleted_at IS NOT NULL AS deleted,
            r.cipher_algorithm,
-           r.crypto_version,
-           r.key_version,
            r.nonce,
            r.ciphertext,
            r.encrypted_content_type,
@@ -561,13 +535,11 @@ test(
       assert.deepEqual(
         [
           privateTombstoneRow.cipher_algorithm,
-          privateTombstoneRow.crypto_version,
-          privateTombstoneRow.key_version,
           privateTombstoneRow.nonce,
           privateTombstoneRow.ciphertext,
           privateTombstoneRow.encrypted_content_type,
         ],
-        [null, null, null, null, null, null],
+        [null, null, null, null],
       );
       assert.equal(typeof privateTombstoneRow.live_snapshot.nonce, "string");
       assert.equal(
@@ -580,14 +552,14 @@ test(
       assert.equal(Number(privateTombstoneRow.change_revision), 2);
       const deletedPrivate = await app.inject({
         method: "GET",
-        url: `/v1/records/${privateId}`,
+        url: `/records/${privateId}`,
         headers: bearer(apiKey),
       });
       assert.equal(deletedPrivate.statusCode, 404);
 
       const restoredPrivate = await app.inject({
         method: "POST",
-        url: "/v1/sync/batches",
+        url: "/sync/batches",
         headers: mutationHeaders(apiKey, `restore-private-${randomUUID()}`),
         payload: {
           deviceId: device.id,
@@ -601,8 +573,6 @@ test(
               visibility: "private",
               encryption: {
                 algorithm: "A256GCM",
-                cryptoVersion: 1,
-                keyVersion: 1,
                 nonce: Buffer.alloc(12, 7).toString("base64"),
                 ciphertext: Buffer.alloc(32, 8).toString("base64"),
                 contentType: "application/vnd.exeligmos.record+json",
@@ -616,7 +586,7 @@ test(
       assert.equal(restoredPrivate.json().results[0]?.resourceId, privateId);
       const restoredPrivateRead = await app.inject({
         method: "GET",
-        url: `/v1/records/${privateId}`,
+        url: `/records/${privateId}`,
         headers: bearer(apiKey),
       });
       assert.equal(restoredPrivateRead.statusCode, 200, restoredPrivateRead.body);
@@ -625,7 +595,7 @@ test(
 
       const recordDelete = await app.inject({
         method: "DELETE",
-        url: `/v1/records/${publicBody.id}`,
+        url: `/records/${publicBody.id}`,
         headers: {
           ...mutationHeaders(apiKey, `record-delete-${randomUUID()}`),
           "if-match": patchedEtag,
@@ -675,13 +645,13 @@ test(
 
       const deletedOwnerRecord = await app.inject({
         method: "GET",
-        url: `/v1/records/${publicBody.id}`,
+        url: `/records/${publicBody.id}`,
         headers: bearer(apiKey),
       });
       assert.equal(deletedOwnerRecord.statusCode, 404);
       const deletedPublicRecord = await app.inject({
         method: "GET",
-        url: `/v1/public/records/${publicBody.id}`,
+        url: `/public/records/${publicBody.id}`,
       });
       assert.equal(deletedPublicRecord.statusCode, 404);
 
@@ -738,7 +708,7 @@ async function register(
 ): Promise<Registration> {
   const response = await app.inject({
     method: "POST",
-    url: "/v1/auth/register",
+    url: "/auth/register",
     payload: {
       login,
       password: "correct horse battery staple",
@@ -757,7 +727,7 @@ async function createDevice(
 ): Promise<{ readonly id: string }> {
   const response = await app.inject({
     method: "POST",
-    url: "/v1/devices",
+    url: "/devices",
     headers: mutationHeaders(accessToken, `device-${randomUUID()}`),
     payload: { name, kind: "agent" },
   });
@@ -773,7 +743,7 @@ async function issueApiKey(
 ): Promise<string> {
   const response = await app.inject({
     method: "POST",
-    url: "/v1/api-keys",
+    url: "/api-keys",
     headers: mutationHeaders(accessToken, `api-key-${randomUUID()}`),
     payload: { name: `Key ${randomUUID()}`, deviceId, scopes },
   });

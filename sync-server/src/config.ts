@@ -357,7 +357,6 @@ export function loadConfig(environment: Environment = process.env): ServerConfig
       ),
     },
     media: {
-      // Keep v2 bytes outside the read-only legacy data/ migration source.
       storageRoot: readString(environment, "MEDIA_STORAGE_ROOT", "var/media", issues),
       maxByteLength: readInteger(
         environment,

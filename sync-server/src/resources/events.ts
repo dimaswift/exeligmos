@@ -526,7 +526,7 @@ export async function createEventInTransaction(
   return {
     status: 201,
     headers: {
-      location: `/v1/events/${id}`,
+      location: `/events/${id}`,
       etag: resourceEtag("event", id, resource.revision),
     },
     body: resource,

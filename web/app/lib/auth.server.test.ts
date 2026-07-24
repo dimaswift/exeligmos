@@ -58,7 +58,7 @@ describe("auth request boundaries", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        expect(new URL(request.url).pathname).toBe("/v1/auth/refresh");
+        expect(new URL(request.url).pathname).toBe("/auth/refresh");
         refreshRequests += 1;
         await Promise.resolve();
         return new Response(JSON.stringify(rotated), {

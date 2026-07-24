@@ -50,11 +50,11 @@ describe("typed snapshot boundary", () => {
     const fetch = routeFetch((request) => {
       requests.push(request);
       switch (new URL(request.url).pathname) {
-        case "/v1/public/users/sun":
+        case "/public/users/sun":
           return json(profile);
-        case "/v1/public/records":
+        case "/public/records":
           return json({ data: [{ id: recordId }], nextCursor: "records-next", hasMore: true });
-        case "/v1/public/events":
+        case "/public/events":
           return json({ data: [{ id: eventId }], nextCursor: "events-next", hasMore: false });
         default:
           return new Response(null, { status: 404 });
@@ -70,12 +70,12 @@ describe("typed snapshot boundary", () => {
 
     expect(snapshot.records.nextCursor).toBe("records-next");
     expect(snapshot.events.nextCursor).toBe("events-next");
-    expect(queryFor(requests, "/v1/public/records")).toMatchObject({
+    expect(queryFor(requests, "/public/records")).toMatchObject({
       cursor: "records-before",
       limit: "2",
       userId,
     });
-    expect(queryFor(requests, "/v1/public/events")).toMatchObject({
+    expect(queryFor(requests, "/public/events")).toMatchObject({
       cursor: "events-before",
       limit: "7",
       userId,
@@ -86,7 +86,7 @@ describe("typed snapshot boundary", () => {
     const requests: Request[] = [];
     const fetch = routeFetch((request) => {
       requests.push(request);
-      const records = new URL(request.url).pathname === "/v1/records";
+      const records = new URL(request.url).pathname === "/records";
       return json({ data: [], hasMore: false, nextCursor: records ? "owner-r" : "owner-e" });
     });
 
@@ -136,9 +136,9 @@ describe("typed snapshot boundary", () => {
     const fetch = routeFetch((request) => {
       requests.push(request);
       const path = new URL(request.url).pathname;
-      if (path === `/v1/public/records/${recordId}`) return json({ id: recordId });
-      if (path === `/v1/public/events/${eventId}`) return problem(404, "not_found");
-      if (path === "/v1/public/users/sun") return json(profile);
+      if (path === `/public/records/${recordId}`) return json({ id: recordId });
+      if (path === `/public/events/${eventId}`) return problem(404, "not_found");
+      if (path === "/public/users/sun") return json(profile);
       return new Response(null, { status: 404 });
     });
     const page: ActivityPage = {

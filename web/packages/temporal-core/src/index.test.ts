@@ -33,7 +33,6 @@ interface ConformanceVector {
 }
 
 interface ConformanceEnvelope {
-  readonly catalogVersion: string;
   readonly floatTolerance: number;
   readonly vectors: readonly ConformanceVector[];
 }
@@ -56,7 +55,6 @@ const temporalVectors = conformance.vectors.filter(
 describe("canonical temporal conformance", () => {
   it("executes every non-glyph temporal and rarity vector", () => {
     expect(temporalVectors).toHaveLength(29);
-    expect(conformance.catalogVersion).toBe(canonicalCatalog.catalogVersion);
   });
 
   it.each(temporalVectors)("$id", (vector) => {
@@ -255,12 +253,10 @@ describe("clock and pulse calculations", () => {
 });
 
 describe("engine binding", () => {
-  it("exposes immutable catalog diagnostics and the same pure behavior", () => {
+  it("exposes immutable canonical behavior", () => {
     const engine = createTemporalEngine(canonicalCatalog);
 
     expect(engine).not.toBe(canonicalTemporalEngine);
-    expect(engine.catalogVersion).toBe(canonicalCatalog.catalogVersion);
-    expect(engine.schemaVersion).toBe(canonicalCatalog.schemaVersion);
     expect(Object.isFrozen(engine)).toBe(true);
     expect(engine.pulseDuration("saros")).toEqual(pulseDuration(canonicalCatalog, "saros"));
   });

@@ -146,8 +146,8 @@ test("anonymous projection strips owner-only record and media fields", () => {
         sha256: "a".repeat(64),
         revision: 1,
         createdAt: "2026-07-14T12:00:00.000Z",
-        contentUrl: `/v1/media/${otherDeviceId}/content`,
-        publicContentUrl: `/v1/public/media/${otherDeviceId}/content`,
+        contentUrl: `/media/${otherDeviceId}/content`,
+        publicContentUrl: `/public/media/${otherDeviceId}/content`,
       },
     ],
     metadata: {},
@@ -163,7 +163,7 @@ test("anonymous projection strips owner-only record and media fields", () => {
   assert.equal("userId" in projection.media[0]!, false);
   assert.equal("deviceId" in projection.media[0]!, false);
   assert.equal("contentUrl" in projection.media[0]!, false);
-  assert.equal(projection.media[0]?.publicContentUrl, `/v1/public/media/${otherDeviceId}/content`);
+  assert.equal(projection.media[0]?.publicContentUrl, `/public/media/${otherDeviceId}/content`);
 });
 
 test("nested resource patches use RFC 7396 merge semantics", () => {

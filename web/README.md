@@ -1,7 +1,6 @@
 # Fractonica web
 
-Server-rendered React Router workspace for desktop temporal analytics and public activity. This is a
-new frontend; it does not share UI state or view models with the legacy viewer.
+Server-rendered React Router workspace for desktop temporal analytics and public activity.
 
 The current frontend provides the generated API boundary, encrypted browser session, public and
 owner feeds, profiles, analytics, record and tag CRUD, API-backed media attachments, and a realtime
@@ -126,9 +125,9 @@ checked-in artifact is missing or stale.
 
 `@fractonica/temporal-core` strictly separates calculation depth from presentation depth and retains
 the native address/rarity boundary behavior. `@fractonica/glyph-core` emits deeply frozen, fill-only
-geometry cached by `geometryVersion:depth`. Glyph creation requires exactly one explicit rarity or
+geometry cached by depth. Glyph creation requires exactly one explicit rarity or
 catalog-backed style because the catalog does not define a generic default paint. See the package
-READMEs for the public APIs and compatibility rules.
+READMEs for the public APIs and canonical behavior.
 
 ## Local development
 

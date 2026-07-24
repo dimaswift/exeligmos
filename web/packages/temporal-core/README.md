@@ -11,7 +11,7 @@ semantic tokens, or address rules into this package or its consumers.
 ## Depth and address contracts
 
 - `clockReading` and `assertCalculationDepth` reject depths outside the catalog's calculation range
-  (`1...8` in catalog 1.0.0).
+  (`1...8`).
 - presentation, storage-address, and rarity operations clamp to the catalog's presentation range
   (`3...8`).
 - canonical and rarity-aware storage retain the **leftmost** radix digits and pad on the **right**;
@@ -20,7 +20,7 @@ semantic tokens, or address rules into this package or its consumers.
 - glyph normalization retains the rightmost digits and belongs to `@fractonica/glyph-core`, not this
   package.
 
-These distinctions are compatibility behavior, not interchangeable formatting choices.
+These distinctions are canonical behavior, not interchangeable formatting choices.
 
 ## Recommended API
 
@@ -42,9 +42,8 @@ const rarity = canonicalTemporalEngine.classifyRarity({
 });
 ```
 
-Standalone functions accept a `DomainCatalog` as their first argument for conformance testing or
-future catalog-version inspection. `createTemporalEngine` binds those functions to a catalog without
-introducing mutable state.
+Standalone functions accept a `DomainCatalog` as their first argument for conformance testing.
+`createTemporalEngine` binds those functions to a catalog without introducing mutable state.
 
 ## Boundary behavior
 
@@ -57,5 +56,5 @@ introducing mutable state.
   `timeUntilNextFlip`.
 
 The package test suite loads the generated `canonicalConformance` artifact (sourced from
-`domain-spec/conformance/v1.json`) and executes every temporal, storage-address, and rarity vector.
+`domain-spec/conformance/vectors.json`) and executes every temporal, storage-address, and rarity vector.
 Floating-point results use the vector contract's scaled tolerance.

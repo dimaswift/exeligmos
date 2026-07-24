@@ -82,7 +82,6 @@ interface TagRow extends QueryResultRow {
 }
 
 interface TagCursor {
-  readonly v: 1;
   readonly kind: "tags";
   readonly signature: string;
   readonly sortOrder: number;
@@ -159,7 +158,7 @@ export class TagService {
           return {
             status: 201,
             headers: {
-              location: `/v1/tags/${resource.id}`,
+              location: `/tags/${resource.id}`,
               etag: tagEtag(resource.id, resource.revision),
             },
             body: resource,
@@ -518,7 +517,6 @@ async function writeCatalogAudit(
 
 function encodeTagCursor(signature: string, row: TagRow): string {
   const cursor: TagCursor = {
-    v: 1,
     kind: "tags",
     signature,
     sortOrder: row.sort_order,
@@ -552,7 +550,6 @@ function isTagCursor(value: unknown): value is TagCursor {
   }
   const cursor = value as Partial<TagCursor>;
   return (
-    cursor.v === 1 &&
     cursor.kind === "tags" &&
     typeof cursor.signature === "string" &&
     Number.isInteger(cursor.sortOrder) &&

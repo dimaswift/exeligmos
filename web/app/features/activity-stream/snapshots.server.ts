@@ -10,12 +10,12 @@ import type { StoredAuthSession } from "../../lib/session.server";
 
 import type { ActivityCursor } from "./model";
 
-type PublicRecordQuery = NonNullable<ApiPaths["/v1/public/records"]["get"]["parameters"]["query"]>;
-type PublicEventQuery = NonNullable<ApiPaths["/v1/public/events"]["get"]["parameters"]["query"]>;
-type OwnerRecordQuery = NonNullable<ApiPaths["/v1/records"]["get"]["parameters"]["query"]>;
-type OwnerEventQuery = NonNullable<ApiPaths["/v1/events"]["get"]["parameters"]["query"]>;
+type PublicRecordQuery = NonNullable<ApiPaths["/public/records"]["get"]["parameters"]["query"]>;
+type PublicEventQuery = NonNullable<ApiPaths["/public/events"]["get"]["parameters"]["query"]>;
+type OwnerRecordQuery = NonNullable<ApiPaths["/records"]["get"]["parameters"]["query"]>;
+type OwnerEventQuery = NonNullable<ApiPaths["/events"]["get"]["parameters"]["query"]>;
 type PublicActivityQuery = NonNullable<
-  ApiPaths["/v1/public/activity"]["get"]["parameters"]["query"]
+  ApiPaths["/public/activity"]["get"]["parameters"]["query"]
 >;
 
 export type PublicUserProfile = ApiSchemas["PublicUserProfile"];
@@ -156,7 +156,7 @@ export async function readPublicProfile(
   const client = publicClient(options);
   return readBackendData(
     () =>
-      client.GET("/v1/public/users/{login}", {
+      client.GET("/public/users/{login}", {
         params: { path: { login } },
         signal: options.signal,
       }),
@@ -171,7 +171,7 @@ export async function readPublicRecord(
   const client = publicClient(options);
   return readBackendData(
     () =>
-      client.GET("/v1/public/records/{recordId}", {
+      client.GET("/public/records/{recordId}", {
         params: { path: { recordId } },
         signal: options.signal,
       }),
@@ -186,7 +186,7 @@ export async function readPublicEvent(
   const client = publicClient(options);
   return readBackendData(
     () =>
-      client.GET("/v1/public/events/{eventId}", {
+      client.GET("/public/events/{eventId}", {
         params: { path: { eventId } },
         signal: options.signal,
       }),
@@ -201,7 +201,7 @@ export async function readPublicRecords(
   const client = createBackendApiClient({ baseUrl, fetch });
   const page = await readBackendData(
     () =>
-      client.GET("/v1/public/records", {
+      client.GET("/public/records", {
         params: { query: { ...filters, cursor, limit } },
         signal,
       }),
@@ -217,7 +217,7 @@ export async function readPublicEvents(
   const client = createBackendApiClient({ baseUrl, fetch });
   const page = await readBackendData(
     () =>
-      client.GET("/v1/public/events", {
+      client.GET("/public/events", {
         params: { query: { ...filters, cursor, limit } },
         signal,
       }),
@@ -234,7 +234,7 @@ export async function readOwnerRecords(
   const client = createBackendApiClient({ baseUrl, fetch, accessToken: auth.accessToken });
   const page = await readBackendData(
     () =>
-      client.GET("/v1/records", {
+      client.GET("/records", {
         params: { query: { ...filters, cursor, limit } },
         signal,
       }),
@@ -253,7 +253,7 @@ export async function readSyncStats(
     accessToken: auth.accessToken,
   });
   return readBackendData(
-    () => client.GET("/v1/sync/stats", { signal: options.signal }),
+    () => client.GET("/sync/stats", { signal: options.signal }),
     "Could not load analytics.",
   );
 }
@@ -270,7 +270,7 @@ export async function readOwnerRecord(
   });
   return readBackendData(
     () =>
-      client.GET("/v1/records/{recordId}", {
+      client.GET("/records/{recordId}", {
         params: { path: { recordId } },
         signal: options.signal,
       }),
@@ -286,7 +286,7 @@ export async function readOwnerEvents(
   const client = createBackendApiClient({ baseUrl, fetch, accessToken: auth.accessToken });
   const page = await readBackendData(
     () =>
-      client.GET("/v1/events", {
+      client.GET("/events", {
         params: { query: { ...filters, cursor, limit } },
         signal,
       }),
@@ -522,7 +522,7 @@ async function readActivityHistory(
   const { cursor, limit, resourceType, signal, baseUrl, fetch } = options;
   const normalizedTypes = normalizeResourceTypes(resourceType);
   const client = createBackendApiClient({ baseUrl, fetch, accessToken });
-  const path = scope === "public" ? "/v1/public/activity" : "/v1/activity";
+  const path = scope === "public" ? "/public/activity" : "/activity";
   const page = await readBackendData(
     () =>
       client.GET(path, {

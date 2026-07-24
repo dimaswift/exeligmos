@@ -650,19 +650,19 @@ final class SyncServiceV2Tests: XCTestCase {
         let server = try XCTUnwrap(URL(string: "https://journal.example.com"))
 
         XCTAssertTrue(SyncService.isSameOrigin(
-            try XCTUnwrap(URL(string: "https://journal.example.com:443/v1/media/1/content")),
+            try XCTUnwrap(URL(string: "https://journal.example.com:443/media/1/content")),
             as: server
         ))
         XCTAssertFalse(SyncService.isSameOrigin(
-            try XCTUnwrap(URL(string: "https://cdn.example.com/v1/media/1/content")),
+            try XCTUnwrap(URL(string: "https://cdn.example.com/media/1/content")),
             as: server
         ))
         XCTAssertFalse(SyncService.isSameOrigin(
-            try XCTUnwrap(URL(string: "http://journal.example.com/v1/media/1/content")),
+            try XCTUnwrap(URL(string: "http://journal.example.com/media/1/content")),
             as: server
         ))
         XCTAssertFalse(SyncService.isSameOrigin(
-            try XCTUnwrap(URL(string: "https://journal.example.com:8443/v1/media/1/content")),
+            try XCTUnwrap(URL(string: "https://journal.example.com:8443/media/1/content")),
             as: server
         ))
     }
@@ -672,13 +672,13 @@ final class SyncServiceV2Tests: XCTestCase {
         let service = SyncService()
         let tagsURL = try service.collectionPageURL(
             server: server,
-            path: "/v1/tags",
+            path: "/tags",
             limit: 200,
             cursor: nil
         )
         let recordsURL = try service.collectionPageURL(
             server: server,
-            path: "/v1/records",
+            path: "/records",
             limit: 25,
             cursor: "next page"
         )
@@ -702,8 +702,6 @@ final class SyncServiceV2Tests: XCTestCase {
           "updatedAt": "2026-07-15T00:01:00Z",
           "encryption": {
             "algorithm": "A256GCM",
-            "cryptoVersion": 1,
-            "keyVersion": 1,
             "nonce": "AAAAAAAAAAAAAAAA",
             "ciphertext": "AAAAAAAAAAAAAAAAAAAAAA==",
             "contentType": "application/vnd.exeligmos.record+json"
@@ -727,7 +725,7 @@ final class SyncServiceV2Tests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
-        let store = SyncV2StateStore(defaults: defaults)
+        let store = SyncStateStore(defaults: defaults)
         let server = try XCTUnwrap(URL(string: "https://journal.example.com"))
         let firstUser = UUID()
 
@@ -893,9 +891,9 @@ final class SyncServiceV2Tests: XCTestCase {
             latitude: 55.75,
             longitude: 37.62,
             sourceRecordID: UUID(),
-            sourceDeviceID: "LEGACY-PHONE",
+            sourceDeviceID: "SOURCE-PHONE",
             sourceDeviceEmoji: "◇",
-            sourceDeviceName: "Legacy phone",
+            sourceDeviceName: "Source phone",
             weatherCode: 1,
             weatherEmoji: "☀️",
             temperatureC: 21
@@ -918,7 +916,7 @@ final class SyncServiceV2Tests: XCTestCase {
             media: []
         )
 
-        let mapped = try SyncV2PayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
+        let mapped = try SyncPayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
 
         XCTAssertEqual(mapped.id, recordID)
         XCTAssertEqual(mapped.createdAt.timeIntervalSince1970, createdAt.timeIntervalSince1970, accuracy: 0.001)
@@ -928,7 +926,7 @@ final class SyncServiceV2Tests: XCTestCase {
         XCTAssertEqual(mapped.unixTimestamp, original.unixTimestamp)
         XCTAssertEqual(mapped.version, 7)
         XCTAssertEqual(mapped.tagIDs, ["007"])
-        XCTAssertEqual(mapped.sourceDeviceID, "LEGACY-PHONE")
+        XCTAssertEqual(mapped.sourceDeviceID, "SOURCE-PHONE")
         XCTAssertEqual(mapped.text, "Imported observation")
     }
 
@@ -964,7 +962,7 @@ final class SyncServiceV2Tests: XCTestCase {
             media: []
         )
 
-        let mapped = try SyncV2PayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
+        let mapped = try SyncPayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
 
         XCTAssertEqual(mapped.id, recordID)
         XCTAssertEqual(mapped.eventDate, occurredAt)

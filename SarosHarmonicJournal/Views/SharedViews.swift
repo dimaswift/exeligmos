@@ -150,7 +150,7 @@ enum JournalSettings {
     static let unitSpectrumBaseKey = "unitSpectrumBase"
     static let solarSiderealReferenceDateKey = "solarSiderealReferenceDate"
     static let lastSyncAtKey = "lastSyncAt"
-    static let onboardingCompletedKey = "onboarding.completed.v1"
+    static let onboardingCompletedKey = "onboarding.completed"
     static let lastWeatherCodeKey = "lastWeatherCode"
     static let lastWeatherEmojiKey = "lastWeatherEmoji"
     static let lastWeatherTemperatureKey = "lastWeatherTemperatureC"

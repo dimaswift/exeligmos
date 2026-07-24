@@ -98,8 +98,6 @@ export interface ClockReading {
 }
 
 export interface TemporalEngine {
-  readonly catalogVersion: string;
-  readonly schemaVersion: number;
   readonly clampPresentationDepth: (value: number) => PresentationDepth;
   readonly assertCalculationDepth: (value: number) => CalculationDepth;
   readonly canonicalOctalAddress: (
@@ -190,7 +188,7 @@ export function rarityOctalAddress(
   return digits.padEnd(Math.min(depth, outputDepth), pad).padEnd(outputDepth, pad);
 }
 
-/** Resolve canonical rarity IDs and catalog-declared legacy aliases. */
+/** Resolve canonical rarity IDs and catalog-declared aliases. */
 export function resolveRarity(catalog: DomainCatalog, rawId: RarityInputId): ResolvedRarity {
   const requestedId = String(rawId);
   const alias = catalog.rarities.aliases.find((candidate) => candidate.alias === requestedId);
@@ -226,7 +224,7 @@ export function resolveRarity(catalog: DomainCatalog, rawId: RarityInputId): Res
 }
 
 /**
- * Classify a stored clock address using Swift-compatible boundary behavior.
+ * Classify a stored clock address using the canonical Swift boundary behavior.
  * Classification retains the leftmost digits but, unlike storage normalization,
  * pads on the left before examining a repeated suffix.
  */
@@ -414,11 +412,9 @@ export function clockReading(catalog: DomainCatalog, input: ClockReadingInput): 
   };
 }
 
-/** Bind the pure operations to one versioned catalog for convenient UI injection. */
+/** Bind the pure operations to the canonical catalog for convenient UI injection. */
 export function createTemporalEngine(catalog: DomainCatalog): TemporalEngine {
   return Object.freeze({
-    catalogVersion: catalog.catalogVersion,
-    schemaVersion: catalog.schemaVersion,
     clampPresentationDepth: (value: number) => clampPresentationDepth(catalog, value),
     assertCalculationDepth: (value: number) => assertCalculationDepth(catalog, value),
     canonicalOctalAddress: (value: string, storedDepth: number, outputDepth?: number) =>

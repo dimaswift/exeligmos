@@ -93,7 +93,7 @@ test("auth routes follow the documented session responses and headers", async (c
 
   const registered = await app.inject({
     method: "POST",
-    url: "/v1/auth/register",
+    url: "/auth/register",
     payload: {
       login: "aurora",
       password: "correct-horse-battery-staple",
@@ -101,13 +101,13 @@ test("auth routes follow the documented session responses and headers", async (c
     },
   });
   assert.equal(registered.statusCode, 201);
-  assert.equal(registered.headers.location, "/v1/me");
+  assert.equal(registered.headers.location, "/me");
   assert.equal(registered.headers["cache-control"], "no-store");
   assert.deepEqual(registered.json(), session);
 
   const loggedIn = await app.inject({
     method: "POST",
-    url: "/v1/auth/login",
+    url: "/auth/login",
     payload: { login: "aurora", password: "correct-horse-battery-staple" },
   });
   assert.equal(loggedIn.statusCode, 200);
@@ -115,7 +115,7 @@ test("auth routes follow the documented session responses and headers", async (c
 
   const refreshed = await app.inject({
     method: "POST",
-    url: "/v1/auth/refresh",
+    url: "/auth/refresh",
     payload: { refreshToken: session.refreshToken },
   });
   assert.equal(refreshed.statusCode, 200);
@@ -123,7 +123,7 @@ test("auth routes follow the documented session responses and headers", async (c
 
   const loggedOut = await app.inject({
     method: "POST",
-    url: "/v1/auth/logout",
+    url: "/auth/logout",
     headers: { authorization: `Bearer ${session.accessToken}` },
     payload: { refreshToken: session.refreshToken },
   });
@@ -133,7 +133,7 @@ test("auth routes follow the documented session responses and headers", async (c
 
   const logoutRetry = await app.inject({
     method: "POST",
-    url: "/v1/auth/logout",
+    url: "/auth/logout",
     headers: { authorization: `Bearer ${session.accessToken}` },
     payload: { refreshToken: session.refreshToken },
   });
@@ -155,7 +155,7 @@ test("auth routes validate bodies and challenge invalid credentials", async (con
 
   const invalidBody = await app.inject({
     method: "POST",
-    url: "/v1/auth/login",
+    url: "/auth/login",
     payload: { login: "x", password: "short" },
   });
   assert.equal(invalidBody.statusCode, 400);
@@ -169,7 +169,7 @@ test("auth routes validate bodies and challenge invalid credentials", async (con
 
   const invalidPassword = await app.inject({
     method: "POST",
-    url: "/v1/auth/register",
+    url: "/auth/register",
     payload: { login: "aurora", password: "short" },
   });
   assert.equal(invalidPassword.statusCode, 400);
@@ -181,7 +181,7 @@ test("auth routes validate bodies and challenge invalid credentials", async (con
 
   const rejected = await app.inject({
     method: "POST",
-    url: "/v1/auth/login",
+    url: "/auth/login",
     payload: { login: "aurora", password: "incorrect-password-value" },
   });
   assert.equal(rejected.statusCode, 401);
@@ -202,7 +202,7 @@ test("login is explicitly rate limited and returns an RFC problem", async (conte
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/auth/login",
+      url: "/auth/login",
       payload: { login: "aurora", password: "incorrect-password-value" },
     });
     assert.equal(response.statusCode, 401);
@@ -210,7 +210,7 @@ test("login is explicitly rate limited and returns an RFC problem", async (conte
 
   const limited = await app.inject({
     method: "POST",
-    url: "/v1/auth/login",
+    url: "/auth/login",
     payload: { login: "aurora", password: "incorrect-password-value" },
   });
   assert.equal(limited.statusCode, 429);
@@ -227,7 +227,7 @@ test("registration and refresh have independent brute-force limits", async (cont
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/auth/register",
+      url: "/auth/register",
       payload: {
         login: "aurora",
         password: "correct-horse-battery-staple",
@@ -237,7 +237,7 @@ test("registration and refresh have independent brute-force limits", async (cont
   }
   const registerLimited = await app.inject({
     method: "POST",
-    url: "/v1/auth/register",
+    url: "/auth/register",
     payload: {
       login: "aurora",
       password: "correct-horse-battery-staple",
@@ -249,14 +249,14 @@ test("registration and refresh have independent brute-force limits", async (cont
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const response = await app.inject({
       method: "POST",
-      url: "/v1/auth/refresh",
+      url: "/auth/refresh",
       payload: { refreshToken: session.refreshToken },
     });
     assert.equal(response.statusCode, 200);
   }
   const refreshLimited = await app.inject({
     method: "POST",
-    url: "/v1/auth/refresh",
+    url: "/auth/refresh",
     payload: { refreshToken: session.refreshToken },
   });
   assert.equal(refreshLimited.statusCode, 429);

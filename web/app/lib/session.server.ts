@@ -11,7 +11,7 @@ export interface StoredAuthSession {
 }
 
 const ENVELOPE_VERSION = 1;
-const AUTHENTICATED_CONTEXT = new TextEncoder().encode("exeligmos-web-session-v1");
+const AUTHENTICATED_CONTEXT = new TextEncoder().encode("fractonica-web-session");
 let singleton: ReturnType<typeof createCookie> | undefined;
 let encryptionKey: Promise<CryptoKey> | undefined;
 

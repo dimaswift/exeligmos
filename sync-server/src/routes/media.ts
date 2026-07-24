@@ -56,7 +56,7 @@ export async function registerMediaRoutes(
   });
 
   app.post<{ Body: CreateMediaUploadInput }>(
-    "/v1/media-upload-sessions",
+    "/media-upload-sessions",
     {
       schema: {
         headers: idempotencyHeadersSchema,
@@ -77,7 +77,7 @@ export async function registerMediaRoutes(
   );
 
   app.get<{ Params: UploadPath }>(
-    "/v1/media-upload-sessions/:uploadId",
+    "/media-upload-sessions/:uploadId",
     { schema: { params: uploadPathSchema } },
     async (request) => {
       const principal = await options.authenticator.authenticate(request, ["media:write"]);
@@ -87,7 +87,7 @@ export async function registerMediaRoutes(
   );
 
   app.delete<{ Params: UploadPath }>(
-    "/v1/media-upload-sessions/:uploadId",
+    "/media-upload-sessions/:uploadId",
     { schema: { params: uploadPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["media:write"]);
@@ -98,7 +98,7 @@ export async function registerMediaRoutes(
   );
 
   app.put<{ Params: UploadPath; Body: BinaryBody }>(
-    "/v1/media-upload-sessions/:uploadId/content",
+    "/media-upload-sessions/:uploadId/content",
     {
       schema: {
         params: uploadPathSchema,
@@ -121,7 +121,7 @@ export async function registerMediaRoutes(
   );
 
   app.post<{ Params: UploadPath }>(
-    "/v1/media-upload-sessions/:uploadId/complete",
+    "/media-upload-sessions/:uploadId/complete",
     {
       schema: {
         params: uploadPathSchema,
@@ -142,7 +142,7 @@ export async function registerMediaRoutes(
   );
 
   app.get<{ Params: MediaPath }>(
-    "/v1/media/:mediaId",
+    "/media/:mediaId",
     { schema: { params: mediaPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["media:read"]);
@@ -155,7 +155,7 @@ export async function registerMediaRoutes(
   );
 
   app.delete<{ Params: MediaPath }>(
-    "/v1/media/:mediaId",
+    "/media/:mediaId",
     {
       schema: {
         params: mediaPathSchema,
@@ -178,7 +178,7 @@ export async function registerMediaRoutes(
   );
 
   app.get<{ Params: MediaPath }>(
-    "/v1/media/:mediaId/content",
+    "/media/:mediaId/content",
     { schema: { params: mediaPathSchema } },
     async (request, reply) => {
       const principal = await options.authenticator.authenticate(request, ["media:read"]);
@@ -192,7 +192,7 @@ export async function registerMediaRoutes(
   );
 
   app.get<{ Params: MediaPath }>(
-    "/v1/public/media/:mediaId/content",
+    "/public/media/:mediaId/content",
     { schema: { params: mediaPathSchema } },
     async (request, reply) => {
       await requestLimiter.checkPublicRecordRead(request);
@@ -321,11 +321,9 @@ const conditionalMutationHeadersSchema = {
 };
 const encryptionSchema = {
   type: "object",
-  required: ["algorithm", "cryptoVersion", "keyVersion", "nonce"],
+  required: ["algorithm", "nonce"],
   properties: {
     algorithm: { const: "A256GCM" },
-    cryptoVersion: { const: 1 },
-    keyVersion: { const: 1 },
     nonce: { type: "string", minLength: 16, maxLength: 16, pattern: "^[A-Za-z0-9+/]{16}$" },
     plaintextContentType: {
       type: "string",
