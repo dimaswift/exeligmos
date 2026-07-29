@@ -11,6 +11,8 @@ export const API_KEY_SCOPES = [
   "templates:write",
   "media:read",
   "media:write",
+  "jobs:read",
+  "jobs:write",
   "devices:read",
   "subscriptions:read",
   "subscriptions:write",

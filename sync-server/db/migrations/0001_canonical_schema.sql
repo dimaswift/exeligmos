@@ -1,0 +1,2 @@
+-- Migration baseline for databases created from the canonical schema through
+-- July 2026. Future additive schema changes belong in later ordered files.

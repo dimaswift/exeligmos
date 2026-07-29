@@ -12,7 +12,23 @@ test(
   { skip: databaseUrl === undefined || databaseUrl.length === 0 },
   async () => {
     assert.ok(databaseUrl);
-    assert.match(await ensureDatabaseSchema({ databaseUrl }), /^(created|ready)$/);
+    assert.match(await ensureDatabaseSchema({ databaseUrl }), /^(created|migrated|ready)$/);
+    assert.equal(await ensureDatabaseSchema({ databaseUrl }), "ready");
+
+    const adoptionLogin = `migration-adoption-${randomUUID()}`;
+    const adoptionClient = new Client({ connectionString: databaseUrl });
+    await adoptionClient.connect();
+    try {
+      await adoptionClient.query(
+        `INSERT INTO users (login, display_name, password_hash)
+         VALUES ($1, 'Migration Adoption', 'not-a-real-password-hash')`,
+        [adoptionLogin],
+      );
+      await adoptionClient.query("DROP TABLE schema_migrations");
+    } finally {
+      await adoptionClient.end();
+    }
+    assert.equal(await ensureDatabaseSchema({ databaseUrl }), "migrated");
     assert.equal(await ensureDatabaseSchema({ databaseUrl }), "ready");
 
     const client = new Client({ connectionString: databaseUrl });
@@ -25,6 +41,23 @@ test(
         "SELECT extversion FROM pg_extension WHERE extname = 'vector'",
       );
       assert.match(extension.rows[0]?.extversion ?? "", /^0\.8\./);
+
+      const migrations = await client.query<{ id: string; checksum: string }>(
+        "SELECT id, checksum FROM schema_migrations ORDER BY id",
+      );
+      assert.deepEqual(
+        migrations.rows.map((row) => ({
+          id: row.id,
+          checksumLength: row.checksum.length,
+        })),
+        [{ id: "0001_canonical_schema.sql", checksumLength: 64 }],
+      );
+      const adoptedData = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM users WHERE login = $1",
+        [adoptionLogin],
+      );
+      assert.equal(adoptedData.rows[0]?.count, "1");
+      await client.query("DELETE FROM users WHERE login = $1", [adoptionLogin]);
 
       const compactJsonLengths = await client.query<{
         compact_object: string;

@@ -5,6 +5,7 @@ import type { Database } from "../db/database.js";
 import {
   PRIVATE_RECORD_CIPHERTEXT_BASE64_MAX_LENGTH,
   PUBLIC_RECORD_PAYLOAD_MAX_BYTES,
+  RECORD_MEDIA_MAX_ITEMS,
   RECORD_PAGE_DEFAULT_LIMIT,
   RECORD_PAGE_MAX_LIMIT,
   RESOURCE_METADATA_MAX_BYTES,
@@ -17,6 +18,7 @@ import {
   type CreateRecordInput,
   type OwnerRecordListQuery,
   type PublicRecordListQuery,
+  type PutRecordEmbeddingInput,
   RECORD_PUBLIC_ID_SCHEMA_PATTERN,
   RecordService,
   type ReplaceRecordInput,
@@ -106,6 +108,31 @@ export async function registerRecordRoutes(
       return reply
         .header("etag", resourceEtag("record", resource.id, resource.revision))
         .send(resource);
+    },
+  );
+
+  app.put<{ Params: RecordPath; Body: PutRecordEmbeddingInput }>(
+    "/records/:recordId/embeddings",
+    {
+      schema: {
+        params: recordPathSchema,
+        headers: idempotencyHeadersSchema,
+        body: putEmbeddingSchema,
+      },
+    },
+    async (request, reply) => {
+      const principal = await options.authenticator.authenticate(request, [
+        "records:write",
+      ]);
+      await requestLimiter.checkAuthenticatedWrite(request, principal);
+      const response = await service.putEmbedding(
+        principal,
+        request.params.recordId,
+        request.body,
+        requiredHeader(request, "idempotency-key"),
+        request.id,
+      );
+      return sendMutation(reply, response);
     },
   );
 
@@ -302,6 +329,10 @@ const idArray = {
   uniqueItems: true,
   items: uuid,
 };
+const mediaIdArray = {
+  ...idArray,
+  maxItems: RECORD_MEDIA_MAX_ITEMS,
+};
 const referencesSchema = {
   type: "array",
   maxItems: 200,
@@ -326,7 +357,7 @@ const sourceSchema = {
   type: "object",
   required: ["kind", "provider"],
   properties: {
-    kind: { type: "string", enum: ["client", "agent", "import", "server"] },
+    kind: { type: "string", enum: ["client", "agent", "server"] },
     provider: {
       type: "string",
       minLength: 1,
@@ -359,6 +390,26 @@ const encryptionSchema = {
   },
   additionalProperties: false,
 };
+const putEmbeddingSchema = {
+  type: "object",
+  required: ["recordRevision", "model", "contentHash", "vector"],
+  properties: {
+    recordRevision: { type: "integer", minimum: 1 },
+    model: { type: "string", minLength: 1, maxLength: 200 },
+    contentHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    vector: {
+      type: "array",
+      minItems: 1,
+      maxItems: 16000,
+      items: {
+        type: "number",
+        minimum: -3.4028234663852886e38,
+        maximum: 3.4028234663852886e38,
+      },
+    },
+  },
+  additionalProperties: false,
+};
 const renderSchema = {
   type: "object",
   required: ["templateId", "variables"],
@@ -378,7 +429,7 @@ const publicInputProperties = {
   payload: payloadObject,
   render: renderSchema,
   tagIds: idArray,
-  mediaIds: idArray,
+  mediaIds: mediaIdArray,
   metadata: metadataObject,
   source: sourceSchema,
   references: referencesSchema,
@@ -406,7 +457,7 @@ const privateRecordInputSchema = {
     deviceId: uuid,
     visibility: { const: "private" },
     encryption: encryptionSchema,
-    mediaIds: idArray,
+    mediaIds: mediaIdArray,
     references: referencesSchema,
   },
   additionalProperties: false,
@@ -425,7 +476,7 @@ const publicPatchSchema = {
     endedAt: { anyOf: [dateTime, { type: "null" }] },
     payload: payloadObject,
     tagIds: idArray,
-    mediaIds: idArray,
+    mediaIds: mediaIdArray,
     metadata: metadataObject,
     source: { anyOf: [sourceSchema, { type: "null" }] },
     references: referencesSchema,
@@ -440,7 +491,7 @@ const privatePatchSchema = {
     visibility: { const: "private" },
     deviceId: uuid,
     encryption: encryptionSchema,
-    mediaIds: idArray,
+    mediaIds: mediaIdArray,
     references: referencesSchema,
   },
   additionalProperties: false,

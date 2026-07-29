@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import {
   Ajv2020,
@@ -17,6 +17,7 @@ import {
   assertSerializedJsonSize,
   PRIVATE_RECORD_CIPHERTEXT_MAX_BYTES,
   PUBLIC_RECORD_PAYLOAD_MAX_BYTES,
+  RECORD_MEDIA_MAX_ITEMS,
   parseRecordPageLimit,
   RESOURCE_METADATA_MAX_BYTES,
 } from "./limits.js";
@@ -136,6 +137,22 @@ export interface PrivateRecordPatch {
 }
 
 export type UpdateRecordInput = PublicRecordPatch | PrivateRecordPatch;
+
+export interface PutRecordEmbeddingInput {
+  readonly recordRevision: number;
+  readonly model: string;
+  readonly contentHash: string;
+  readonly vector: readonly number[];
+}
+
+export interface RecordEmbeddingResource {
+  readonly recordId: string;
+  readonly recordRevision: number;
+  readonly model: string;
+  readonly dimensions: number;
+  readonly contentHash: string;
+  readonly createdAt: string;
+}
 
 export interface MediaObject {
   readonly id: string;
@@ -294,6 +311,20 @@ interface TemplateRow extends QueryResultRow {
 
 interface CountRow extends QueryResultRow {
   readonly count: number;
+}
+
+interface EmbeddingRecordRow extends QueryResultRow {
+  readonly id: string;
+  readonly public_id: string;
+  readonly device_id: string;
+  readonly visibility: RecordVisibility;
+  readonly public_payload: JsonObject | null;
+  readonly revision: string | number;
+  readonly deleted_at: Date | string | null;
+}
+
+interface RecordEmbeddingRow extends QueryResultRow {
+  readonly created_at: Date | string;
 }
 
 const RECORD_COLUMNS = `
@@ -550,6 +581,129 @@ export class RecordService {
         { input },
         (queryable) =>
           createRecordInTransaction(queryable, principal, input, requestId),
+      ),
+    );
+  }
+
+  async putEmbedding(
+    principal: Principal,
+    recordId: string,
+    input: PutRecordEmbeddingInput,
+    idempotencyKey: string,
+    requestId: string,
+  ): Promise<MutationResponse<RecordEmbeddingResource>> {
+    assertRecordPublicId(recordId);
+    const validated = validateRecordEmbeddingInput(input);
+    return this.translate(() =>
+      executeIdempotentMutation(
+        this.database,
+        principal,
+        "putRecordEmbedding",
+        idempotencyKey,
+        { recordId, input: validated },
+        async (queryable) => {
+          const result = await queryable.query<EmbeddingRecordRow>(
+            `SELECT
+               id, public_id, device_id, visibility, public_payload,
+               revision, deleted_at
+             FROM records
+             WHERE user_id = $1 AND public_id = $2
+             FOR SHARE`,
+            [principal.userId, recordId],
+          );
+          const record = result.rows[0];
+          if (record === undefined || record.deleted_at !== null) {
+            throw notFound("record");
+          }
+          assertApiKeyDevice(principal, record.device_id);
+          if (
+            record.visibility !== "public" ||
+            record.public_payload === null
+          ) {
+            throw unprocessable(
+              "Embeddings can be stored only for active public records.",
+              "record_not_embeddable",
+            );
+          }
+          const currentRevision = Number(record.revision);
+          if (validated.recordRevision !== currentRevision) {
+            throw new HttpProblem({
+              status: 409,
+              code: "record_revision_conflict",
+              title: "Conflict",
+              type: "urn:exeligmos:problem:record-revision-conflict",
+              detail: "recordRevision must match the current record revision.",
+              extensions: { currentRevision },
+            });
+          }
+          const text = record.public_payload.text;
+          if (typeof text !== "string" || text.length === 0) {
+            throw unprocessable(
+              "The current public record payload has no text to embed.",
+              "record_text_required",
+            );
+          }
+          const expectedHash = createHash("sha256")
+            .update(text, "utf8")
+            .digest("hex");
+          if (validated.contentHash !== expectedHash) {
+            throw unprocessable(
+              "contentHash must be the SHA-256 of the current payload.text UTF-8 bytes.",
+              "embedding_content_hash_mismatch",
+            );
+          }
+
+          const stored = await queryable.query<RecordEmbeddingRow>(
+            `INSERT INTO record_embeddings (
+               user_id, record_id, record_revision, model_key, dimensions,
+               content_hash, embedding
+             ) VALUES (
+               $1, $2, $3, $4, $5, decode($6, 'hex'), $7::vector
+             )
+             ON CONFLICT (record_id, record_revision, model_key)
+             DO UPDATE SET
+               dimensions = EXCLUDED.dimensions,
+               content_hash = EXCLUDED.content_hash,
+               embedding = EXCLUDED.embedding
+             RETURNING created_at`,
+            [
+              principal.userId,
+              record.id,
+              validated.recordRevision,
+              validated.model,
+              validated.vector.length,
+              validated.contentHash,
+              vectorLiteral(validated.vector),
+            ],
+          );
+          const embedding = stored.rows[0];
+          if (embedding === undefined) {
+            throw new Error("Stored record embedding could not be reloaded");
+          }
+          await writeMutationAudit(
+            queryable,
+            principal,
+            "record.embedding.put",
+            "record",
+            record.id,
+            requestId,
+          );
+          const body: RecordEmbeddingResource = {
+            recordId: record.public_id,
+            recordRevision: validated.recordRevision,
+            model: validated.model,
+            dimensions: validated.vector.length,
+            contentHash: validated.contentHash,
+            createdAt: isoDate(embedding.created_at),
+          };
+          return {
+            status: 200,
+            headers: {
+              etag: embeddingEtag(body),
+            },
+            body,
+          };
+        },
       ),
     );
   }
@@ -1046,7 +1200,7 @@ async function createPublicRecord(
   const content = await publicContent(queryable, userId, input);
   assertEndAfterStart(input.occurredAt, input.endedAt);
   const tagIds = normalizedIds(input.tagIds ?? [], "tagIds");
-  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds");
+  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds", RECORD_MEDIA_MAX_ITEMS);
   await assertTagIds(queryable, userId, tagIds);
   await assertMediaIds(queryable, userId, mediaIds, "public");
   const source = input.source;
@@ -1110,7 +1264,7 @@ async function createPrivateRecord(
   }
   await assertEncryptionProfile(queryable, userId);
   const encryption = validateEncryption(input.encryption);
-  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds");
+  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds", RECORD_MEDIA_MAX_ITEMS);
   await assertMediaIds(queryable, userId, mediaIds, "private");
   const publicId = await insertWithRecordPublicId(
     input.id,
@@ -1182,7 +1336,7 @@ async function replacePublicRecord(
 ): Promise<void> {
   const content = await publicContent(queryable, userId, input);
   const tagIds = normalizedIds(input.tagIds ?? [], "tagIds");
-  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds");
+  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds", RECORD_MEDIA_MAX_ITEMS);
   await assertTagIds(queryable, userId, tagIds);
   await assertMediaIds(queryable, userId, mediaIds, "public");
   assertEndAfterStart(input.occurredAt, input.endedAt);
@@ -1240,7 +1394,7 @@ async function replacePrivateRecord(
 ): Promise<void> {
   await assertEncryptionProfile(queryable, userId);
   const encryption = validateEncryption(input.encryption);
-  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds");
+  const mediaIds = normalizedIds(input.mediaIds ?? [], "mediaIds", RECORD_MEDIA_MAX_ITEMS);
   await assertMediaIds(queryable, userId, mediaIds, "private");
   await queryable.query(
     `UPDATE records SET
@@ -1333,7 +1487,7 @@ async function patchPublicRecord(
     await replaceTags(queryable, userId, id, tagIds);
   }
   if (input.mediaIds !== undefined) {
-    const mediaIds = normalizedIds(input.mediaIds, "mediaIds");
+    const mediaIds = normalizedIds(input.mediaIds, "mediaIds", RECORD_MEDIA_MAX_ITEMS);
     await assertMediaIds(queryable, userId, mediaIds, "public");
     await replaceMedia(queryable, userId, id, mediaIds);
   }
@@ -1373,7 +1527,7 @@ async function patchPrivateRecord(
     ],
   );
   if (input.mediaIds !== undefined) {
-    const mediaIds = normalizedIds(input.mediaIds, "mediaIds");
+    const mediaIds = normalizedIds(input.mediaIds, "mediaIds", RECORD_MEDIA_MAX_ITEMS);
     await assertMediaIds(queryable, userId, mediaIds, "private");
     await replaceMedia(queryable, userId, id, mediaIds);
   }
@@ -1826,10 +1980,11 @@ function strictBase64(value: string, name: string): Buffer {
 function normalizedIds(
   values: readonly string[],
   name: string,
+  maximum = 200,
 ): readonly string[] {
-  if (values.length > 200) {
+  if (values.length > maximum) {
     throw unprocessable(
-      `${name} cannot contain more than 200 ids.`,
+      `${name} cannot contain more than ${maximum} ids.`,
       `invalid_${name}`,
     );
   }
@@ -1843,6 +1998,74 @@ function normalizedIds(
     );
   }
   return values;
+}
+
+export function validateRecordEmbeddingInput(
+  input: PutRecordEmbeddingInput,
+): PutRecordEmbeddingInput {
+  if (!Number.isSafeInteger(input.recordRevision) || input.recordRevision < 1) {
+    throw unprocessable(
+      "recordRevision must be a positive integer.",
+      "invalid_embedding_revision",
+    );
+  }
+  if (
+    typeof input.model !== "string" ||
+    input.model !== input.model.trim() ||
+    input.model.length < 1 ||
+    input.model.length > 200
+  ) {
+    throw unprocessable(
+      "model must contain 1 to 200 trimmed characters.",
+      "invalid_embedding_model",
+    );
+  }
+  if (
+    typeof input.contentHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(input.contentHash)
+  ) {
+    throw unprocessable(
+      "contentHash must be a lowercase hexadecimal SHA-256 value.",
+      "invalid_embedding_content_hash",
+    );
+  }
+  if (
+    !Array.isArray(input.vector) ||
+    input.vector.length < 1 ||
+    input.vector.length > 16_000 ||
+    input.vector.some(
+      (value) =>
+        typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        !Number.isFinite(Math.fround(value)),
+    )
+  ) {
+    throw unprocessable(
+      "vector must contain between 1 and 16000 finite float32 numbers.",
+      "invalid_embedding_vector",
+    );
+  }
+  return {
+    recordRevision: input.recordRevision,
+    model: input.model,
+    contentHash: input.contentHash,
+    vector: [...input.vector],
+  };
+}
+
+function vectorLiteral(vector: readonly number[]): string {
+  return `[${vector.map((value) => JSON.stringify(value)).join(",")}]`;
+}
+
+function embeddingEtag(resource: RecordEmbeddingResource): string {
+  const digest = createHash("sha256")
+    .update(
+      `${resource.recordRevision}\0${resource.model}\0${resource.contentHash}\0${resource.dimensions}`,
+      "utf8",
+    )
+    .digest("base64url")
+    .slice(0, 16);
+  return `"record-embedding-${resource.recordId}-${digest}"`;
 }
 
 function sourceFromRow(row: RecordRow): SourceReference | undefined {

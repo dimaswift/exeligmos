@@ -70,6 +70,10 @@ tags:
     description: Server-rendered public record templates.
   - name: Media
     description: Streaming upload sessions and immutable media bytes.
+  - name: Jobs
+    description: Durable device-ingestion queues and processed-file tracking.
+  - name: Workers
+    description: Registered ingestion-worker settings and production statistics.
   - name: Synchronization
     description: Ordered changes and bounded idempotent mutation batches.
   - name: Social
@@ -81,7 +85,7 @@ security:
   - ApiKeyBearer: []
 x-exeligmos-implementation:
   phase: 3
-  implementedTags: [Health, Authentication, API keys, Devices, Records, Events, Tags, Templates, Media, Synchronization, Social, Public activity]
+  implementedTags: [Health, Authentication, API keys, Devices, Records, Events, Tags, Templates, Media, Jobs, Workers, Synchronization, Social, Public activity]
   plannedTags: []
 x-exeligmos-resource-rate-limits:
   windowSeconds: 60
@@ -1582,6 +1586,294 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /workers:
+    get:
+      operationId: listWorkers
+      tags: [Workers]
+      summary: List registered ingestion workers and cumulative production stats
+      responses:
+        '200':
+          description: Registered workers owned by the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /workers/current:
+    get:
+      operationId: getCurrentWorker
+      tags: [Workers]
+      summary: Read settings for the API key's bound worker
+      x-required-scopes: [jobs:read]
+      security:
+        - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Current worker settings and statistics.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /workers/{deviceId}:
+    patch:
+      operationId: updateWorker
+      tags: [Workers]
+      summary: Edit a registered worker
+      security:
+        - JwtBearer: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerConfigPatch'
+      responses:
+        '200':
+          description: Updated worker.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+  /jobs:
+    get:
+      operationId: listIngestionJobs
+      tags: [Jobs]
+      summary: List durable ingestion jobs
+      description: |
+        Results are ordered by creation time and ID. JWT callers see all of
+        their jobs; API-key callers see only jobs for the key's bound device.
+      x-required-scopes: [jobs:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/IngestionJobStatus'
+        - name: activity
+          in: query
+          description: Return only jobs with a worker heartbeat inside the activity lease.
+          schema:
+            type: string
+            enum: [active]
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Stable cursor page with current progress summaries.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJobPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createIngestionJob
+      tags: [Jobs]
+      summary: Declare a device-ingestion queue
+      description: |
+        Each declaration represents one camera media file. The server accepts a
+        sourceKey only once per user and device, permanently preserving the
+        processed-file cache across worker restarts. Previously seen entries
+        are returned in `skippedItems` and are not inserted into the new job.
+      x-required-scopes: [jobs:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIngestionJobRequest'
+            example:
+              deviceId: 2dca8eab-00a8-4e94-9bd2-2fcbfe17e890
+              source:
+                volume: THUMB_CAM
+              config:
+                descriptionModel: gemma4
+                embeddingModel: embeddinggemma
+              items:
+                - sourceKey: 847b668fdcbf5fbe1b47ae5d01cf3f45eb9cd57475e030bff559b9d576c3fda2
+                  groupKey: 3e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc0f
+                  relativePath: PHOTO/IMG_0001.JPG
+                  kind: photo
+                  capturedAt: '2026-07-29T08:14:22Z'
+                  byteLength: 834234
+                  contentSha256: 6e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc01
+      responses:
+        '201':
+          description: Job created with accepted and previously seen items identified.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedIngestionJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getIngestionJob
+      tags: [Jobs]
+      summary: Get an ingestion job and all accepted items
+      description: |
+        The strong ETag is `"job-{jobId}-r{revision}"` and changes whenever an
+        item lifecycle or heartbeat update changes the represented job. Job
+        counters, `currentItem`, and `items` are read from one database
+        snapshot.
+      x-required-scopes: [jobs:read]
+      responses:
+        '200':
+          description: Full job detail and accepted queue items.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJobDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /jobs/{jobId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+      - $ref: '#/components/parameters/JobItemId'
+    patch:
+      operationId: updateIngestionJobItem
+      tags: [Jobs]
+      summary: Advance or retry one ingestion item
+      description: |
+        Lifecycle transitions are queued to processing or failed, processing
+        to processing/completed/failed, and failed back to processing for a
+        retry. Repeating processing for the same item renews the two-minute
+        activity lease. A worker that stops renewing the lease is reported
+        idle even while its retryable item remains processing. Completed items,
+        mediaId, recordId, and the selected outputMode are immutable. An
+        uploadId may be replaced while an item is processing or being retried,
+        so an expired upload does not strand the item. Every item with the same
+        groupKey must reference one recordId. A successful response returns a
+        compact job summary plus only the updated item, increments the job
+        revision, and sends ETag `"job-{jobId}-r{revision}"`.
+      x-required-scopes: [jobs:write]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateIngestionJobItemRequest'
+      responses:
+        '200':
+          description: Compact mutation result with transactionally recomputed counters.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJobItemMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /sync/stats:
     get:
       operationId: getSyncStats
@@ -1695,7 +1987,7 @@ paths:
                       endsAt: '2026-07-14T16:55:00Z'
                       label: X1.7 solar flare
                       type: 1001
-                      metadata: {source: noaa-swpc}
+                      metadata: { source: noaa-swpc }
                       references: []
                       revision: 1
                       createdAt: '2026-07-14T18:04:12Z'
@@ -2073,6 +2365,56 @@ paths:
           $ref: '#/components/responses/Conflict'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /records/{recordId}/embeddings:
+    parameters:
+      - $ref: '#/components/parameters/RecordId'
+    put:
+      operationId: putRecordEmbedding
+      tags: [Records]
+      summary: Store an embedding for the current public record revision
+      description: |
+        Stores or replaces one model's vector for the exact current revision.
+        `contentHash` must be the lowercase SHA-256 of the current
+        `payload.text` UTF-8 bytes. Private, deleted, and stale record revisions
+        are rejected. API-key callers may embed only records attributed to
+        their bound device.
+      x-required-scopes: [records:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutRecordEmbeddingRequest'
+      responses:
+        '200':
+          description: Embedding stored for the requested model and revision.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordEmbedding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -2726,6 +3068,20 @@ components:
       schema:
         type: string
         format: uuid
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobItemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     Cursor:
       name: cursor
       in: query
@@ -2882,7 +3238,7 @@ components:
         WWW-Authenticate:
           schema:
             type: string
-          example: Bearer realm="exeligmos"
+          example: Bearer realm='exeligmos'
         X-Request-Id:
           $ref: '#/components/headers/RequestId'
       content:
@@ -2933,7 +3289,7 @@ components:
             code: cursor_expired
             requestId: req_01J2V8E3VBA5QYFAE6BX27DE5Z
     PreconditionFailed:
-      description: "`If-Match` does not match the current resource revision."
+      description: '`If-Match` does not match the current resource revision.'
       headers:
         ETag:
           $ref: '#/components/headers/ETag'
@@ -3364,8 +3720,7 @@ components:
       additionalProperties: false
     Subscription:
       type: object
-      required:
-        [id, userId, targetUser, includeRecords, includeEvents, revision, createdAt, updatedAt]
+      required: [id, userId, targetUser, includeRecords, includeEvents, revision, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -3434,6 +3789,8 @@ components:
         - templates:write
         - media:read
         - media:write
+        - jobs:read
+        - jobs:write
         - devices:read
         - subscriptions:read
         - subscriptions:write
@@ -3794,6 +4151,54 @@ components:
           $ref: '#/components/schemas/Weather'
       additionalProperties: true
       minProperties: 1
+    PutRecordEmbeddingRequest:
+      type: object
+      required: [recordRevision, model, contentHash, vector]
+      properties:
+        recordRevision:
+          type: integer
+          format: int64
+          minimum: 1
+        model:
+          type: string
+          minLength: 1
+          maxLength: 200
+        contentHash:
+          $ref: '#/components/schemas/Sha256'
+        vector:
+          type: array
+          minItems: 1
+          maxItems: 16000
+          items:
+            type: number
+            format: float
+            minimum: -3.4028234663852886e38
+            maximum: 3.4028234663852886e38
+      additionalProperties: false
+    RecordEmbedding:
+      type: object
+      required: [recordId, recordRevision, model, dimensions, contentHash, createdAt]
+      properties:
+        recordId:
+          $ref: '#/components/schemas/RecordPublicId'
+        recordRevision:
+          type: integer
+          format: int64
+          minimum: 1
+        model:
+          type: string
+          minLength: 1
+          maxLength: 200
+        dimensions:
+          type: integer
+          minimum: 1
+          maximum: 16000
+        contentHash:
+          $ref: '#/components/schemas/Sha256'
+        createdAt:
+          type: string
+          format: date-time
+      additionalProperties: false
     TemplateRenderRequest:
       type: object
       required: [templateId, variables]
@@ -3885,7 +4290,7 @@ components:
             format: uuid
         mediaIds:
           type: array
-          maxItems: 200
+          maxItems: 1000
           uniqueItems: true
           default: []
           items:
@@ -3947,7 +4352,7 @@ components:
           $ref: '#/components/schemas/CiphertextEnvelope'
         mediaIds:
           type: array
-          maxItems: 200
+          maxItems: 1000
           uniqueItems: true
           default: []
           items:
@@ -4068,7 +4473,7 @@ components:
                 $ref: '#/components/schemas/PublicTagSummary'
             media:
               type: array
-              maxItems: 200
+              maxItems: 1000
               items:
                 $ref: '#/components/schemas/MediaObject'
             metadata:
@@ -4093,7 +4498,7 @@ components:
               $ref: '#/components/schemas/CiphertextEnvelope'
             media:
               type: array
-              maxItems: 200
+              maxItems: 1000
               items:
                 $ref: '#/components/schemas/MediaObject'
       unevaluatedProperties: false
@@ -4134,7 +4539,7 @@ components:
             format: uuid
         mediaIds:
           type: array
-          maxItems: 200
+          maxItems: 1000
           uniqueItems: true
           items:
             type: string
@@ -4166,7 +4571,7 @@ components:
           $ref: '#/components/schemas/CiphertextEnvelope'
         mediaIds:
           type: array
-          maxItems: 200
+          maxItems: 1000
           uniqueItems: true
           items:
             type: string
@@ -4248,7 +4653,7 @@ components:
             $ref: '#/components/schemas/PublicTagSummary'
         media:
           type: array
-          maxItems: 200
+          maxItems: 1000
           items:
             $ref: '#/components/schemas/PublicMediaObject'
         metadata:
@@ -4429,8 +4834,7 @@ components:
                 $ref: '#/components/schemas/Event'
     PublicEventProjection:
       type: object
-      required:
-        [id, userId, author, visibility, startsAt, label, type, metadata, references, revision, createdAt, updatedAt]
+      required: [id, userId, author, visibility, startsAt, label, type, metadata, references, revision, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -4496,8 +4900,7 @@ components:
         `upsert` restores the projection and requires actor-filtered refetches.
         The user resource ID is the actor ID, while its resource URL uses the
         stable public login.
-      required:
-        [sequence, publishedAt, actor, resourceType, resourceId, operation, revision, resourceUrl]
+      required: [sequence, publishedAt, actor, resourceType, resourceId, operation, revision, resourceUrl]
       properties:
         sequence:
           type: integer
@@ -4968,6 +5371,436 @@ components:
         publicContentUrl:
           type: string
           format: uri-reference
+      additionalProperties: false
+    WorkerConfig:
+      type: object
+      required: [enabled, mountName, descriptionModel, descriptionPrompt, embeddingModel, whisperModel]
+      properties:
+        enabled:
+          type: boolean
+        mountName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        descriptionModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        descriptionPrompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        embeddingModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        whisperModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+      additionalProperties: false
+    WorkerConfigPatch:
+      type: object
+      minProperties: 1
+      properties:
+        enabled:
+          type: boolean
+        mountName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        descriptionModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        descriptionPrompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        embeddingModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        whisperModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+      additionalProperties: false
+    WorkerStats:
+      type: object
+      required: [jobs, media, records, failedMedia, lastJobAt]
+      properties:
+        jobs:
+          type: integer
+          minimum: 0
+        media:
+          type: integer
+          minimum: 0
+        records:
+          type: integer
+          minimum: 0
+        failedMedia:
+          type: integer
+          minimum: 0
+        lastJobAt:
+          type: [string, 'null']
+          format: date-time
+      additionalProperties: false
+    Worker:
+      type: object
+      required: [deviceId, name, revision, lastSeenAt, config, stats]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        lastSeenAt:
+          type: [string, 'null']
+          format: date-time
+        config:
+          $ref: '#/components/schemas/WorkerConfig'
+        stats:
+          $ref: '#/components/schemas/WorkerStats'
+      additionalProperties: false
+    WorkerPage:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Worker'
+      additionalProperties: false
+    IngestionJobStatus:
+      type: string
+      enum: [queued, processing, completed, failed]
+    IngestionJobActivity:
+      type: string
+      enum: [active, idle]
+      description: |
+        Active while a processing worker has renewed the job within the last
+        two minutes; otherwise idle.
+    IngestionItemStatus:
+      type: string
+      enum: [queued, processing, completed, failed]
+    IngestionItemKind:
+      type: string
+      enum: [photo, video, audio]
+    IngestionLifecycleToken:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-z][a-z0-9_-]*$'
+    IngestionItemDeclaration:
+      type: object
+      required: [sourceKey, groupKey, relativePath, kind, capturedAt, byteLength, contentSha256]
+      properties:
+        sourceKey:
+          $ref: '#/components/schemas/Sha256'
+          description: |
+            Stable camera-file identity. Accepted only once per user and device,
+            independently of later job or record lifecycle.
+        groupKey:
+          $ref: '#/components/schemas/Sha256'
+          description: Stable identity shared by media grouped into one record.
+        relativePath:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Safe POSIX path relative to the mounted camera volume.
+        kind:
+          $ref: '#/components/schemas/IngestionItemKind'
+        capturedAt:
+          type: string
+          format: date-time
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5368709120
+        contentSha256:
+          $ref: '#/components/schemas/Sha256'
+      additionalProperties: false
+    CreateIngestionJobRequest:
+      type: object
+      required: [deviceId, source, config, items]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        source:
+          allOf:
+            - $ref: '#/components/schemas/ResourceMetadata'
+          description: |
+            Structured capture source, normally an object with
+            `volume: THUMB_CAM`.
+        config:
+          allOf:
+            - $ref: '#/components/schemas/ResourceMetadata'
+          description: Models, prompts, and processing options used by the worker.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/IngestionItemDeclaration'
+      additionalProperties: false
+    IngestionJobItem:
+      type: object
+      required:
+        - id
+        - sourceKey
+        - groupKey
+        - relativePath
+        - kind
+        - capturedAt
+        - byteLength
+        - contentSha256
+        - status
+        - stage
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceKey:
+          $ref: '#/components/schemas/Sha256'
+        groupKey:
+          $ref: '#/components/schemas/Sha256'
+        relativePath:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        kind:
+          $ref: '#/components/schemas/IngestionItemKind'
+        capturedAt:
+          type: string
+          format: date-time
+        byteLength:
+          type: integer
+          format: int64
+          minimum: 1
+        contentSha256:
+          $ref: '#/components/schemas/Sha256'
+        status:
+          $ref: '#/components/schemas/IngestionItemStatus'
+        stage:
+          $ref: '#/components/schemas/IngestionLifecycleToken'
+        outputMode:
+          $ref: '#/components/schemas/IngestionLifecycleToken'
+        uploadId:
+          type: string
+          format: uuid
+        mediaId:
+          type: string
+          format: uuid
+        recordId:
+          $ref: '#/components/schemas/RecordPublicId'
+        error:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    IngestionJobState:
+      type: object
+      required:
+        - id
+        - userId
+        - deviceId
+        - source
+        - config
+        - status
+        - totalItems
+        - processedItems
+        - failedItems
+        - remainingItems
+        - totalRecords
+        - processedRecords
+        - failedRecords
+        - remainingRecords
+        - currentItem
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/ResourceMetadata'
+        config:
+          $ref: '#/components/schemas/ResourceMetadata'
+        status:
+          $ref: '#/components/schemas/IngestionJobStatus'
+        totalItems:
+          type: integer
+          minimum: 0
+        processedItems:
+          type: integer
+          minimum: 0
+        failedItems:
+          type: integer
+          minimum: 0
+        remainingItems:
+          type: integer
+          minimum: 0
+          description: Includes failed items because they remain retryable.
+        totalRecords:
+          type: integer
+          minimum: 0
+          description: Distinct accepted groupKey count.
+        processedRecords:
+          type: integer
+          minimum: 0
+          description: Groups for which every item completed.
+        failedRecords:
+          type: integer
+          minimum: 0
+          description: Groups containing at least one failed item.
+        remainingRecords:
+          type: integer
+          minimum: 0
+        currentItem:
+          description: The processing item, or the most recently failed retryable item.
+          anyOf:
+            - $ref: '#/components/schemas/IngestionJobItem'
+            - type: 'null'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    IngestionJob:
+      allOf:
+        - $ref: '#/components/schemas/IngestionJobState'
+        - type: object
+          required: [activity]
+          properties:
+            activity:
+              $ref: '#/components/schemas/IngestionJobActivity'
+    IngestionJobDetail:
+      allOf:
+        - $ref: '#/components/schemas/IngestionJobState'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/IngestionJobItem'
+    IngestionJobItemMutation:
+      allOf:
+        - $ref: '#/components/schemas/IngestionJobState'
+        - type: object
+          required: [item]
+          properties:
+            item:
+              $ref: '#/components/schemas/IngestionJobItem'
+              description: The item updated by this mutation.
+    SkippedIngestionItem:
+      type: object
+      required: [sourceKey, existingJobId, existingItemId, status]
+      properties:
+        sourceKey:
+          $ref: '#/components/schemas/Sha256'
+        existingJobId:
+          type: string
+          format: uuid
+        existingItemId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/IngestionItemStatus'
+      additionalProperties: false
+    CreatedIngestionJob:
+      allOf:
+        - $ref: '#/components/schemas/IngestionJobDetail'
+        - type: object
+          required: [skippedItems]
+          properties:
+            skippedItems:
+              type: array
+              items:
+                $ref: '#/components/schemas/SkippedIngestionItem'
+    IngestionJobPage:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/IngestionJob'
+    UpdateIngestionJobItemRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        stage:
+          $ref: '#/components/schemas/IngestionLifecycleToken'
+        outputMode:
+          $ref: '#/components/schemas/IngestionLifecycleToken'
+        uploadId:
+          type: string
+          format: uuid
+        mediaId:
+          type: string
+          format: uuid
+        recordId:
+          $ref: '#/components/schemas/RecordPublicId'
+        error:
+          type: string
+          minLength: 1
+          maxLength: 4000
+      allOf:
+        - if:
+            properties:
+              status:
+                const: failed
+          then:
+            properties:
+              error:
+                type: string
+                minLength: 1
+                maxLength: 4000
+            required: [error]
+          else:
+            not:
+              properties:
+                error: {}
+              required: [error]
       additionalProperties: false
     SyncResourceCount:
       type: object

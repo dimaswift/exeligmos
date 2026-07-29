@@ -37,8 +37,12 @@ test("OpenAPI contract exposes the complete resource surface", async () => {
     "/me/encryption-profile",
     "/api-keys",
     "/devices",
+    "/jobs",
+    "/jobs/{jobId}",
+    "/jobs/{jobId}/items/{itemId}",
     "/records",
     "/records/{recordId}",
+    "/records/{recordId}/embeddings",
     "/public/records",
     "/public/records/{recordId}",
     "/events",
@@ -171,9 +175,17 @@ test("OpenAPI contract keeps private records opaque and events lightweight", asy
   assert.equal(object(publicProperties.visibility, "public visibility must exist").default, "public");
   assert.ok("occurredAt" in publicProperties);
   assert.ok("mediaIds" in publicProperties);
+  assert.equal(
+    object(publicProperties.mediaIds, "public mediaIds must exist").maxItems,
+    1_000,
+  );
 
   const privateInput = object(schemas.PrivateRecordInput, "PrivateRecordInput must exist");
   const privateProperties = object(privateInput.properties, "PrivateRecordInput properties must exist");
+  assert.equal(
+    object(privateProperties.mediaIds, "private mediaIds must exist").maxItems,
+    1_000,
+  );
   assert.deepEqual(Object.keys(privateProperties).sort(), [
     "deviceId",
     "encryption",
@@ -196,6 +208,27 @@ test("OpenAPI contract keeps private records opaque and events lightweight", asy
   assert.equal(recordPublicId.pattern, "^[A-Za-z0-9_-]{5}$");
   assert.equal(recordPublicId.minLength, 5);
   assert.equal(recordPublicId.maxLength, 5);
+  assert.deepEqual(
+    array(object(schemas.SourceKind, "SourceKind must exist").enum, "source kinds"),
+    ["client", "agent", "server"],
+  );
+  const embeddingInput = object(
+    schemas.PutRecordEmbeddingRequest,
+    "PutRecordEmbeddingRequest must exist",
+  );
+  const embeddingVector = object(
+    object(embeddingInput.properties, "embedding properties").vector,
+    "embedding vector must exist",
+  );
+  assert.deepEqual(
+    object(embeddingVector.items, "embedding vector items"),
+    {
+      type: "number",
+      format: "float",
+      minimum: -3.4028234663852886e38,
+      maximum: 3.4028234663852886e38,
+    },
+  );
 
   const publicRecordProjection = object(
     schemas.PublicRecordProjection,

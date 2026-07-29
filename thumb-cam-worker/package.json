@@ -1,0 +1,16 @@
+{
+  "name": "fractonica-thumb-cam-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "configure": "node scripts/configure.mjs",
+    "install-service": "node scripts/install-service.mjs",
+    "start": "node --env-file-if-exists=.env src/cli.mjs",
+    "once": "node --env-file-if-exists=.env src/cli.mjs --once",
+    "test": "node --test",
+    "temporal:generate": "../web/node_modules/.bin/rolldown scripts/temporal-context-entry.ts --file src/generated/temporal-core.mjs --format esm --platform node --minify --logLevel warn"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

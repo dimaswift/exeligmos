@@ -89,6 +89,14 @@ docker compose up -d postgres
 npm run db:setup
 ```
 
+`db:setup` is non-destructive for an initialized database. It takes an
+advisory lock, records applied files from `db/migrations`, verifies their
+SHA-256 checksums, and applies each pending migration in its own transaction.
+Migration files are append-only: add a new ordered SQL file and update
+`db/schema.sql` to the same final shape; never edit a migration after it has
+been applied. Fresh databases are created directly from the canonical schema
+and stamped with the matching migration history.
+
 Schema setup creates the database only when it is empty. A nonempty database
 with a different shape is rejected; there is no conversion path.
 

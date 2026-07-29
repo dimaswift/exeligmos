@@ -1,0 +1,515 @@
+.page {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  padding-inline-end: var(--space-3);
+  container-type: inline-size;
+}
+
+.pageHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pageHeader h1,
+.pageHeader p,
+.panel h2,
+.sectionHeader h2,
+.sectionHeader p,
+.jobRow h3,
+.jobRow p {
+  margin: 0;
+}
+
+.pageHeader h1 {
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  letter-spacing: -0.035em;
+}
+
+.pageHeader > div:first-child > p:last-child {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+}
+
+.workerStatus {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-panel);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+.statusDot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.workerActive .statusDot {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0.25rem rgb(139 215 193 / 8%);
+}
+
+.workerIdle .statusDot {
+  opacity: 0.55;
+}
+
+.workerUnavailable {
+  border-color: color-mix(in srgb, var(--color-danger), transparent 55%);
+  color: var(--color-danger);
+}
+
+.workerUnavailable .statusDot {
+  background: var(--color-danger);
+}
+
+.refreshing {
+  color: var(--color-accent);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.summaryStat {
+  display: grid;
+  min-height: 5.5rem;
+  align-content: center;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+}
+
+.summaryStat span {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.summaryStat strong {
+  margin-top: var(--space-1);
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+
+.summaryStat[data-tone="danger"] strong {
+  color: var(--color-danger);
+}
+
+.panel,
+.jobRow {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+
+.panel {
+  padding: var(--space-4);
+}
+
+.currentPanel {
+  border-color: color-mix(in srgb, var(--color-accent), transparent 52%);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-accent), transparent 15%);
+}
+
+.currentHeader,
+.sectionHeader,
+.jobTitleLine,
+.progressLabel,
+.recordProgress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.panelEyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.currentHeader h2 {
+  font-size: 1.1rem;
+}
+
+.statusBadge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  line-height: 1;
+}
+
+.statusBadge[data-tone="active"] {
+  border-color: color-mix(in srgb, var(--color-accent), transparent 45%);
+  background: color-mix(in srgb, var(--color-accent), transparent 92%);
+  color: var(--color-accent-strong);
+}
+
+.statusBadge[data-tone="done"] {
+  color: var(--color-accent);
+}
+
+.statusBadge[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--color-danger), transparent 55%);
+  color: var(--color-danger);
+}
+
+.progressBlock {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.progressProminent {
+  margin-top: var(--space-4);
+}
+
+.progressLabel {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+}
+
+.progressBlock progress {
+  width: 100%;
+  height: 0.38rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-canvas);
+  accent-color: var(--color-accent);
+}
+
+.progressBlock progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--color-canvas);
+}
+
+.progressBlock progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+
+.progressBlock progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+
+.recordProgress {
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.recordProgress strong {
+  color: var(--color-text);
+}
+
+.dangerText,
+.itemError,
+.failedFact {
+  color: var(--color-danger) !important;
+}
+
+.currentItem {
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel-raised);
+}
+
+.kindEmoji {
+  font-size: 1.55rem;
+  text-align: center;
+}
+
+.currentItemCopy,
+.itemHeading {
+  min-width: 0;
+}
+
+.itemHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.itemHeading strong,
+.rowCurrentItem span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemHeading span {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.currentItemCopy > p {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+}
+
+.currentItemCopy .itemError {
+  line-height: 1.4;
+}
+
+.idlePanel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.idleIcon {
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  font-size: 1.4rem;
+}
+
+.idlePanel h2 {
+  font-size: 0.95rem;
+}
+
+.idlePanel p {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.jobsSection {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.sectionHeader {
+  align-items: end;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sectionHeader h2 {
+  font-size: 1rem;
+}
+
+.sectionHeader p {
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.jobList {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.jobRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: 0.7rem var(--space-3);
+}
+
+.jobIdentity {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.jobIcon {
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.jobTitleLine {
+  min-width: 0;
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+
+.jobTitleLine h3 {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobMeta {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 0.22rem !important;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+}
+
+.jobFacts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.jobFacts div {
+  min-width: 0;
+}
+
+.jobFacts dt {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+}
+
+.jobFacts dd {
+  overflow: hidden;
+  margin: 0.12rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+}
+
+.rowCurrentItem {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+}
+
+.rowCurrentItem span:last-child {
+  color: var(--color-accent);
+}
+
+.rowError {
+  min-width: 0;
+  grid-column: 1 / -1;
+  color: var(--color-danger);
+  font-size: 0.62rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: var(--space-5);
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+@media (max-width: 68rem) {
+  .jobRow {
+    grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 0.8fr);
+  }
+
+  .jobFacts {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 30rem) {
+  .jobRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+  }
+
+  .jobFacts {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 22rem) {
+  .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jobRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .jobFacts {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 42rem) {
+  .pageHeader,
+  .currentHeader {
+    display: grid;
+    align-items: start;
+  }
+
+  .workerStatus {
+    width: fit-content;
+  }
+
+  .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jobRow {
+    grid-template-columns: 1fr;
+  }
+
+  .jobFacts {
+    grid-column: auto;
+  }
+
+  .itemHeading {
+    align-items: start;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+}

@@ -21,6 +21,9 @@ or events.
 - `web/` — React Router Framework Mode SSR application and modular TypeScript
   packages for the API client, domain catalog, temporal engine, glyph core, and
   React/SVG UI.
+- `thumb-cam-worker/` — macOS Node worker for mounted THUMB_CAM media,
+  symmetry processing, local Ollama/Whisper inference, verified uploads,
+  embeddings, and durable server job progress.
 - `domain-spec/` — language-neutral canonical catalog and conformance vectors
   shared by Swift and TypeScript implementations.
 - `docs/architecture/` — cross-client architecture decisions.

@@ -526,7 +526,7 @@ CREATE TABLE public.api_keys (
     CONSTRAINT api_keys_key_prefix_check CHECK ((key_prefix ~ '^exk_[A-Za-z0-9]{4,16}$'::text)),
     CONSTRAINT api_keys_name_check CHECK (((name = btrim(name)) AND ((char_length(name) >= 1) AND (char_length(name) <= 120)))),
     CONSTRAINT api_keys_revision_check CHECK ((revision > 0)),
-    CONSTRAINT api_keys_scopes_check CHECK (((cardinality(scopes) > 0) AND (array_position(scopes, NULL::text) IS NULL) AND public.exeligmos_text_array_is_unique(scopes) AND (scopes <@ ARRAY['records:read'::text, 'records:write'::text, 'events:read'::text, 'events:write'::text, 'tags:read'::text, 'tags:write'::text, 'templates:read'::text, 'templates:write'::text, 'media:read'::text, 'media:write'::text, 'devices:read'::text, 'subscriptions:read'::text, 'subscriptions:write'::text, 'sync:read'::text, 'sync:write'::text])))
+    CONSTRAINT api_keys_scopes_check CHECK (((cardinality(scopes) > 0) AND (array_position(scopes, NULL::text) IS NULL) AND public.exeligmos_text_array_is_unique(scopes) AND (scopes <@ ARRAY['records:read'::text, 'records:write'::text, 'events:read'::text, 'events:write'::text, 'tags:read'::text, 'tags:write'::text, 'templates:read'::text, 'templates:write'::text, 'media:read'::text, 'media:write'::text, 'jobs:read'::text, 'jobs:write'::text, 'devices:read'::text, 'subscriptions:read'::text, 'subscriptions:write'::text, 'sync:read'::text, 'sync:write'::text])))
 );
 
 CREATE TABLE public.api_rate_limit_buckets (
@@ -669,6 +669,70 @@ CREATE TABLE public.events (
     CONSTRAINT events_revision_check CHECK ((revision > 0)),
     CONSTRAINT events_type_check CHECK ((type >= 0)),
     CONSTRAINT events_visibility_check CHECK ((visibility = ANY (ARRAY['public'::text, 'private'::text])))
+);
+
+CREATE TABLE public.ingestion_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    device_id uuid NOT NULL,
+    source jsonb NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    total_items integer DEFAULT 0 NOT NULL,
+    processed_items integer DEFAULT 0 NOT NULL,
+    failed_items integer DEFAULT 0 NOT NULL,
+    total_records integer DEFAULT 0 NOT NULL,
+    processed_records integer DEFAULT 0 NOT NULL,
+    failed_records integer DEFAULT 0 NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT ingestion_jobs_config_check CHECK ((jsonb_typeof(config) = 'object'::text)),
+    CONSTRAINT ingestion_jobs_config_size_check CHECK ((public.exeligmos_jsonb_compact_octet_length(config) <= 32768)),
+    CONSTRAINT ingestion_jobs_counter_check CHECK (((total_items >= 0) AND (processed_items >= 0) AND (failed_items >= 0) AND ((processed_items + failed_items) <= total_items))),
+    CONSTRAINT ingestion_jobs_record_counter_check CHECK (((total_records >= 0) AND (processed_records >= 0) AND (failed_records >= 0) AND (processed_records <= total_records) AND (failed_records <= total_records))),
+    CONSTRAINT ingestion_jobs_revision_check CHECK ((revision > 0)),
+    CONSTRAINT ingestion_jobs_source_check CHECK ((jsonb_typeof(source) = 'object'::text)),
+    CONSTRAINT ingestion_jobs_source_size_check CHECK ((public.exeligmos_jsonb_compact_octet_length(source) <= 32768)),
+    CONSTRAINT ingestion_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'processing'::text, 'completed'::text, 'failed'::text])))
+);
+
+CREATE TABLE public.ingestion_job_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    device_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    source_key text NOT NULL COLLATE pg_catalog."C",
+    group_key text NOT NULL COLLATE pg_catalog."C",
+    relative_path text NOT NULL,
+    kind text NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    byte_length bigint NOT NULL,
+    content_sha256 bytea NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    stage text DEFAULT 'queued'::text NOT NULL,
+    output_mode text,
+    upload_id uuid,
+    media_id uuid,
+    record_id uuid,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ingestion_job_items_byte_length_check CHECK (((byte_length > 0) AND (byte_length <= '5368709120'::bigint))),
+    CONSTRAINT ingestion_job_items_content_sha256_check CHECK ((octet_length(content_sha256) = 32)),
+    CONSTRAINT ingestion_job_items_error_check CHECK (((error IS NULL) OR ((error = btrim(error)) AND (char_length(error) >= 1) AND (char_length(error) <= 4000)))),
+    CONSTRAINT ingestion_job_items_group_key_check CHECK ((group_key ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT ingestion_job_items_kind_check CHECK ((kind = ANY (ARRAY['photo'::text, 'video'::text, 'audio'::text]))),
+    CONSTRAINT ingestion_job_items_lifecycle_check CHECK ((((status = 'queued'::text) AND (error IS NULL)) OR ((status = 'processing'::text) AND (error IS NULL)) OR ((status = 'completed'::text) AND (media_id IS NOT NULL) AND (record_id IS NOT NULL) AND (error IS NULL)) OR ((status = 'failed'::text) AND (error IS NOT NULL)))),
+    CONSTRAINT ingestion_job_items_ordinal_check CHECK ((ordinal >= 0)),
+    CONSTRAINT ingestion_job_items_output_mode_check CHECK (((output_mode IS NULL) OR ((output_mode = btrim(output_mode)) AND (char_length(output_mode) >= 1) AND (char_length(output_mode) <= 64) AND (output_mode ~ '^[a-z][a-z0-9_-]*$'::text)))),
+    CONSTRAINT ingestion_job_items_relative_path_check CHECK (((relative_path = btrim(relative_path)) AND (char_length(relative_path) >= 1) AND (char_length(relative_path) <= 1024) AND (relative_path !~ '(^/|\\\\|(^|/)\\.\\.?(/|$)|//)'::text))),
+    CONSTRAINT ingestion_job_items_source_key_check CHECK ((source_key ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT ingestion_job_items_stage_check CHECK (((stage = btrim(stage)) AND (char_length(stage) >= 1) AND (char_length(stage) <= 64) AND (stage ~ '^[a-z][a-z0-9_-]*$'::text))),
+    CONSTRAINT ingestion_job_items_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'processing'::text, 'completed'::text, 'failed'::text])))
 );
 
 CREATE TABLE public.idempotency_keys (
@@ -886,6 +950,14 @@ CREATE TABLE public.resource_references (
     CONSTRAINT resource_references_target_type_check CHECK ((target_type = ANY (ARRAY['user'::text, 'record'::text, 'event'::text])))
 );
 
+CREATE TABLE public.schema_migrations (
+    id text NOT NULL,
+    checksum text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT schema_migrations_checksum_check CHECK ((checksum ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT schema_migrations_id_check CHECK ((id ~ '^[0-9]{4}_[a-z0-9_]+[.]sql$'::text))
+);
+
 CREATE TABLE public.subscriptions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -1047,6 +1119,21 @@ ALTER TABLE ONLY public.events
 ALTER TABLE ONLY public.events
     ADD CONSTRAINT events_user_id_id_key UNIQUE (user_id, id);
 
+ALTER TABLE ONLY public.ingestion_jobs
+    ADD CONSTRAINT ingestion_jobs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.ingestion_jobs
+    ADD CONSTRAINT ingestion_jobs_user_id_device_id_id_key UNIQUE (user_id, device_id, id);
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_job_id_ordinal_key UNIQUE (job_id, ordinal);
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_user_device_source_key UNIQUE (user_id, device_id, source_key);
+
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (user_id, operation_id, idempotency_key);
 
@@ -1097,6 +1184,9 @@ ALTER TABLE ONLY public.records
 
 ALTER TABLE ONLY public.resource_references
     ADD CONSTRAINT resource_references_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.subscriptions
     ADD CONSTRAINT subscriptions_pkey PRIMARY KEY (id);
@@ -1158,6 +1248,14 @@ CREATE INDEX events_user_device_starts_idx ON public.events USING btree (user_id
 CREATE INDEX events_user_starts_idx ON public.events USING btree (user_id, starts_at DESC, id);
 
 CREATE INDEX events_user_type_starts_idx ON public.events USING btree (user_id, type, starts_at DESC, id) WHERE (deleted_at IS NULL);
+
+CREATE INDEX ingestion_job_items_job_status_idx ON public.ingestion_job_items USING btree (job_id, status, ordinal);
+
+CREATE INDEX ingestion_job_items_user_group_idx ON public.ingestion_job_items USING btree (user_id, group_key, captured_at, id);
+
+CREATE INDEX ingestion_jobs_user_created_idx ON public.ingestion_jobs USING btree (user_id, created_at DESC, id DESC);
+
+CREATE INDEX ingestion_jobs_user_status_idx ON public.ingestion_jobs USING btree (user_id, status, updated_at DESC, id DESC);
 
 CREATE INDEX idempotency_keys_expiry_idx ON public.idempotency_keys USING btree (expires_at);
 
@@ -1226,6 +1324,8 @@ CREATE CONSTRAINT TRIGGER events_public_activity_after_write AFTER INSERT OR UPD
 CREATE TRIGGER events_revision_before_update BEFORE UPDATE ON public.events FOR EACH ROW EXECUTE FUNCTION public.set_revision_and_updated_at();
 
 CREATE TRIGGER events_visibility_before_update BEFORE UPDATE ON public.events FOR EACH ROW EXECUTE FUNCTION public.prevent_record_visibility_change();
+
+CREATE TRIGGER ingestion_jobs_revision_before_update BEFORE UPDATE ON public.ingestion_jobs FOR EACH ROW EXECUTE FUNCTION public.set_revision_and_updated_at();
 
 CREATE TRIGGER media_change_after_write AFTER INSERT OR UPDATE ON public.media_objects FOR EACH ROW EXECUTE FUNCTION public.emit_change_log('media', 'deleted_at');
 
@@ -1307,6 +1407,24 @@ ALTER TABLE ONLY public.events
 
 ALTER TABLE ONLY public.events
     ADD CONSTRAINT events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.ingestion_jobs
+    ADD CONSTRAINT ingestion_jobs_user_id_device_id_fkey FOREIGN KEY (user_id, device_id) REFERENCES public.devices(user_id, id);
+
+ALTER TABLE ONLY public.ingestion_jobs
+    ADD CONSTRAINT ingestion_jobs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_user_device_job_fkey FOREIGN KEY (user_id, device_id, job_id) REFERENCES public.ingestion_jobs(user_id, device_id, id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_user_upload_id_fkey FOREIGN KEY (user_id, upload_id) REFERENCES public.media_upload_sessions(user_id, id);
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_user_media_id_fkey FOREIGN KEY (user_id, media_id) REFERENCES public.media_objects(user_id, id);
+
+ALTER TABLE ONLY public.ingestion_job_items
+    ADD CONSTRAINT ingestion_job_items_user_record_id_fkey FOREIGN KEY (user_id, record_id) REFERENCES public.records(user_id, id);
 
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;

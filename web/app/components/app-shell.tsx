@@ -25,7 +25,11 @@ const dataNavigation = [
   { to: "/tags", label: "Tags" },
 ] as const;
 
-const systemNavigation = [{ to: "/lab/engines", label: "System lab" }] as const;
+const systemNavigation = [
+  { to: "/jobs", label: "Jobs" },
+  { to: "/workers", label: "Workers" },
+  { to: "/lab/engines", label: "System lab" },
+] as const;
 
 interface AppShellProps {
   readonly sarosWindow: {

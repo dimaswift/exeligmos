@@ -16,6 +16,8 @@ export interface MutationResponse<Body = unknown> {
 }
 
 interface StoredIdempotencyRow extends QueryResultRow {
+  readonly actor_type: Principal["kind"];
+  readonly actor_id: string;
   readonly request_hash: Buffer;
   readonly response_status: number | null;
   readonly response_headers: unknown;
@@ -44,7 +46,7 @@ export class PreconditionFailedProblem extends HttpProblem {
   }
 }
 
-export function resourceEtag(kind: "record" | "event", id: string, revision: number): string {
+export function resourceEtag(kind: "record" | "event" | "job" | "worker", id: string, revision: number): string {
   return `"${kind}-${id}-r${revision}"`;
 }
 
@@ -298,7 +300,9 @@ export async function executeIdempotentMutation<Body>(
 
     if (inserted.rowCount === 0) {
       const existing = await queryable.query<StoredIdempotencyRow>(
-        `SELECT request_hash, response_status, response_headers, response_body
+        `SELECT
+           actor_type, actor_id, request_hash,
+           response_status, response_headers, response_body
          FROM idempotency_keys
          WHERE user_id = $1 AND operation_id = $2 AND idempotency_key = $3
          FOR UPDATE`,
@@ -311,7 +315,12 @@ export async function executeIdempotentMutation<Body>(
         idempotencyKey,
       );
       const row = existing.rows[0];
-      if (row === undefined || !row.request_hash.equals(requestHash)) {
+      if (
+        row === undefined ||
+        row.actor_type !== principal.kind ||
+        row.actor_id !== principal.actorId ||
+        !row.request_hash.equals(requestHash)
+      ) {
         throw new HttpProblem({
           status: 409,
           code: "idempotency_conflict",

@@ -9,6 +9,9 @@ export const RECORD_PAGE_MAX_LIMIT = 25;
 export const PUBLIC_RECORD_PAYLOAD_MAX_BYTES = 256 * 1_024;
 export const RESOURCE_METADATA_MAX_BYTES = 32 * 1_024;
 
+/** One camera-ingestion job may contribute one media object per capture. */
+export const RECORD_MEDIA_MAX_ITEMS = 1_000;
+
 /** Raw AES-GCM ciphertext bytes, including the 16-byte authentication tag. */
 export const PRIVATE_RECORD_CIPHERTEXT_MAX_BYTES = 512 * 1_024;
 export const PRIVATE_RECORD_CIPHERTEXT_BASE64_MAX_LENGTH =

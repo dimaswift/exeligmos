@@ -17,6 +17,7 @@ import { LocalMediaStorage, type MediaStorage } from "./media/storage.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerEventRoutes } from "./routes/events.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerIngestionJobRoutes } from "./routes/jobs.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerOpenApiRoutes } from "./routes/openapi.js";
 import { registerOwnerSecurityRoutes } from "./routes/owner-security.js";
@@ -25,6 +26,7 @@ import { registerSocialRoutes } from "./routes/social.js";
 import { registerSyncRoutes } from "./routes/sync.js";
 import { registerTagRoutes } from "./routes/tags.js";
 import { registerTemplateRoutes } from "./routes/templates.js";
+import { registerWorkerRoutes } from "./routes/workers.js";
 import {
   PostgresResourceRequestLimiter,
   type ResourceRequestLimiter,
@@ -120,6 +122,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     requestLimiter: resourceRequestLimiter,
   });
   app.register(registerRecordRoutes, {
+    database: options.database,
+    authenticator,
+    requestLimiter: resourceRequestLimiter,
+  });
+  app.register(registerIngestionJobRoutes, {
+    database: options.database,
+    authenticator,
+    requestLimiter: resourceRequestLimiter,
+  });
+  app.register(registerWorkerRoutes, {
     database: options.database,
     authenticator,
     requestLimiter: resourceRequestLimiter,

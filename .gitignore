@@ -8,5 +8,7 @@ sync-server/archive
 sync-server/coverage
 sync-server/var
 sync-server/.playwright-cli
+thumb-cam-worker/thumb-cam.config.json
+thumb-cam-worker/.env
 .playwright-cli
 output

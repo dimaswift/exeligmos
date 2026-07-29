@@ -154,7 +154,7 @@ async function loadUserSnapshot(
   // the snapshot and so the repeatable-read ordering remains obvious.
   const encryptionProfiles = await rows(
     client,
-    `SELECT user_id, crypto_version, key_version, created_at, updated_at
+    `SELECT *
      FROM user_encryption_profiles WHERE user_id = $1`,
     [userId],
   );

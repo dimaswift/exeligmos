@@ -542,6 +542,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered ingestion workers and cumulative production stats */
+        get: operations["listWorkers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read settings for the API key's bound worker */
+        get: operations["getCurrentWorker"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/{deviceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit a registered worker */
+        patch: operations["updateWorker"];
+        trace?: never;
+    };
+    "/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List durable ingestion jobs
+         * @description Results are ordered by creation time and ID. JWT callers see all of
+         *     their jobs; API-key callers see only jobs for the key's bound device.
+         */
+        get: operations["listIngestionJobs"];
+        put?: never;
+        /**
+         * Declare a device-ingestion queue
+         * @description Each declaration represents one camera media file. The server accepts a
+         *     sourceKey only once per user and device, permanently preserving the
+         *     processed-file cache across worker restarts. Previously seen entries
+         *     are returned in `skippedItems` and are not inserted into the new job.
+         */
+        post: operations["createIngestionJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get an ingestion job and all accepted items
+         * @description The strong ETag is `"job-{jobId}-r{revision}"` and changes whenever an
+         *     item lifecycle or heartbeat update changes the represented job. Job
+         *     counters, `currentItem`, and `items` are read from one database
+         *     snapshot.
+         */
+        get: operations["getIngestionJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{jobId}/items/{itemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+                itemId: components["parameters"]["JobItemId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Advance or retry one ingestion item
+         * @description Lifecycle transitions are queued to processing or failed, processing
+         *     to processing/completed/failed, and failed back to processing for a
+         *     retry. Repeating processing for the same item renews the two-minute
+         *     activity lease. A worker that stops renewing the lease is reported
+         *     idle even while its retryable item remains processing. Completed items,
+         *     mediaId, recordId, and the selected outputMode are immutable. An
+         *     uploadId may be replaced while an item is processing or being retried,
+         *     so an expired upload does not strand the item. Every item with the same
+         *     groupKey must reference one recordId. A successful response returns a
+         *     compact job summary plus only the updated item, increments the job
+         *     revision, and sends ETag `"job-{jobId}-r{revision}"`.
+         */
+        patch: operations["updateIngestionJobItem"];
+        trace?: never;
+    };
     "/sync/stats": {
         parameters: {
             query?: never;
@@ -697,6 +834,32 @@ export interface paths {
          *     authenticated ciphertext is bound to the resulting revision.
          */
         patch: operations["updateRecord"];
+        trace?: never;
+    };
+    "/records/{recordId}/embeddings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: components["parameters"]["RecordId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store an embedding for the current public record revision
+         * @description Stores or replaces one model's vector for the exact current revision.
+         *     `contentHash` must be the lowercase SHA-256 of the current
+         *     `payload.text` UTF-8 bytes. Private, deleted, and stale record revisions
+         *     are rejected. API-key callers may embed only records attributed to
+         *     their bound device.
+         */
+        put: operations["putRecordEmbedding"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/public/records": {
@@ -1134,7 +1297,7 @@ export interface components {
          * @description Stable, additive API-key permission identifier.
          * @enum {string}
          */
-        ApiKeyScope: "records:read" | "records:write" | "events:read" | "events:write" | "tags:read" | "tags:write" | "templates:read" | "templates:write" | "media:read" | "media:write" | "devices:read" | "subscriptions:read" | "subscriptions:write" | "sync:read" | "sync:write";
+        ApiKeyScope: "records:read" | "records:write" | "events:read" | "events:write" | "tags:read" | "tags:write" | "templates:read" | "templates:write" | "media:read" | "media:write" | "jobs:read" | "jobs:write" | "devices:read" | "subscriptions:read" | "subscriptions:write" | "sync:read" | "sync:write";
         CreateApiKeyRequest: {
             name: string;
             /** Format: uuid */
@@ -1290,6 +1453,23 @@ export interface components {
             weather?: components["schemas"]["Weather"];
         } & {
             [key: string]: unknown;
+        };
+        PutRecordEmbeddingRequest: {
+            /** Format: int64 */
+            recordRevision: number;
+            model: string;
+            contentHash: components["schemas"]["Sha256"];
+            vector: number[];
+        };
+        RecordEmbedding: {
+            recordId: components["schemas"]["RecordPublicId"];
+            /** Format: int64 */
+            recordRevision: number;
+            model: string;
+            dimensions: number;
+            contentHash: components["schemas"]["Sha256"];
+            /** Format: date-time */
+            createdAt: string;
         };
         TemplateRenderRequest: {
             /** Format: uuid */
@@ -1837,6 +2017,183 @@ export interface components {
             /** Format: uri-reference */
             publicContentUrl: string;
         };
+        WorkerConfig: {
+            enabled: boolean;
+            mountName: string;
+            descriptionModel: string;
+            descriptionPrompt: string;
+            embeddingModel: string;
+            whisperModel: string;
+        };
+        WorkerConfigPatch: {
+            enabled?: boolean;
+            mountName?: string;
+            descriptionModel?: string;
+            descriptionPrompt?: string;
+            embeddingModel?: string;
+            whisperModel?: string;
+        };
+        WorkerStats: {
+            jobs: number;
+            media: number;
+            records: number;
+            failedMedia: number;
+            /** Format: date-time */
+            lastJobAt: string | null;
+        };
+        Worker: {
+            /** Format: uuid */
+            deviceId: string;
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            lastSeenAt: string | null;
+            config: components["schemas"]["WorkerConfig"];
+            stats: components["schemas"]["WorkerStats"];
+        };
+        WorkerPage: {
+            data: components["schemas"]["Worker"][];
+        };
+        /** @enum {string} */
+        IngestionJobStatus: "queued" | "processing" | "completed" | "failed";
+        /**
+         * @description Active while a processing worker has renewed the job within the last
+         *     two minutes; otherwise idle.
+         * @enum {string}
+         */
+        IngestionJobActivity: "active" | "idle";
+        /** @enum {string} */
+        IngestionItemStatus: "queued" | "processing" | "completed" | "failed";
+        /** @enum {string} */
+        IngestionItemKind: "photo" | "video" | "audio";
+        IngestionLifecycleToken: string;
+        IngestionItemDeclaration: {
+            /**
+             * @description Stable camera-file identity. Accepted only once per user and device,
+             *     independently of later job or record lifecycle.
+             */
+            sourceKey: components["schemas"]["Sha256"];
+            /** @description Stable identity shared by media grouped into one record. */
+            groupKey: components["schemas"]["Sha256"];
+            /** @description Safe POSIX path relative to the mounted camera volume. */
+            relativePath: string;
+            kind: components["schemas"]["IngestionItemKind"];
+            /** Format: date-time */
+            capturedAt: string;
+            /** Format: int64 */
+            byteLength: number;
+            contentSha256: components["schemas"]["Sha256"];
+        };
+        CreateIngestionJobRequest: {
+            /** Format: uuid */
+            deviceId: string;
+            /**
+             * @description Structured capture source, normally an object with
+             *     `volume: THUMB_CAM`.
+             */
+            source: components["schemas"]["ResourceMetadata"];
+            /** @description Models, prompts, and processing options used by the worker. */
+            config: components["schemas"]["ResourceMetadata"];
+            items: components["schemas"]["IngestionItemDeclaration"][];
+        };
+        IngestionJobItem: {
+            /** Format: uuid */
+            id: string;
+            sourceKey: components["schemas"]["Sha256"];
+            groupKey: components["schemas"]["Sha256"];
+            relativePath: string;
+            kind: components["schemas"]["IngestionItemKind"];
+            /** Format: date-time */
+            capturedAt: string;
+            /** Format: int64 */
+            byteLength: number;
+            contentSha256: components["schemas"]["Sha256"];
+            status: components["schemas"]["IngestionItemStatus"];
+            stage: components["schemas"]["IngestionLifecycleToken"];
+            outputMode?: components["schemas"]["IngestionLifecycleToken"];
+            /** Format: uuid */
+            uploadId?: string;
+            /** Format: uuid */
+            mediaId?: string;
+            recordId?: components["schemas"]["RecordPublicId"];
+            error?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        IngestionJobState: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            /** Format: uuid */
+            deviceId: string;
+            source: components["schemas"]["ResourceMetadata"];
+            config: components["schemas"]["ResourceMetadata"];
+            status: components["schemas"]["IngestionJobStatus"];
+            totalItems: number;
+            processedItems: number;
+            failedItems: number;
+            /** @description Includes failed items because they remain retryable. */
+            remainingItems: number;
+            /** @description Distinct accepted groupKey count. */
+            totalRecords: number;
+            /** @description Groups for which every item completed. */
+            processedRecords: number;
+            /** @description Groups containing at least one failed item. */
+            failedRecords: number;
+            remainingRecords: number;
+            /** @description The processing item, or the most recently failed retryable item. */
+            currentItem: components["schemas"]["IngestionJobItem"] | null;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+        };
+        IngestionJob: components["schemas"]["IngestionJobState"] & {
+            activity: components["schemas"]["IngestionJobActivity"];
+        };
+        IngestionJobDetail: components["schemas"]["IngestionJobState"] & {
+            items: components["schemas"]["IngestionJobItem"][];
+        };
+        IngestionJobItemMutation: components["schemas"]["IngestionJobState"] & {
+            /** @description The item updated by this mutation. */
+            item: components["schemas"]["IngestionJobItem"];
+        };
+        SkippedIngestionItem: {
+            sourceKey: components["schemas"]["Sha256"];
+            /** Format: uuid */
+            existingJobId: string;
+            /** Format: uuid */
+            existingItemId: string;
+            status: components["schemas"]["IngestionItemStatus"];
+        };
+        CreatedIngestionJob: components["schemas"]["IngestionJobDetail"] & {
+            skippedItems: components["schemas"]["SkippedIngestionItem"][];
+        };
+        IngestionJobPage: components["schemas"]["CursorPageMeta"] & {
+            data: components["schemas"]["IngestionJob"][];
+        };
+        UpdateIngestionJobItemRequest: {
+            /** @enum {string} */
+            status: "processing" | "completed" | "failed";
+            stage?: components["schemas"]["IngestionLifecycleToken"];
+            outputMode?: components["schemas"]["IngestionLifecycleToken"];
+            /** Format: uuid */
+            uploadId?: string;
+            /** Format: uuid */
+            mediaId?: string;
+            recordId?: components["schemas"]["RecordPublicId"];
+            error?: string;
+        } & unknown;
         SyncResourceCount: {
             /** Format: int64 */
             total: number;
@@ -2029,7 +2386,7 @@ export interface components {
         /** @description Authentication is missing, expired, revoked, or invalid. */
         Unauthorized: {
             headers: {
-                /** @example Bearer realm="exeligmos" */
+                /** @example Bearer realm='exeligmos' */
                 "WWW-Authenticate"?: string;
                 "X-Request-Id": components["headers"]["RequestId"];
                 [name: string]: unknown;
@@ -2165,6 +2522,8 @@ export interface components {
         TemplateId: string;
         UploadId: string;
         MediaId: string;
+        JobId: string;
+        JobItemId: string;
         /** @description Opaque cursor returned by the immediately preceding page. */
         Cursor: string;
         /** @description Maximum number of items to return. */
@@ -3711,6 +4070,275 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    listWorkers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registered workers owned by the authenticated user. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getCurrentWorker: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current worker settings and statistics. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Worker"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateWorker: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Strong ETag of the revision being mutated.
+                 * @example "record-aB_9Z-r4"
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerConfigPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated worker. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Worker"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+        };
+    };
+    listIngestionJobs: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor returned by the immediately preceding page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Maximum number of items to return. */
+                limit?: components["parameters"]["Limit"];
+                status?: components["schemas"]["IngestionJobStatus"];
+                /** @description Return only jobs with a worker heartbeat inside the activity lease. */
+                activity?: "active";
+                deviceId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stable cursor page with current progress summaries. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJobPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createIngestionJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Caller-generated identifier for one logical mutation. It must be reused
+                 *     for retries of the same body and must not be reused for another body.
+                 *     Most operations replay their original response. API-key creation is the
+                 *     deliberate exception: replay returns a 409 problem containing the
+                 *     created `apiKeyId` because its plaintext secret is returned only once.
+                 * @example 01J2V7YCB9Q3WZ2P6AQ03M6DN8
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "deviceId": "2dca8eab-00a8-4e94-9bd2-2fcbfe17e890",
+                 *       "source": {
+                 *         "volume": "THUMB_CAM"
+                 *       },
+                 *       "config": {
+                 *         "descriptionModel": "gemma4",
+                 *         "embeddingModel": "embeddinggemma"
+                 *       },
+                 *       "items": [
+                 *         {
+                 *           "sourceKey": "847b668fdcbf5fbe1b47ae5d01cf3f45eb9cd57475e030bff559b9d576c3fda2",
+                 *           "groupKey": "3e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc0f",
+                 *           "relativePath": "PHOTO/IMG_0001.JPG",
+                 *           "kind": "photo",
+                 *           "capturedAt": "2026-07-29T08:14:22Z",
+                 *           "byteLength": 834234,
+                 *           "contentSha256": "6e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc01"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateIngestionJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Job created with accepted and previously seen items identified. */
+            201: {
+                headers: {
+                    Location?: string;
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedIngestionJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getIngestionJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full job detail and accepted queue items. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJobDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateIngestionJobItem: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Strong ETag of the revision being mutated.
+                 * @example "record-aB_9Z-r4"
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+                /**
+                 * @description Caller-generated identifier for one logical mutation. It must be reused
+                 *     for retries of the same body and must not be reused for another body.
+                 *     Most operations replay their original response. API-key creation is the
+                 *     deliberate exception: replay returns a 409 problem containing the
+                 *     created `apiKeyId` because its plaintext secret is returned only once.
+                 * @example 01J2V7YCB9Q3WZ2P6AQ03M6DN8
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                jobId: components["parameters"]["JobId"];
+                itemId: components["parameters"]["JobItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateIngestionJobItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Compact mutation result with transactionally recomputed counters. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJobItemMutation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getSyncStats: {
         parameters: {
             query?: never;
@@ -4150,6 +4778,52 @@ export interface operations {
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
             413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    putRecordEmbedding: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Caller-generated identifier for one logical mutation. It must be reused
+                 *     for retries of the same body and must not be reused for another body.
+                 *     Most operations replay their original response. API-key creation is the
+                 *     deliberate exception: replay returns a 409 problem containing the
+                 *     created `apiKeyId` because its plaintext secret is returned only once.
+                 * @example 01J2V7YCB9Q3WZ2P6AQ03M6DN8
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                recordId: components["parameters"]["RecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRecordEmbeddingRequest"];
+            };
+        };
+        responses: {
+            /** @description Embedding stored for the requested model and revision. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordEmbedding"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableContent"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["ServiceUnavailable"];

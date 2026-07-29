@@ -4,8 +4,15 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "pg";
 
+import {
+  applyPendingDatabaseMigrations,
+  ensureMigrationTable,
+  loadDatabaseMigrations,
+  stampDatabaseMigrations,
+} from "./migrations.js";
+
 const setupLockKey = 893_827_451;
-const canonicalTables = [
+const baselineTables = [
   "api_keys",
   "api_rate_limit_buckets",
   "audit_log",
@@ -15,6 +22,8 @@ const canonicalTables = [
   "devices",
   "event_revisions",
   "events",
+  "ingestion_job_items",
+  "ingestion_jobs",
   "idempotency_keys",
   "media_objects",
   "media_upload_sessions",
@@ -33,34 +42,72 @@ const canonicalTables = [
   "templates",
   "user_encryption_profiles",
 ] as const;
+// Append future tables here without changing baselineTables. Existing
+// databases are upgraded by ordered db/migrations files before this final
+// shape is verified.
+const canonicalTables = [...baselineTables] as const;
+const migrationTable = "schema_migrations";
 
-export type DatabaseSetupResult = "created" | "ready";
+export type DatabaseSetupResult = "created" | "migrated" | "ready";
 
 export async function ensureDatabaseSchema(options: {
   readonly databaseUrl: string;
   readonly schemaPath?: string;
+  readonly migrationDirectory?: string;
 }): Promise<DatabaseSetupResult> {
   const client = new Client({ connectionString: options.databaseUrl });
   await client.connect();
   try {
     await client.query("SELECT pg_advisory_lock($1)", [setupLockKey]);
-    const state = await databaseState(client);
-    if (state === "ready") {
-      return "ready";
+    const migrations = await loadDatabaseMigrations(options.migrationDirectory);
+    const initialTables = await applicationTables(client);
+    if (initialTables.size === 0) {
+      const schemaPath = options.schemaPath ?? defaultSchemaPath();
+      await client.query(await readFile(schemaPath, "utf8"));
+      await ensureMigrationTable(client);
+      // schema.sql is always the latest complete shape, so its migrations are
+      // recorded without replaying their DDL on top of that shape.
+      await stampDatabaseMigrations(client, migrations);
+      await assertCanonicalShape(client);
+      return "created";
     }
-    if (state === "partial") {
+
+    assertNoUnexpectedTables(initialTables);
+    const missingBaseline = baselineTables.filter(
+      (table) => !initialTables.has(table),
+    );
+    if (missingBaseline.length > 0) {
       throw new Error(
-        "Database is not empty and does not match the canonical Fractonica schema. " +
-          "Use a fresh database instead of attempting an in-place conversion.",
+        "Database predates the supported migration baseline or is incomplete. " +
+          `Missing tables: ${missingBaseline.join(", ")}.`,
       );
     }
 
-    const schemaPath = options.schemaPath ?? defaultSchemaPath();
-    await client.query(await readFile(schemaPath, "utf8"));
-    if ((await databaseState(client)) !== "ready") {
-      throw new Error("Canonical schema setup completed without creating every required table.");
+    const migrationTableExisted = initialTables.has(migrationTable);
+    await ensureMigrationTable(client);
+    if (!migrationTableExisted) {
+      // This adopts databases created from the canonical schema immediately
+      // before migration tracking was introduced. Their full table set proves
+      // that every current migration is already represented.
+      const isCurrentCanonical = canonicalTables.every((table) =>
+        initialTables.has(table),
+      );
+      if (!isCurrentCanonical) {
+        throw new Error(
+          "Database has no migration history and does not match the migration baseline.",
+        );
+      }
+      await stampDatabaseMigrations(client, migrations);
+      await assertCanonicalShape(client);
+      return "migrated";
     }
-    return "created";
+
+    const appliedCount = await applyPendingDatabaseMigrations(
+      client,
+      migrations,
+    );
+    await assertCanonicalShape(client);
+    return appliedCount > 0 ? "migrated" : "ready";
   } finally {
     try {
       await client.query("SELECT pg_advisory_unlock($1)", [setupLockKey]);
@@ -70,36 +117,39 @@ export async function ensureDatabaseSchema(options: {
   }
 }
 
-async function databaseState(client: Client): Promise<"empty" | "partial" | "ready"> {
-  const result = await client.query<{
-    readonly application_tables: string;
-    readonly canonical_tables: string;
-  }>(
-    `SELECT
-       count(*) FILTER (
-         WHERE schemaname = 'public'
-           AND tablename <> ALL($1::text[])
-       )::text AS application_tables,
-       count(*) FILTER (
-         WHERE schemaname = 'public'
-           AND tablename = ANY($2::text[])
-       )::text AS canonical_tables
-     FROM pg_catalog.pg_tables`,
-    [
-      ["spatial_ref_sys"],
-      [...canonicalTables],
-    ],
+async function applicationTables(client: Client): Promise<ReadonlySet<string>> {
+  const result = await client.query<{ readonly tablename: string }>(
+    `SELECT tablename
+     FROM pg_catalog.pg_tables
+     WHERE schemaname = 'public'
+       AND tablename <> 'spatial_ref_sys'
+     ORDER BY tablename`,
   );
-  const row = result.rows[0];
-  const applicationTables = Number(row?.application_tables ?? "0");
-  const presentCanonicalTables = Number(row?.canonical_tables ?? "0");
-  if (
-    applicationTables === canonicalTables.length &&
-    presentCanonicalTables === canonicalTables.length
-  ) {
-    return "ready";
+  return new Set(result.rows.map((row) => row.tablename));
+}
+
+function assertNoUnexpectedTables(tables: ReadonlySet<string>): void {
+  const allowed = new Set<string>([...canonicalTables, migrationTable]);
+  const unexpected = [...tables].filter((table) => !allowed.has(table));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Database contains unsupported public tables: ${unexpected.join(", ")}.`,
+    );
   }
-  return applicationTables === 0 ? "empty" : "partial";
+}
+
+async function assertCanonicalShape(client: Client): Promise<void> {
+  const tables = await applicationTables(client);
+  const expected = new Set<string>([...canonicalTables, migrationTable]);
+  const missing = [...expected].filter((table) => !tables.has(table));
+  const unexpected = [...tables].filter((table) => !expected.has(table));
+  if (missing.length > 0 || unexpected.length > 0) {
+    throw new Error(
+      "Database does not match the canonical Fractonica schema after migrations. " +
+        `Missing: ${missing.join(", ") || "none"}. ` +
+        `Unexpected: ${unexpected.join(", ") || "none"}.`,
+    );
+  }
 }
 
 function defaultSchemaPath(): string {
@@ -115,7 +165,9 @@ async function main(): Promise<void> {
   console.log(
     result === "created"
       ? "Canonical database schema created."
-      : "Canonical database schema is ready.",
+      : result === "migrated"
+        ? "Database migrations applied."
+        : "Canonical database schema is ready.",
   );
 }
 

@@ -180,6 +180,8 @@ test("bounded cleanup removes unrelated expired rows while live responses replay
   const database = new IdempotencyDatabase();
   database.unrelatedExpiredRows = 137;
   database.row = {
+    actorType: apiKeyPrincipal.kind,
+    actorId: apiKeyPrincipal.actorId,
     requestHash: Buffer.alloc(32, 9),
     responseStatus: 200,
     responseHeaders: { etag: '"old"' },
@@ -222,9 +224,29 @@ test("bounded cleanup removes unrelated expired rows while live responses replay
   assert.deepEqual(replay.body, { id: recordId });
   assert.equal(database.unrelatedExpiredRows, 0);
   assert.equal(database.unrelatedLiveResponseRetained, true);
+
+  await assert.rejects(
+    () =>
+      executeIdempotentMutation(
+        database,
+        { ...apiKeyPrincipal, actorId: otherDeviceId },
+        "createRecord",
+        "expired-key",
+        { body: { text: "new" } },
+        async () => {
+          writes += 1;
+          return { status: 500, headers: {}, body: { unexpected: true } };
+        },
+      ),
+    (error: unknown) =>
+      error instanceof HttpProblem && error.code === "idempotency_conflict",
+  );
+  assert.equal(writes, 1);
 });
 
 interface StoredRow {
+  actorType: Principal["kind"];
+  actorId: string;
   requestHash: Buffer;
   responseStatus: number | null;
   responseHeaders: Record<string, string> | null;
@@ -281,6 +303,8 @@ class IdempotencyDatabase implements Database {
         return result([], 0);
       }
       this.row = {
+        actorType: values?.[3] as Principal["kind"],
+        actorId: values?.[4] as string,
         requestHash: values?.[5] as Buffer,
         responseStatus: null,
         responseHeaders: null,
@@ -289,11 +313,13 @@ class IdempotencyDatabase implements Database {
       };
       return result([], 1);
     }
-    if (text.includes("SELECT request_hash")) {
+    if (text.includes("actor_type, actor_id, request_hash")) {
       assert.ok(this.row);
       return result(
         [
           {
+            actor_type: this.row.actorType,
+            actor_id: this.row.actorId,
             request_hash: this.row.requestHash,
             response_status: this.row.responseStatus,
             response_headers: this.row.responseHeaders,

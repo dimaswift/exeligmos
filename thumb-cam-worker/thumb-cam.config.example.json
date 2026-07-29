@@ -1,0 +1,20 @@
+{
+  "serverUrl": "http://127.0.0.1:8788",
+  "deviceId": "replace-with-the-THUMB-device-uuid",
+  "mountName": "THUMB_CAM",
+  "mountRoot": "/Volumes",
+  "pollIntervalMs": 5000,
+  "settleDelayMs": 1500,
+  "minimumFileAgeMs": 30000,
+  "scanConcurrency": 2,
+  "snapshotConcurrency": 2,
+  "ollamaUrl": "http://127.0.0.1:11434",
+  "descriptionModel": "gemma4",
+  "descriptionPrompt": "describe the image from 1st person perspective as if you have captured it yourself in present tense, like an entry in the diary. Keep it short and informative",
+  "embeddingModel": "embeddinggemma",
+  "whisperExecutable": "whisper",
+  "whisperModel": "base",
+  "ffmpegExecutable": "ffmpeg",
+  "ffprobeExecutable": "ffprobe",
+  "workRoot": "~/Library/Application Support/Fractonica/ThumbCam"
+}
