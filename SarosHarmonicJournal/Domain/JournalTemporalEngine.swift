@@ -127,7 +127,7 @@ struct JournalTemporalSeries {
 
         let energy = self.energy(at: date)
         let peakHeight = max(component.peakHeight, 0.000_000_001)
-        let energyPercent = min(max(energy / peakHeight, 0), 1)
+        let energyPercent = min(max(abs(energy) / peakHeight, 0), 1)
         let momentum = momentumEnergyPerSaros(at: date, normalizingBy: peakHeight)
         let segment = component.segment(containing: date)
         let signature = JournalWaveEventDescriptorFormatter.signature(
@@ -184,7 +184,7 @@ struct JournalTemporalSeries {
             preferredSampleCount: sampleCount
         )
         .reduce(0.0) { currentMax, date in
-            max(currentMax, energy(at: date, in: visibleComponents))
+            max(currentMax, abs(energy(at: date, in: visibleComponents)))
         }
 
         return max(maximum, maxPeakHeight, 0.000_000_001)
@@ -213,8 +213,8 @@ struct JournalTemporalSeries {
 
         for component in components where component.contains(date) {
             let energy = component.energy(at: date)
-            if energy > dominantEnergy {
-                dominantEnergy = energy
+            if abs(energy) > dominantEnergy {
+                dominantEnergy = abs(energy)
                 dominant = component
             }
         }
@@ -289,6 +289,7 @@ struct JournalTemporalComponent: Hashable {
     let leftBoundary: Date
     let rightBoundary: Date
     let peakHeight: Double
+    let polarity: Double
     let parabolaA: Double
     let ascentAccelerates: Bool
     let descentAccelerates: Bool
@@ -346,7 +347,7 @@ struct JournalTemporalComponent: Hashable {
 
     func energy(at date: Date) -> Double {
         guard contains(date) else { return 0 }
-        return peakHeight * min(max(parabolaValue(at: date), 0), 1)
+        return polarity * peakHeight * min(max(parabolaValue(at: date), 0), 1)
     }
 
     func derivative(at date: Date) -> Double {
@@ -569,6 +570,13 @@ enum JournalTemporalEngine {
         let spike = cluster.primary
         guard rightBoundary.timeIntervalSince(leftBoundary) > 1 else { return nil }
 
+        let signedPeakHeight = cluster.contributors.reduce(0.0) { total, contributor in
+            total + peakHeight(
+                for: contributor,
+                amplitudeMultiplier: options.amplitudeMultiplier
+            ) * JournalWaveformSpikeSemantics.polarity(forSaros: contributor.saros)
+        }
+
         return JournalTemporalComponent(
             id: "\(spike.id)-temporal-\(index)",
             sourceSpikeID: spike.id,
@@ -578,15 +586,8 @@ enum JournalTemporalEngine {
             nextSpike: next,
             leftBoundary: leftBoundary,
             rightBoundary: rightBoundary,
-            peakHeight: cluster.contributors
-                .map {
-                    peakHeight(
-                        for: $0,
-                        normalizedAmplitude: options.normalizedAmplitude,
-                        amplitudeMultiplier: options.amplitudeMultiplier
-                    )
-                }
-                .reduce(0, +),
+            peakHeight: abs(signedPeakHeight),
+            polarity: signedPeakHeight < 0 ? -1 : 1,
             parabolaA: parabolaA,
             ascentAccelerates: ascentAccelerates(spike: spike, fallbackSeed: spike.saros + index),
             descentAccelerates: descentAccelerates(spike: spike, fallbackSeed: spike.saros + index)
@@ -598,10 +599,10 @@ enum JournalTemporalEngine {
         normalizedAmplitude: Bool = JournalWaveformOptions.current.normalizedAmplitude,
         amplitudeMultiplier: Double = JournalWaveformOptions.current.amplitudeMultiplier
     ) -> Double {
-        (normalizedAmplitude ? 1 : basePeakHeight(for: spike.rarity))
-            * baseAmplitudeMultiplier
+        _ = normalizedAmplitude
+        return baseAmplitudeMultiplier
             * amplitudeMultiplier
-            * magnitudeAmplitudeMultiplier(for: spike.magnitude)
+            * JournalWaveformSpikeSemantics.phaseAmplitudeScale(spike.octalAddress)
     }
 
     private static func ascentAccelerates(
@@ -626,21 +627,6 @@ enum JournalTemporalEngine {
             return isPastSeriesMidpoint
         }
         return !fallbackSeed.isMultiple(of: 2)
-    }
-
-    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
-        switch rarity.baseRarity {
-        case .mythic: 4
-        case .legendary: 2
-        case .epic: 1
-        case .rare: 0.5
-        default: 0.25
-        }
-    }
-
-    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
-        guard let magnitude, magnitude.isFinite else { return 1 }
-        return min(max(magnitude, 0.18), 1.8)
     }
 
     private static func previousDistinctCluster(

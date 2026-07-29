@@ -605,7 +605,6 @@ private enum SyncServerConnectionState {
 
 private struct WaveformSettingsView: View {
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var mergeCloseSpikes = false
-    @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var normalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var subdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
     @AppStorage(JournalSettings.waveformAmplitudeMultiplierKey) private var amplitudeMultiplier = JournalWaveformSettings.defaultAmplitudeMultiplier
     @AppStorage(JournalSettings.widgetWaveformKilosarosRangeKey) private var widgetKilosarosRange = JournalWaveformSettings.defaultWidgetWaveformKilosarosRange
@@ -631,7 +630,6 @@ private struct WaveformSettingsView: View {
 
             Section("Spikes") {
                 Toggle("Merge close spikes", isOn: $mergeCloseSpikes)
-                Toggle("Normalized amplitude", isOn: $normalizedAmplitude)
 
                 HStack {
                     Text("Amplitude")
@@ -654,6 +652,10 @@ private struct WaveformSettingsView: View {
                 Text("Merged spikes use a 1 kilosaros window (36m 10s). Sampling always includes spike and midpoint anchors, then subdivides each segment.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+
+                Text("Relative spike height follows the most-significant octal phase digit: 0 is smallest and 7 (omega) is largest. The slider applies a global visual multiplier.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Widget") {
@@ -670,7 +672,8 @@ private struct WaveformSettingsView: View {
 
             Section("Behavior") {
                 MetadataRow(title: "Current model", value: JournalWaveformModel.current.title)
-                MetadataRow(title: "Energy", value: "Parabolic segment")
+                MetadataRow(title: "Polarity", value: "Odd + / even − Saros")
+                MetadataRow(title: "Energy", value: "Phase MSB × parabola")
                 MetadataRow(title: "Momentum", value: "Energy delta per Saros")
             }
         }

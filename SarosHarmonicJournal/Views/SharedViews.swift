@@ -245,7 +245,7 @@ enum JournalWaveformModel: String, CaseIterable, Identifiable, Sendable {
     }
 
     var detail: String {
-        "Curved rise and fall, alternating acceleration by the Saros north/south state."
+        "Curved rise and fall with odd Saros above the baseline, even Saros below it, and height set by the phase MSB."
     }
 
     static var current: JournalWaveformModel {
@@ -332,6 +332,26 @@ struct JournalWaveformOptions: Hashable, Sendable {
         mergeThreshold: JournalWaveformSettings.mergeCloseSpikeThreshold,
         amplitudeMultiplier: JournalWaveformSettings.defaultAmplitudeMultiplier
     )
+}
+
+enum JournalWaveformSpikeSemantics {
+    static func polarity(forSaros saros: Int) -> Double {
+        saros.isMultiple(of: 2) ? -1 : 1
+    }
+
+    static func phaseMostSignificantDigit(_ octalAddress: String) -> Int {
+        octalAddress.first
+            .flatMap { Int(String($0), radix: 8) }
+            .map { min(max($0, 0), 7) }
+            ?? 0
+    }
+
+    static func phaseAmplitudeScale(_ octalAddress: String) -> Double {
+        let msb = Double(phaseMostSignificantDigit(octalAddress))
+        // Octal log scaling lifts early phases without changing Omega's
+        // full-height endpoint. The outer +1 guarantees a non-zero spike.
+        return (log2(msb + 1) + 1) / 4
+    }
 }
 
 enum SarosDurationUnitFormatter {
@@ -2467,6 +2487,14 @@ enum FlipRarity: Codable, CaseIterable, Identifiable, Comparable, Hashable, RawR
         case .legendary, .legendaryDigit: .legendary
         case .mythic, .mythicDigit: .mythic
         }
+    }
+
+    /// Higher-order repeated suffixes also satisfy every lower-order waveform
+    /// family: a Nihil event is also Simplex, Duplex, and Triplex.
+    func contributes(toWaveformFamily family: FlipRarity) -> Bool {
+        let family = family.baseRarity
+        guard baseRarity != .common, family != .common else { return false }
+        return baseRarity.order >= family.order
     }
 
     var isHeaderRarity: Bool {

@@ -508,6 +508,7 @@ private struct SarosSpikeWaveComponent: Hashable {
     let leftBoundary: Date
     let rightBoundary: Date
     let peakHeight: Double
+    let polarity: Double
     let waveformModel: JournalWaveformModel
     let parabolaA: Double
     let parabolaAscentAccelerates: Bool
@@ -571,6 +572,15 @@ private struct SarosSpikeWaveSamples {
     }
 }
 
+private struct SarosSpikeWaveLayer: Identifiable {
+    let rarity: FlipRarity
+    let events: [SarosGlobalFlipEvent]
+    let field: SarosSpikeWaveField
+    let samples: SarosSpikeWaveSamples
+
+    var id: String { rarity.id }
+}
+
 private struct SarosSpikeWaveCacheKey: Hashable {
     let harmonicDepth: Int
     let waveformModelID: String
@@ -590,8 +600,7 @@ private struct SarosSpikeWaveCacheKey: Hashable {
 
 private struct SarosSpikeWaveCacheEntry {
     let events: [SarosGlobalFlipEvent]
-    let field: SarosSpikeWaveField
-    let samples: SarosSpikeWaveSamples
+    let layers: [SarosSpikeWaveLayer]
 }
 
 @MainActor
@@ -665,8 +674,8 @@ private struct SarosSpikeWaveField {
             totalEnergy += energy
             totalDerivative += derivative
 
-            if energy > dominantEnergy {
-                dominantEnergy = energy
+            if abs(energy) > dominantEnergy {
+                dominantEnergy = abs(energy)
                 dominantComponent = component
             }
         }
@@ -694,7 +703,7 @@ private struct SarosSpikeWaveField {
             normalizedPosition: normalizedPosition,
             peakHeight: component.peakHeight,
             width: width,
-            normalizedEnergy: min(max(totalEnergy / peakHeight, 0), 1),
+            normalizedEnergy: min(max(abs(totalEnergy) / peakHeight, 0), 1),
             energy: totalEnergy,
             normalizedDerivative: totalDerivative / peakHeight,
             derivative: totalDerivative,
@@ -741,7 +750,7 @@ private struct SarosSpikeWaveField {
         let points = sampleDates.map { date in
             let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
             let energy = energy(at: date, in: visibleComponents)
-            maxEnergy = max(maxEnergy, energy)
+            maxEnergy = max(maxEnergy, abs(energy))
 
             return SarosSpikeWaveSample(position: position, energy: energy)
         }
@@ -786,7 +795,7 @@ private struct SarosSpikeWaveField {
                 return total + component.energy(at: date)
             }
 
-            return max(currentMax, energy)
+            return max(currentMax, abs(energy))
         }
 
         return max(visiblePeak, maxPeakHeight, 0.000_000_001)
@@ -959,35 +968,15 @@ private enum SarosSpikeWaveCalculator {
         return EventCluster(primary: primary, contributors: events)
     }
 
-    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
-        switch rarity.baseRarity {
-        case .mythic:
-            return 4
-        case .legendary:
-            return 2
-        case .epic:
-            return 1
-        case .rare:
-            return 0.5
-        default:
-            return 0.25
-        }
-    }
-
     private static func peakHeight(
         for event: SarosGlobalFlipEvent,
         normalizedAmplitude: Bool,
         amplitudeMultiplier: Double
     ) -> Double {
-        (normalizedAmplitude ? 1 : basePeakHeight(for: event.rarity))
-            * Self.baseAmplitudeMultiplier
+        _ = normalizedAmplitude
+        return Self.baseAmplitudeMultiplier
             * amplitudeMultiplier
-            * magnitudeAmplitudeMultiplier(for: event.seriesEclipseMagnitude)
-    }
-
-    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
-        guard let magnitude, magnitude.isFinite else { return 1 }
-        return min(max(magnitude, 0.18), 1.8)
+            * JournalWaveformSpikeSemantics.phaseAmplitudeScale(event.octalAddress)
     }
 
     private static func component(
@@ -1005,6 +994,14 @@ private enum SarosSpikeWaveCalculator {
         let duration = rightBoundary.timeIntervalSince(leftBoundary)
         guard duration > 1 else { return nil }
 
+        let signedPeakHeight = cluster.contributors.reduce(0.0) { total, contributor in
+            total + peakHeight(
+                for: contributor,
+                normalizedAmplitude: options.normalizedAmplitude,
+                amplitudeMultiplier: options.amplitudeMultiplier
+            ) * JournalWaveformSpikeSemantics.polarity(forSaros: contributor.saros)
+        }
+
         return SarosSpikeWaveComponent(
             id: "\(source.id)-\(model.id)-\(index)",
             sourceEventID: source.id,
@@ -1019,15 +1016,8 @@ private enum SarosSpikeWaveCalculator {
             sequenceKey: "\(source.saros)-\(source.rarity.baseRarity.id)",
             leftBoundary: leftBoundary,
             rightBoundary: rightBoundary,
-            peakHeight: cluster.contributors
-                .map {
-                    peakHeight(
-                        for: $0,
-                        normalizedAmplitude: options.normalizedAmplitude,
-                        amplitudeMultiplier: options.amplitudeMultiplier
-                    )
-                }
-                .reduce(0, +),
+            peakHeight: abs(signedPeakHeight),
+            polarity: signedPeakHeight < 0 ? -1 : 1,
             waveformModel: model,
             parabolaA: parabolaA,
             parabolaAscentAccelerates: parabolaAscentAccelerates(
@@ -1179,7 +1169,7 @@ private extension SarosSpikeWaveComponent {
                 : pow(1 - t, a)
         }
 
-        return peakHeight * min(max(value, 0), 1)
+        return polarity * peakHeight * min(max(value, 0), 1)
     }
 }
 
@@ -1229,8 +1219,7 @@ private struct SarosSpikeWaveTimelineView: View {
     let flip: SarosGridNearestFlip
 
     @State private var events: [SarosGlobalFlipEvent] = []
-    @State private var waveField = SarosSpikeWaveField.empty
-    @State private var waveSamples = SarosSpikeWaveSamples.empty
+    @State private var waveLayers: [SarosSpikeWaveLayer] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var zoom: CGFloat = Self.initialZoom
@@ -1258,6 +1247,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @AppStorage("timelineShowEvents") private var timelineShowEvents = true
  
     @AppStorage("timelineMinimumWaveRarity") private var timelineMinimumWaveRarityRaw = "epic"
+    @AppStorage("timelineSpikeDensityLevel") private var timelineSpikeDensityLevel = 3
     @AppStorage("timelineUseSineWaveforms") private var timelineUseSineWaveforms = false
     @AppStorage("timelineSineWaveSumMode") private var timelineSineWaveSumMode = false
     @AppStorage("timelineWavelengthOption") private var timelineWavelengthOption = 2.0
@@ -1267,8 +1257,84 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private let densityOptions: [FlipRarity] = [.rare, .epic, .legendary, .mythic]
 
-    private var timelineMinimumWaveRarity: FlipRarity {
-        FlipRarity(rawValue: timelineMinimumWaveRarityRaw) ?? .epic
+    private var waveField: SarosSpikeWaveField {
+        waveLayers.first?.field ?? .empty
+    }
+
+    private var waveSamples: SarosSpikeWaveSamples {
+        waveLayers.first?.samples ?? .empty
+    }
+
+    private var primaryWaveEvents: [SarosGlobalFlipEvent] {
+        waveLayers.first?.events ?? events
+    }
+
+    private var waveMaxEnergy: Double {
+        max(waveLayers.map(\.samples.maxEnergy).max() ?? 0, 0.000_000_001)
+    }
+
+    private var clampedTickDensityLevel: Int {
+        min(max(timelineSpikeDensityLevel, 1), 4)
+    }
+
+    private var tickMinimumRarity: FlipRarity {
+        switch clampedTickDensityLevel {
+        case 1: .mythic
+        case 2: .legendary
+        case 3: .epic
+        default: .rare
+        }
+    }
+
+    private var tickDensityBinding: Binding<Double> {
+        Binding(
+            get: { Double(clampedTickDensityLevel) },
+            set: { timelineSpikeDensityLevel = Int($0.rounded()) }
+        )
+    }
+
+    private var selectedWaveRarities: Set<FlipRarity> {
+        let exactSelectionPrefix = "selected:"
+        if timelineMinimumWaveRarityRaw.hasPrefix(exactSelectionPrefix) {
+            return Set(
+                timelineMinimumWaveRarityRaw
+                    .dropFirst(exactSelectionPrefix.count)
+                    .split(separator: ",")
+                    .compactMap { FlipRarity(rawValue: String($0))?.baseRarity }
+                    .filter { densityOptions.contains($0) }
+            )
+        }
+
+        // Migrate the previous minimum-density setting without changing what
+        // an existing installation initially displays.
+        let legacyMinimum = FlipRarity(rawValue: timelineMinimumWaveRarityRaw) ?? .epic
+        return Set(densityOptions.filter { $0 >= legacyMinimum })
+    }
+
+    private var waveRaritySelectionID: String {
+        densityOptions
+            .filter { selectedWaveRarities.contains($0) }
+            .map(\.rawValue)
+            .joined(separator: ",")
+    }
+
+    private func raritySelectionBinding(for rarity: FlipRarity) -> Binding<Bool> {
+        Binding(
+            get: { selectedWaveRarities.contains(rarity) },
+            set: { isSelected in
+                var selection = selectedWaveRarities
+                if isSelected {
+                    selection.insert(rarity)
+                } else {
+                    selection.remove(rarity)
+                }
+                let encoded = densityOptions
+                    .filter { selection.contains($0) }
+                    .map(\.rawValue)
+                    .joined(separator: ",")
+                timelineMinimumWaveRarityRaw = "selected:\(encoded)"
+            }
+        )
     }
 
     private var timelineWaveColorMode: TimelineWaveColorMode {
@@ -1440,7 +1506,7 @@ private struct SarosSpikeWaveTimelineView: View {
                 TickingStatePanel(
                     probeDate: probeDate,
                     waveField: waveField,
-                    events: events,
+                    events: primaryWaveEvents,
                     segment: selectedSegment,
                     pulseReadingAt: { date in pulseReading(at: date) },
                     sarosReadingFor: { state in sarosReading(for: state) },
@@ -1513,6 +1579,46 @@ private struct SarosSpikeWaveTimelineView: View {
                 }
                 .padding(.horizontal)
 
+                VStack(spacing: 4) {
+                    HStack {
+                        Label("Visible ticks", systemImage: "dial.medium")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text("\(tickMinimumRarity.title) and rarer")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(tickMinimumRarity.color)
+                    }
+
+                    Slider(value: tickDensityBinding, in: 1...4, step: 1)
+                        .tint(tickMinimumRarity.color)
+                        .accessibilityLabel("Minimum visible spike rarity")
+                        .accessibilityValue("\(tickMinimumRarity.title) and rarer")
+
+                    HStack {
+                        Text("Nihil")
+                        Spacer()
+                        Text("Simplex")
+                        Spacer()
+                        Text("Duplex")
+                        Spacer()
+                        Text("Triplex")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                    HStack(spacing: 10) {
+                        Text("Waves")
+                            .foregroundStyle(.secondary)
+                        ForEach(densityOptions.filter { selectedWaveRarities.contains($0) }, id: \.rawValue) { rarity in
+                            Label(rarity.title, systemImage: "waveform.path")
+                                .foregroundStyle(rarity.color)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption2.weight(.semibold))
+                }
+                .padding(.horizontal)
+
                 GeometryReader { geometry in
                     let contentWidth = max(
                         geometry.size.width * effectiveZoom,
@@ -1522,16 +1628,14 @@ private struct SarosSpikeWaveTimelineView: View {
                     let axisTicks = axisTicks()
                     let hourTicks = axisHourTicks(showLabels: effectiveZoom >= 80)
                     let dayLabels = axisDayLabels()
-                    let markerComponents = waveField.components.filter {
-                        displayInterval.contains($0.period.spike.date)
+                    let markerEvents = visibleEvents
+                    let midpointDates = waveLayers.flatMap(\.field.components).flatMap {
+                        [$0.leftBoundary, $0.rightBoundary]
                     }
-                    let markerEvents = markerComponents.map(\.period.spike)
-                    let midpointDates = markerComponents.flatMap { [$0.leftBoundary, $0.rightBoundary] }
                         .filter { displayInterval.contains($0) }
                     let effectiveSelectedSegment = selectedSegment
-                    let waveMaxEnergy = waveSamples.maxEnergy
                     let dotMarkers = eventDotMarkers(
-                        components: markerComponents,
+                        events: markerEvents,
                         contentWidth: contentWidth,
                         height: height,
                         maxEnergy: waveMaxEnergy,
@@ -1541,7 +1645,7 @@ private struct SarosSpikeWaveTimelineView: View {
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
                             SarosSpikeWaveCanvas(
-                                samples: waveSamples,
+                                layers: waveLayers,
                                 displayInterval: displayInterval,
                                 maxEnergy: waveMaxEnergy,
                                 amplitudeScale: timelineWaveAmplitudeScale
@@ -1600,7 +1704,7 @@ private struct SarosSpikeWaveTimelineView: View {
                             .frame(width: contentWidth, height: height)
 
                             if timelineShowEvents {
-                                let waveBaseline = height * 0.54
+                                let waveBaseline = height * 0.5
                                 let waveTop = height * 0.12
                                 let waveHeight = (waveBaseline - waveTop) * timelineWaveAmplitudeScale
                                 let waveMaxEnergy = max(waveMaxEnergy, 0.000_000_001)
@@ -1805,11 +1909,12 @@ private struct SarosSpikeWaveTimelineView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
                         Menu {
-                            Section("Waveform Settings") {
-                                Picker("Spike Density", selection: $timelineMinimumWaveRarityRaw) {
-                                    ForEach(densityOptions, id: \.rawValue) { rarity in
-                                        Text(rarity.title).tag(rarity.rawValue)
+                            Section("Overlaid Waveforms") {
+                                ForEach(densityOptions, id: \.rawValue) { rarity in
+                                    Toggle(isOn: raritySelectionBinding(for: rarity)) {
+                                        Label(rarity.title, systemImage: rarity.symbolName)
                                     }
+                                    .tint(rarity.color)
                                 }
                             }
 
@@ -1984,7 +2089,8 @@ private struct SarosSpikeWaveTimelineView: View {
             "\(Self.amplitudeCacheKey(clampedAmplitudeMultiplier))",
             "\(Int(displayInterval.start.timeIntervalSince1970))",
             "\(Int(displayInterval.end.timeIntervalSince1970))",
-            "\(timelineMinimumWaveRarityRaw)"
+            waveRaritySelectionID,
+            "ticks-\(clampedTickDensityLevel)"
         ].joined(separator: "-")
     }
 
@@ -2027,10 +2133,11 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var visibleWaveSegments: [SarosSpikeWaveSegment] {
         waveField.components.flatMap { component in
-            [
+            let risesToSpike = component.polarity > 0
+            return [
                 SarosSpikeWaveSegment(
                     id: "\(component.id)-ascent",
-                    kind: .ascent,
+                    kind: risesToSpike ? .ascent : .descent,
                     startDate: component.leftBoundary,
                     endDate: component.period.spike.date,
                     fromSaros: component.period.previousSpike.saros,
@@ -2039,7 +2146,7 @@ private struct SarosSpikeWaveTimelineView: View {
                 ),
                 SarosSpikeWaveSegment(
                     id: "\(component.id)-descent",
-                    kind: .descent,
+                    kind: risesToSpike ? .descent : .ascent,
                     startDate: component.period.spike.date,
                     endDate: component.rightBoundary,
                     fromSaros: component.period.spike.saros,
@@ -2213,13 +2320,18 @@ private struct SarosSpikeWaveTimelineView: View {
         let loadInterval = loadInterval
         let displayInterval = displayInterval
         let waveSampleCount = Self.waveSampleCount
-        let minimumRarity = timelineMinimumWaveRarity
+        let selectedRarities = selectedWaveRarities
+        let selectedFamilies = densityOptions.filter { selectedRarities.contains($0) }
+        let tickMinimumRarity = tickMinimumRarity
+        let generationMinimumRarity = (selectedFamilies + [tickMinimumRarity])
+            .min { $0.order < $1.order } ?? tickMinimumRarity
+        let configurationID = "waves:\(waveRaritySelectionID)|ticks:\(tickMinimumRarity.id)"
         let cacheKey = Self.cacheKey(
             harmonicDepth: harmonicDepth,
             displayInterval: displayInterval,
             loadInterval: loadInterval,
             sampleCount: waveSampleCount,
-            minimumRarity: minimumRarity,
+            raritySelectionID: configurationID,
             waveformModel: waveformModel,
             parabolaA: parabolaA,
             options: waveformOptions
@@ -2227,8 +2339,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
         if let cached = SarosSpikeWaveTimelineCache.entry(for: cacheKey) {
             events = cached.events
-            waveField = cached.field
-            waveSamples = cached.samples
+            waveLayers = cached.layers
             isLoading = false
             errorMessage = nil
             return
@@ -2238,33 +2349,49 @@ private struct SarosSpikeWaveTimelineView: View {
         errorMessage = nil
 
         Task.detached(priority: .userInitiated) {
-            let result: Result<(events: [SarosGlobalFlipEvent], field: SarosSpikeWaveField, samples: SarosSpikeWaveSamples), Error> = Result {
+            let result: Result<(events: [SarosGlobalFlipEvent], layers: [SarosSpikeWaveLayer]), Error> = Result {
                 let summaries = try eclipseService.allSarosSeries()
 
-                let loadedEvents = SarosGlobalTimelineBuilder.events(
+                let allRequiredEvents = SarosGlobalTimelineBuilder.events(
                     in: loadInterval,
                     summaries: summaries,
                     eclipseService: eclipseService,
                     harmonicDepth: harmonicDepth,
-                    minimumRarity: minimumRarity,
+                    minimumRarity: generationMinimumRarity,
                     includeSeriesEclipseMetrics: true
                 )
-                let field = SarosSpikeWaveCalculator.field(
-                    events: loadedEvents,
-                    model: waveformModel,
-                    parabolaA: parabolaA,
-                    options: waveformOptions
-                )
-                let samples = field.samples(
-                    in: displayInterval,
-                    sampleCount: waveSampleCount,
-                    events: loadedEvents
-                )
+
+                let tickEvents = allRequiredEvents.filter {
+                    $0.rarity.contributes(toWaveformFamily: tickMinimumRarity)
+                }
+
+                let layers = selectedFamilies.map { family in
+                    let familyEvents = allRequiredEvents.filter {
+                        $0.rarity.contributes(toWaveformFamily: family)
+                    }
+                    let field = SarosSpikeWaveCalculator.field(
+                        events: familyEvents,
+                        model: waveformModel,
+                        parabolaA: parabolaA,
+                        options: waveformOptions
+                    )
+                    let samples = field.samples(
+                        in: displayInterval,
+                        sampleCount: waveSampleCount,
+                        events: familyEvents
+                    )
+
+                    return SarosSpikeWaveLayer(
+                        rarity: family,
+                        events: familyEvents,
+                        field: field,
+                        samples: samples
+                    )
+                }
 
                 return (
-                    events: loadedEvents,
-                    field: field,
-                    samples: samples
+                    events: tickEvents,
+                    layers: layers
                 )
             }
 
@@ -2273,21 +2400,18 @@ private struct SarosSpikeWaveTimelineView: View {
                 switch result {
                 case .success(let loaded):
                     events = loaded.events
-                    waveField = loaded.field
-                    waveSamples = loaded.samples
+                    waveLayers = loaded.layers
                     SarosSpikeWaveTimelineCache.store(
                         SarosSpikeWaveCacheEntry(
                             events: loaded.events,
-                            field: loaded.field,
-                            samples: loaded.samples
+                            layers: loaded.layers
                         ),
                         for: cacheKey
                     )
                     errorMessage = nil
                 case .failure(let error):
                     events = []
-                    waveField = .empty
-                    waveSamples = .empty
+                    waveLayers = []
                     errorMessage = error.localizedDescription
                 }
             }
@@ -2299,7 +2423,7 @@ private struct SarosSpikeWaveTimelineView: View {
         displayInterval: DateInterval,
         loadInterval: DateInterval,
         sampleCount: Int,
-        minimumRarity: FlipRarity,
+        raritySelectionID: String,
         waveformModel: JournalWaveformModel,
         parabolaA: Double,
         options: JournalWaveformOptions
@@ -2317,7 +2441,7 @@ private struct SarosSpikeWaveTimelineView: View {
             loadStart: Int(loadInterval.start.timeIntervalSince1970),
             loadEnd: Int(loadInterval.end.timeIntervalSince1970),
             sampleCount: sampleCount,
-            minimumRarityID: minimumRarity.id,
+            minimumRarityID: raritySelectionID,
             includesSeriesEclipseMetrics: true
         )
     }
@@ -2515,7 +2639,7 @@ private struct SarosSpikeWaveTimelineView: View {
     }
 
     private func eventDotMarkers(
-        components: [SarosSpikeWaveComponent],
+        events: [SarosGlobalFlipEvent],
         contentWidth: CGFloat,
         height: CGFloat,
         maxEnergy: Double,
@@ -2525,19 +2649,21 @@ private struct SarosSpikeWaveTimelineView: View {
         var placedLabelBoxes: [LabelBoundingBox] = []
         var placedDotsCount = 0
 
-        return components.sorted {
-            if $0.period.spike.date != $1.period.spike.date {
-                return $0.period.spike.date < $1.period.spike.date
+        return events.sorted {
+            if $0.date != $1.date {
+                return $0.date < $1.date
             }
-            return $0.period.spike.rarity > $1.period.spike.rarity
+            return $0.rarity > $1.rarity
         }
-        .map { component in
-            let event = component.period.spike
+        .map { event in
             var x = xPosition(for: event.date, width: contentWidth)
             let size = dotSize(for: event.rarity)
+            let samples = waveLayers.reversed().first {
+                event.rarity.contributes(toWaveformFamily: $0.rarity)
+            }?.samples ?? .empty
             let baseY = dotBaseY(
                 for: event,
-                samples: waveSamples,
+                samples: samples,
                 maxEnergy: maxEnergy,
                 height: height,
                 amplitudeScale: amplitudeScale
@@ -2545,20 +2671,23 @@ private struct SarosSpikeWaveTimelineView: View {
             var y = baseY
             var level = 0
             let step = size + 6
-            let maxUpLevels = max(Int((baseY - 12) / step), 0)
+            let stacksUp = JournalWaveformSpikeSemantics.polarity(forSaros: event.saros) > 0
+            let availableDistance = stacksUp ? baseY - 12 : height - 12 - baseY
+            let maxPrimaryLevels = max(Int(availableDistance / step), 0)
 
             while placed.contains(where: { abs($0.x - x) < size + 4 && abs($0.y - y) < size + 4 }),
                   level < 48
             {
                 level += 1
-                let upLevel = min(level, maxUpLevels)
-                let overflowLevel = max(level - maxUpLevels, 0)
+                let primaryLevel = min(level, maxPrimaryLevels)
+                let overflowLevel = max(level - maxPrimaryLevels, 0)
 
-                y = max(12, baseY - CGFloat(upLevel) * step)
+                let direction: CGFloat = stacksUp ? -1 : 1
+                y = min(max(baseY + direction * CGFloat(primaryLevel) * step, 12), height - 12)
                 x = min(contentWidth - size / 2, x + CGFloat(overflowLevel) * (size + 4))
             }
 
-            let contributorsCount = component.contributors.isEmpty ? 1 : component.contributors.count
+            let contributorsCount = 1
             let leftBoxes = labelBoxes(forX: x, y: y, size: size, contributorsCount: contributorsCount, labelOnLeadingSide: true)
             let rightBoxes = labelBoxes(forX: x, y: y, size: size, contributorsCount: contributorsCount, labelOnLeadingSide: false)
 
@@ -2596,7 +2725,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
             return SarosSpikeDotMarker(
                 event: event,
-                contributors: component.contributors,
+                contributors: [event],
                 x: x,
                 y: y,
                 size: size,
@@ -2649,10 +2778,10 @@ private struct SarosSpikeWaveTimelineView: View {
         maxEnergy: Double,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.54
+        let baseline = height * 0.5
         let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
-        let ratio = min(max(state.energy / maxEnergy, 0), 1)
+        let ratio = min(max(state.energy / maxEnergy, -1), 1)
         return baseline - CGFloat(ratio) * waveHeight
     }
 
@@ -2663,14 +2792,17 @@ private struct SarosSpikeWaveTimelineView: View {
         height: CGFloat,
         amplitudeScale: CGFloat
     ) -> CGFloat {
-        let baseline = height * 0.54
+        let baseline = height * 0.5
         let top = height * 0.12
         let waveHeight = (baseline - top) * amplitudeScale
         let maxEnergy = max(maxEnergy, 0.000_000_001)
         let eventEnergy = samples.energy(for: event)
         let peakY = baseline - CGFloat(eventEnergy / maxEnergy) * waveHeight
+        let isNegative = eventEnergy < 0
+            || (eventEnergy == 0 && JournalWaveformSpikeSemantics.polarity(forSaros: event.saros) < 0)
+        let markerOffset: CGFloat = isNegative ? 48 : -48
 
-        return max(18, peakY - 48)
+        return min(max(peakY + markerOffset, 18), height - 18)
     }
 
     private func dotSize(for rarity: FlipRarity) -> CGFloat {
@@ -3250,14 +3382,14 @@ private struct SarosSpikeWaveStatePanel: View {
 }
 
 private struct SarosSpikeWaveCanvas: View {
-    let samples: SarosSpikeWaveSamples
+    let layers: [SarosSpikeWaveLayer]
     let displayInterval: DateInterval
     let maxEnergy: Double
     let amplitudeScale: CGFloat
 
     var body: some View {
         Canvas { context, size in
-            let baseline = size.height * 0.54
+            let baseline = size.height * 0.5
             let top = size.height * 0.12
             let waveHeight = (baseline - top) * amplitudeScale
             let maxEnergy = max(maxEnergy, 0.000_000_001)
@@ -3268,20 +3400,27 @@ private struct SarosSpikeWaveCanvas: View {
             context.stroke(grid, with: .color(.white.opacity(0.16)), lineWidth: 1)
 
             for i in 0...4 {
-                let y = top + waveHeight * CGFloat(i) / 4
-                var line = Path()
-                line.move(to: CGPoint(x: 0, y: y))
-                line.addLine(to: CGPoint(x: size.width, y: y))
-                context.stroke(line, with: .color(.white.opacity(0.06)), lineWidth: 1)
+                let offset = waveHeight * CGFloat(i) / 4
+                for y in [baseline - offset, baseline + offset]
+                    where y >= 0 && y <= size.height
+                {
+                    var line = Path()
+                    line.move(to: CGPoint(x: 0, y: y))
+                    line.addLine(to: CGPoint(x: size.width, y: y))
+                    context.stroke(line, with: .color(.white.opacity(0.06)), lineWidth: 1)
+                }
             }
 
-            drawCombinedWave(
-                in: context,
-                size: size,
-                baseline: baseline,
-                waveHeight: waveHeight,
-                maxEnergy: maxEnergy
-            )
+            for layer in layers {
+                drawWave(
+                    layer,
+                    in: context,
+                    size: size,
+                    baseline: baseline,
+                    waveHeight: waveHeight,
+                    maxEnergy: maxEnergy
+                )
+            }
         }
         .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
     }
@@ -3300,17 +3439,19 @@ private struct SarosSpikeWaveCanvas: View {
         waveHeight: CGFloat,
         maxEnergy: Double
     ) -> CGFloat {
-        let ratio = min(max(energy / maxEnergy, 0), 1)
+        let ratio = min(max(energy / maxEnergy, -1), 1)
         return baseline - CGFloat(ratio) * waveHeight
     }
 
-    private func drawCombinedWave(
+    private func drawWave(
+        _ layer: SarosSpikeWaveLayer,
         in context: GraphicsContext,
         size: CGSize,
         baseline: CGFloat,
         waveHeight: CGFloat,
         maxEnergy: Double
     ) {
+        let samples = layer.samples
         guard !samples.points.isEmpty else { return }
 
         var line = Path()
@@ -3339,15 +3480,20 @@ private struct SarosSpikeWaveCanvas: View {
         fill.addLine(to: CGPoint(x: size.width, y: baseline))
         fill.closeSubpath()
 
-        context.fill(fill, with: .color(.white.opacity(0.11)))
-        context.stroke(line, with: .color(.white.opacity(0.96)), lineWidth: 1.7)
+        context.fill(fill, with: .color(layer.rarity.color.opacity(0.055)))
+        context.stroke(
+            line,
+            with: .color(layer.rarity.color.opacity(0.94)),
+            lineWidth: lineWidth(for: layer.rarity)
+        )
     }
 
     private func lineWidth(for rarity: FlipRarity) -> CGFloat {
         switch rarity.baseRarity {
-        case .mythic: 1.8
-        case .legendary: 1.45
-        default: 1.15
+        case .mythic: 2.1
+        case .legendary: 1.8
+        case .epic: 1.55
+        default: 1.3
         }
     }
 }

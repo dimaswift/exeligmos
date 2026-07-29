@@ -5028,8 +5028,8 @@ private struct JournalEntryWaveformView: View {
                 )
                 let width = max(size.width - insets.leading - insets.trailing, 1)
                 let height = max(size.height - insets.top - insets.bottom, 1)
-                let baseline = insets.top + height
-                let waveHeight = height * JournalEntryWaveform.amplitudeScale
+                let baseline = insets.top + height * 0.5
+                let waveHeight = height * 0.5 * JournalEntryWaveform.amplitudeScale
 
                 var path = Path()
                 for sample in samples {
@@ -5066,15 +5066,24 @@ private struct JournalEntryWaveformView: View {
                     var dotY = baseY
                     var collisionLevel = 0
                     let dotStep = dotSize + 7
-                    let maxUpLevels = max(Int((baseY - insets.top - dotSize / 2) / dotStep), 0)
+                    let stacksUp = JournalWaveformSpikeSemantics.polarity(forSaros: spike.saros) > 0
+                    let boundaryY = stacksUp
+                        ? insets.top + dotSize / 2
+                        : insets.top + height - dotSize / 2
+                    let availableDistance = abs(boundaryY - baseY)
+                    let maxPrimaryLevels = max(Int(availableDistance / dotStep), 0)
 
                     while placedDots.contains(where: { abs($0.x - x) < dotSize + 4 && abs($0.y - dotY) < dotSize + 4 }),
                           collisionLevel < 24
                     {
                         collisionLevel += 1
-                        let upLevel = min(collisionLevel, maxUpLevels)
-                        let overflowLevel = max(collisionLevel - maxUpLevels, 0)
-                        dotY = max(insets.top + dotSize / 2, baseY - CGFloat(upLevel) * dotStep)
+                        let primaryLevel = min(collisionLevel, maxPrimaryLevels)
+                        let overflowLevel = max(collisionLevel - maxPrimaryLevels, 0)
+                        let direction: CGFloat = stacksUp ? -1 : 1
+                        dotY = min(
+                            max(baseY + direction * CGFloat(primaryLevel) * dotStep, insets.top + dotSize / 2),
+                            insets.top + height - dotSize / 2
+                        )
                         x = min(
                             size.width - insets.trailing - dotSize / 2,
                             baseX + CGFloat(overflowLevel) * (dotSize + 5)
@@ -5365,15 +5374,22 @@ private struct JournalEntryWaveformPlot {
             }
         let eventEnergy = field.energy(at: context.eventDate)
         let eventEndEnergy = field.energy(at: eventEndDate)
-        let localMaxEnergy = waveSamples.points.map(\.energy).max() ?? eventEnergy
+        let localMaxEnergy = waveSamples.points.map { abs($0.energy) }.max() ?? abs(eventEnergy)
         let visibleSpikeMaxEnergy = visibleSpikeGroups
             .compactMap { waveSamples.eventEnergyByID[$0.primary.id] }
+            .map(abs)
             .max() ?? 0
         let midpointDates = field.components
             .flatMap { [$0.period.leftBoundary, $0.period.rightBoundary] }
             .filter { interval.contains($0) }
             .sorted()
-        let maxEnergy = max(localMaxEnergy, visibleSpikeMaxEnergy, eventEnergy, eventEndEnergy, 0.000_001)
+        let maxEnergy = max(
+            localMaxEnergy,
+            visibleSpikeMaxEnergy,
+            abs(eventEnergy),
+            abs(eventEndEnergy),
+            0.000_001
+        )
         return JournalEntryWaveformPlot(
             interval: interval,
             samples: waveSamples.points,

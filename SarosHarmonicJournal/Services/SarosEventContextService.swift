@@ -603,6 +603,7 @@ struct JournalEventWaveComponent {
     let contributorSpikes: [JournalSpikeReference]
     let period: JournalEventWavePeriod
     let peakHeight: Double
+    let polarity: Double
     let waveformModel: JournalWaveformModel
     let parabolaA: Double
     let parabolaAscentAccelerates: Bool
@@ -671,7 +672,7 @@ struct JournalEventWaveComponent {
                 : pow(1 - t, a)
         }
 
-        return peakHeight * min(max(value, 0), 1)
+        return polarity * peakHeight * min(max(value, 0), 1)
     }
 }
 
@@ -814,7 +815,7 @@ struct JournalEventWaveField {
         let points = sampleDates.map { date in
             let position = min(max(date.timeIntervalSince(interval.start) / interval.duration, 0), 1)
             let energy = energy(at: date, in: visibleComponents)
-            maxEnergy = max(maxEnergy, energy)
+            maxEnergy = max(maxEnergy, abs(energy))
 
             return JournalEventWaveSample(
                 date: date,
@@ -852,7 +853,7 @@ struct JournalEventWaveField {
             components: visibleComponents,
             preferredSampleCount: sampleCount
         ) {
-            maximum = max(maximum, energy(at: date, in: visibleComponents))
+            maximum = max(maximum, abs(energy(at: date, in: visibleComponents)))
         }
 
         return max(maximum, maxPeakHeight, 0.000_000_001)
@@ -1080,10 +1081,10 @@ enum JournalEventWaveform {
         normalizedAmplitude: Bool = JournalWaveformOptions.current.normalizedAmplitude,
         amplitudeMultiplier: Double = JournalWaveformOptions.current.amplitudeMultiplier
     ) -> Double {
-        (normalizedAmplitude ? 1 : basePeakHeight(for: spike.rarity))
-            * baseAmplitudeMultiplier
+        _ = normalizedAmplitude
+        return baseAmplitudeMultiplier
             * amplitudeMultiplier
-            * magnitudeAmplitudeMultiplier(for: spike.magnitude)
+            * JournalWaveformSpikeSemantics.phaseAmplitudeScale(spike.octalAddress)
     }
 
     private static func component(
@@ -1100,6 +1101,13 @@ enum JournalEventWaveform {
         let spike = cluster.primary
         guard rightBoundary.timeIntervalSince(leftBoundary) > 1 else { return nil }
 
+        let signedPeakHeight = cluster.contributors.reduce(0.0) { total, contributor in
+            total + peakHeight(
+                for: contributor,
+                amplitudeMultiplier: options.amplitudeMultiplier
+            ) * JournalWaveformSpikeSemantics.polarity(forSaros: contributor.saros)
+        }
+
         return JournalEventWaveComponent(
             id: "\(spike.id)-field-\(model.id)-\(index)",
             sourceSpikeID: spike.id,
@@ -1111,15 +1119,8 @@ enum JournalEventWaveform {
                 leftBoundary: leftBoundary,
                 rightBoundary: rightBoundary
             ),
-            peakHeight: cluster.contributors
-                .map {
-                    peakHeight(
-                        for: $0,
-                        normalizedAmplitude: options.normalizedAmplitude,
-                        amplitudeMultiplier: options.amplitudeMultiplier
-                    )
-                }
-                .reduce(0, +),
+            peakHeight: abs(signedPeakHeight),
+            polarity: signedPeakHeight < 0 ? -1 : 1,
             waveformModel: model,
             parabolaA: parabolaA,
             parabolaAscentAccelerates: parabolaAscentAccelerates(spike: spike, fallbackSeed: spike.saros + index),
@@ -1149,21 +1150,6 @@ enum JournalEventWaveform {
             return isPastSeriesMidpoint
         }
         return !fallbackSeed.isMultiple(of: 2)
-    }
-
-    private static func basePeakHeight(for rarity: FlipRarity) -> Double {
-        switch rarity.baseRarity {
-        case .mythic: 4
-        case .legendary: 2
-        case .epic: 1
-        case .rare: 0.5
-        default: 0.25
-        }
-    }
-
-    private static func magnitudeAmplitudeMultiplier(for magnitude: Double?) -> Double {
-        guard let magnitude, magnitude.isFinite else { return 1 }
-        return min(max(magnitude, 0.18), 1.8)
     }
 
     private static func previousDistinctSpike(

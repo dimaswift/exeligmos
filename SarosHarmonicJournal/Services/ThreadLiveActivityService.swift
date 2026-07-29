@@ -652,13 +652,13 @@ enum ThreadLiveActivityService {
         let samples = field.samples(in: interval, sampleCount: liveWaveformPayloadSampleCount, spikes: spikes)
         let payloadPoints = compactWaveformPoints(samples.points, maxCount: liveWaveformPayloadSampleCount)
         let maxEnergy = max(
-            metrics.energyPercent > 0 ? metrics.energy / metrics.energyPercent : 0,
-            metrics.energy,
+            metrics.energyPercent > 0 ? abs(metrics.energy) / metrics.energyPercent : 0,
+            abs(metrics.energy),
             field.maxPeakHeight,
             0.000_000_001
         )
         let normalizedSamples = payloadPoints.map { point in
-            min(max(point.energy / maxEnergy, 0), 1)
+            min(max(point.energy / maxEnergy, -1), 1)
         }
         let samplePositions = payloadPoints.map { point in
             (point.position * 10_000).rounded() / 10_000
@@ -675,7 +675,7 @@ enum ThreadLiveActivityService {
             .map { spike in
             TrackingWaveformSpikeMarker(
                 position: (min(max(spike.date.timeIntervalSince(interval.start) / interval.duration, 0), 1) * 10_000).rounded() / 10_000,
-                energy: (min(max((samples.eventEnergyByID[spike.id] ?? field.energy(at: spike.date)) / maxEnergy, 0), 1) * 10_000).rounded() / 10_000,
+                energy: (min(max((samples.eventEnergyByID[spike.id] ?? field.energy(at: spike.date)) / maxEnergy, -1), 1) * 10_000).rounded() / 10_000,
                 colorHex: trackingPrimaryColorHex(for: spike.rarity)
             )
         }

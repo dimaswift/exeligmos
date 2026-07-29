@@ -356,6 +356,82 @@ final class SarosClockTests: XCTestCase {
     }
 }
 
+final class JournalWaveformSpikeSemanticsTests: XCTestCase {
+    func testOddSarosIsPositiveAndEvenSarosIsNegative() {
+        XCTAssertEqual(JournalWaveformSpikeSemantics.polarity(forSaros: 141), 1)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.polarity(forSaros: 142), -1)
+    }
+
+    func testPhaseMSBUsesNonZeroLogarithmicAmplitudeThroughOmega() {
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseMostSignificantDigit("012345"), 0)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseMostSignificantDigit("712345"), 7)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseAmplitudeScale("012345"), 0.25, accuracy: 0.000_001)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseAmplitudeScale("112345"), 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseAmplitudeScale("312345"), 0.75, accuracy: 0.000_001)
+        XCTAssertEqual(JournalWaveformSpikeSemantics.phaseAmplitudeScale("712345"), 1, accuracy: 0.000_001)
+    }
+
+    func testHigherOrderSpikesContributeToEveryLowerOrderWaveformFamily() {
+        XCTAssertTrue(FlipRarity.mythicDigit(7).contributes(toWaveformFamily: .mythic))
+        XCTAssertTrue(FlipRarity.mythicDigit(7).contributes(toWaveformFamily: .legendary))
+        XCTAssertTrue(FlipRarity.mythicDigit(7).contributes(toWaveformFamily: .epic))
+        XCTAssertTrue(FlipRarity.mythicDigit(7).contributes(toWaveformFamily: .rare))
+
+        XCTAssertFalse(FlipRarity.legendaryDigit(4).contributes(toWaveformFamily: .mythic))
+        XCTAssertTrue(FlipRarity.legendaryDigit(4).contributes(toWaveformFamily: .legendary))
+        XCTAssertTrue(FlipRarity.legendaryDigit(4).contributes(toWaveformFamily: .epic))
+        XCTAssertTrue(FlipRarity.legendaryDigit(4).contributes(toWaveformFamily: .rare))
+    }
+
+    func testTemporalWaveAlternatesAcrossBaselineAndIgnoresMagnitudeAndRarityForHeight() throws {
+        let odd = Self.spike(
+            saros: 141,
+            timestamp: 1_700_000_000,
+            address: "700000",
+            rarity: .rareDigit(1),
+            magnitude: 0.2
+        )
+        let even = Self.spike(
+            saros: 142,
+            timestamp: 1_700_010_000,
+            address: "700000",
+            rarity: .mythicDigit(7),
+            magnitude: 1.8
+        )
+        let series = JournalTemporalEngine.series(spikes: [odd, even], options: .default)
+
+        XCTAssertGreaterThan(series.energy(at: odd.date), 0)
+        XCTAssertLessThan(series.energy(at: even.date), 0)
+        XCTAssertEqual(
+            JournalTemporalEngine.peakHeight(for: odd, amplitudeMultiplier: 1),
+            JournalTemporalEngine.peakHeight(for: even, amplitudeMultiplier: 1),
+            accuracy: 0.000_001
+        )
+    }
+
+    private static func spike(
+        saros: Int,
+        timestamp: Int64,
+        address: String,
+        rarity: FlipRarity,
+        magnitude: Double?
+    ) -> JournalSpikeReference {
+        JournalSpikeReference(
+            saros: saros,
+            unixTimestamp: timestamp,
+            octalAddress: address,
+            harmonicDepth: 6,
+            rarityRawValue: rarity.rawValue,
+            gamma: saros.isMultiple(of: 2) ? -0.4 : 0.4,
+            magnitude: magnitude,
+            eclipseTypeRawValue: EclipseType.totalSolar.rawValue,
+            sarosSequence: 10,
+            sarosSeriesCount: 20,
+            seriesProgressesSouthToNorth: nil
+        )
+    }
+}
+
 final class ResonanceDetectorTests: XCTestCase {
     func testGroupsFlipsWithinWindow() {
         let base = Date(timeIntervalSinceReferenceDate: 1_000)

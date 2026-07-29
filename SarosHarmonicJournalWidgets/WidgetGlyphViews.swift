@@ -382,16 +382,16 @@ struct WidgetWaveformSegmentView: View {
         Canvas { context, size in
             guard samples.count > 1, size.width > 2, size.height > 2 else { return }
 
-            let clamped = samples.map { min(max($0, 0), 1) }
-            let markerMax = spikeMarkers.map { min(max($0.energy, 0), 1) }.max() ?? 0
-            let localMax = max(clamped.max() ?? 0, markerMax, 0.08)
+            let clamped = samples.map { min(max($0, -1), 1) }
+            let markerMax = spikeMarkers.map { abs(min(max($0.energy, -1), 1)) }.max() ?? 0
+            let localMax = max(clamped.map(abs).max() ?? 0, markerMax, 0.08)
             let visualScale = 1.0 / localMax
             let visualValue: (Double) -> Double = { value in
-                min(max(value, 0) * visualScale, 1)
+                min(max(value * visualScale, -1), 1)
             }
             let positions = resolvedSamplePositions(count: clamped.count)
-            let baselineY = size.height - (pulseRulerMode == .megaWindow ? 5 : 2)
-            let fillBottomY = size.height + 2
+            let baselineY = size.height * 0.5
+            let waveHeight = max((size.height - 10) * 0.5, 1)
             let extendedWidth = pulseRulerMode == .megaWindow ? size.width : size.width + 160
             let xOffset: CGFloat = pulseRulerMode == .megaWindow ? 0 : -80
             var line = Path()
@@ -399,11 +399,11 @@ struct WidgetWaveformSegmentView: View {
 
             for index in clamped.indices {
                 let x = xOffset + CGFloat(positions[index]) * extendedWidth
-                let y = baselineY - CGFloat(visualValue(clamped[index])) * (size.height - 5)
+                let y = baselineY - CGFloat(visualValue(clamped[index])) * waveHeight
                 let point = CGPoint(x: x, y: y)
                 if index == clamped.startIndex {
                     line.move(to: point)
-                    fill.move(to: CGPoint(x: x, y: fillBottomY))
+                    fill.move(to: CGPoint(x: x, y: baselineY))
                     fill.addLine(to: point)
                 } else {
                     line.addLine(to: point)
@@ -411,14 +411,14 @@ struct WidgetWaveformSegmentView: View {
                 }
             }
 
-            fill.addLine(to: CGPoint(x: xOffset + extendedWidth, y: fillBottomY))
+            fill.addLine(to: CGPoint(x: xOffset + extendedWidth, y: baselineY))
             fill.closeSubpath()
             context.fill(fill, with: .color(color.opacity(0.24)))
             context.stroke(line, with: .color(color.opacity(0.92)), lineWidth: 1.4)
 
             for marker in spikeMarkers {
                 let x = xOffset + CGFloat(min(max(marker.position, 0), 1)) * extendedWidth
-                let y = baselineY - CGFloat(visualValue(marker.energy)) * (size.height - 5)
+                let y = baselineY - CGFloat(visualValue(marker.energy)) * waveHeight
                 let dotRect = CGRect(x: x - 3, y: y - 3, width: 6, height: 6)
                 context.fill(Path(ellipseIn: dotRect), with: .color(Color(hexString: marker.colorHex)))
                 context.stroke(Path(ellipseIn: dotRect.insetBy(dx: -1, dy: -1)), with: .color(.black.opacity(0.45)), lineWidth: 1)
@@ -615,7 +615,7 @@ extension TrackingDisplayPayload {
     }
 
     func waveSignature(at date: Date) -> WidgetWaveSignature {
-        let energy = sampledEnergy(at: date) ?? energyPercent ?? 0
+        let energy = abs(sampledEnergy(at: date) ?? energyPercent ?? 0)
         let momentum = sampledMomentum(at: date) ?? momentum ?? 0
         return WidgetWaveEventDescriptorFormatter.signature(
             energyPercent: energy,
