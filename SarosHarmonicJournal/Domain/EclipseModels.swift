@@ -46,6 +46,15 @@ enum EclipseType: String, Codable, CaseIterable {
     var isPartialSolar: Bool {
         self == .partialSolar
     }
+
+    var isNonPartialSolar: Bool {
+        switch self {
+        case .totalSolar, .annularSolar, .hybridSolar:
+            true
+        case .partialSolar, .totalLunar, .partialLunar, .penumbralLunar, .unknown:
+            false
+        }
+    }
 }
 
 struct Eclipse: Identifiable, Codable, Hashable {

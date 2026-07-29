@@ -11,6 +11,8 @@ struct SettingsView: View {
     private var syncCommands: [SyncLocalCommand]
 
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey)
+    private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
     @AppStorage(JournalSettings.deviceIDKey) private var deviceID = ""
     @AppStorage(JournalSettings.deviceNameKey) private var deviceName = ""
@@ -77,6 +79,18 @@ struct SettingsView: View {
                 } label: {
                     Label("Tags", systemImage: "tag")
                 }
+            }
+
+            Section("Active Saros") {
+                Toggle("Non-partial eclipses only", isOn: $activeSarosNonPartialOnly)
+
+                Text(
+                    "When enabled, a Saros is active only between its first and last total, " +
+                        "annular, or hybrid eclipse. Waveforms, grids, filters, and schedules " +
+                        "use the same active set."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
 
             Section("Pulse") {
@@ -751,6 +765,8 @@ private struct EarthAnomalisticIntervalsSettingsView: View {
 private struct PulseSettingsView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey)
+    private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
 
     @State private var preview: SarosPulseReading?
@@ -819,7 +835,7 @@ private struct PulseSettingsView: View {
         .navigationTitle("Pulse")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await ensureDefaultSaros()
+            await ensureActiveSaros()
             updatePreview()
         }
         .onChange(of: pulseSaros) { _, _ in
@@ -828,23 +844,40 @@ private struct PulseSettingsView: View {
         .onChange(of: harmonicDepth) { _, _ in
             updatePreview()
         }
+        .onChange(of: activeSarosNonPartialOnly) { _, _ in
+            Task {
+                await ensureActiveSaros()
+                updatePreview()
+            }
+        }
     }
 
     @MainActor
-    private func ensureDefaultSaros() async {
-        guard pulseSaros <= 0 else { return }
+    private func ensureActiveSaros() async {
         let eclipseService = services.eclipseService
-        let result = await Task.detached(priority: .utility) {
+        let configuredSaros = pulseSaros
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
+        let now = Date()
+        let result: Result<Int?, Error> = await Task.detached(priority: .utility) {
             Result {
-                try SarosPulseCalculator.defaultActiveSaros(
-                    at: Date(),
-                    eclipseService: eclipseService
+                if configuredSaros > 0,
+                   try eclipseService.activeSarosInterval(
+                       saros: configuredSaros,
+                       at: now,
+                       policy: policy
+                ) != nil {
+                    return configuredSaros
+                }
+                return try SarosPulseCalculator.defaultActiveSaros(
+                    at: now,
+                    eclipseService: eclipseService,
+                    policy: policy
                 )
             }
         }.value
 
-        if case .success(let saros?) = result {
-            pulseSaros = saros
+        if case .success(let saros) = result {
+            pulseSaros = saros ?? 0
         }
     }
 
@@ -859,7 +892,8 @@ private struct PulseSettingsView: View {
                 saros: pulseSaros,
                 date: Date(),
                 harmonicDepth: harmonicDepth,
-                eclipseService: services.eclipseService
+                eclipseService: services.eclipseService,
+                policy: SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
             )
             errorMessage = nil
         } catch {

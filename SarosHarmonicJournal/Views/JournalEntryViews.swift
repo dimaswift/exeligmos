@@ -4812,6 +4812,7 @@ private struct JournalPulseGlyphForDate: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     let date: Date
     let size: CGFloat
@@ -4833,7 +4834,7 @@ private struct JournalPulseGlyphForDate: View {
     }
 
     private var taskID: String {
-        "\(pulseSaros)-\(JournalSettings.clampedHarmonicDepth(harmonicDepth))-\(Int(date.timeIntervalSince1970))"
+        "\(pulseSaros)-\(activeSarosNonPartialOnly)-\(JournalSettings.clampedHarmonicDepth(harmonicDepth))-\(Int(date.timeIntervalSince1970))"
     }
 
     @MainActor
@@ -4842,6 +4843,7 @@ private struct JournalPulseGlyphForDate: View {
         let date = date
         let harmonicDepth = harmonicDepth
         let eclipseService = services.eclipseService
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
         let result = await Task.detached(priority: .utility) {
             Result<SarosPulseReading?, Error> {
                 let resolvedSaros: Int?
@@ -4850,7 +4852,8 @@ private struct JournalPulseGlyphForDate: View {
                 } else {
                     resolvedSaros = try SarosPulseCalculator.defaultActiveSaros(
                         at: date,
-                        eclipseService: eclipseService
+                        eclipseService: eclipseService,
+                        policy: policy
                     )
                 }
 
@@ -4859,7 +4862,8 @@ private struct JournalPulseGlyphForDate: View {
                     saros: resolvedSaros,
                     date: date,
                     harmonicDepth: harmonicDepth,
-                    eclipseService: eclipseService
+                    eclipseService: eclipseService,
+                    policy: policy
                 )
             }
         }.value
@@ -4983,6 +4987,7 @@ private struct JournalEntrySpikeRow: View {
 
 private struct JournalEntryWaveformView: View {
     @EnvironmentObject private var services: AppServices
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.waveformMergeCloseSpikesKey) private var waveformMergeCloseSpikes = false
     @AppStorage(JournalSettings.waveformNormalizedAmplitudeKey) private var waveformNormalizedAmplitude = false
     @AppStorage(JournalSettings.waveformSubdivisionDepthKey) private var waveformSubdivisionDepth = JournalWaveformSettings.defaultSubdivisionDepth
@@ -5213,8 +5218,9 @@ private struct JournalEntryWaveformView: View {
             let configuredPulseSaros = pulseSaros
             let parabolaA = JournalWaveformSettings.currentParabolaA
             let eclipseService = services.eclipseService
+            let activityPolicy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
             let options = JournalWaveformOptions(
-                ignorePartialEclipses: false,
+                ignorePartialEclipses: activeSarosNonPartialOnly,
                 mergeCloseSpikes: waveformMergeCloseSpikes,
                 normalizedAmplitude: waveformNormalizedAmplitude,
                 subdivisionDepth: clampedSubdivisionDepth,
@@ -5241,7 +5247,13 @@ private struct JournalEntryWaveformView: View {
                 )
                 let lunarTicks = LunarRulerTickBuilder.ticks(in: plot.interval, moonService: moonService)
                 let solarTicks = SolarYearRuler.ticks(in: plot.interval, siderealReferenceDate: siderealReferenceDate)
-                let resolvedPulseSaros = configuredPulseSaros > 0
+                let configuredIsActive = configuredPulseSaros > 0 &&
+                    ((try? eclipseService.activeSarosInterval(
+                        saros: configuredPulseSaros,
+                        at: context.eventDate,
+                        policy: activityPolicy
+                    )) != nil)
+                let resolvedPulseSaros = configuredIsActive
                     ? configuredPulseSaros
                     : (context.closestSpike?.saros ?? 0)
                 let pulseTicks = resolvedPulseSaros > 0
@@ -5250,7 +5262,8 @@ private struct JournalEntryWaveformView: View {
                         saros: resolvedPulseSaros,
                         harmonicDepth: context.waveformHarmonicDepth,
                         eclipseService: eclipseService,
-                        units: [.rollover, .giga, .mega, .kilo]
+                        units: [.rollover, .giga, .mega, .kilo],
+                        policy: activityPolicy
                     )) ?? [])
                     : []
                 return (plot, lunarTicks, solarTicks, pulseTicks)
@@ -5265,6 +5278,7 @@ private struct JournalEntryWaveformView: View {
     private var waveformTaskID: String {
         [
             context.waveformCacheKey,
+            activeSarosNonPartialOnly ? "central" : "all",
             "\(Int(resolvedEndDate.timeIntervalSince1970))",
             "\(Int((JournalWaveformSettings.currentParabolaA * 100).rounded()))",
             waveformMergeCloseSpikes ? "merged" : "raw",
@@ -5557,6 +5571,7 @@ private struct JournalEntryPulseRulerCanvas: View {
 struct SarosGlyphGridPicker: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     @Binding var selectedSaros: Int?
     var primeColorsBySaros: [Int: Color] = [:]
@@ -5608,7 +5623,7 @@ struct SarosGlyphGridPicker: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: preferredHeight, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
-        .task(id: harmonicDepth) {
+        .task(id: "\(harmonicDepth)-\(activeSarosNonPartialOnly)") {
             await loadItems()
         }
     }
@@ -5618,20 +5633,16 @@ struct SarosGlyphGridPicker: View {
         let date = Date()
         let depth = JournalSettings.clampedHarmonicDepth(harmonicDepth)
         let eclipseService = services.eclipseService
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
 
         let result = await Task.detached(priority: .userInitiated) {
             Result<[SarosGlyphGridPickerItem], Error> {
-                try eclipseService.allSarosSeries()
-                    .filter { $0.firstEclipseDate < date && $0.lastEclipseDate > date }
-                    .compactMap { summary -> SarosGlyphGridPickerItem? in
-                        guard let interval = try? eclipseService.previousAndNextEclipse(
-                            saros: summary.saros,
-                            around: date
-                        ),
-                              let reading = try? SarosClockCalculator.reading(
-                                saros: summary.saros,
-                                previous: interval.previous,
-                                next: interval.next,
+                try eclipseService.activeSarosIntervals(at: date, policy: policy)
+                    .compactMap { active -> SarosGlyphGridPickerItem? in
+                        guard let reading = try? SarosClockCalculator.reading(
+                                saros: active.summary.saros,
+                                previous: active.interval.previous,
+                                next: active.interval.next,
                                 now: date,
                                 harmonicDepth: depth
                               )
@@ -5639,7 +5650,7 @@ struct SarosGlyphGridPicker: View {
                             return nil
                         }
                         return SarosGlyphGridPickerItem(
-                            saros: summary.saros,
+                            saros: active.summary.saros,
                             octalAddress: reading.octalAddress,
                             harmonicDepth: reading.harmonicDepth,
                             rarity: reading.currentRarity

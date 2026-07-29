@@ -4,7 +4,9 @@ import SwiftUI
 struct SarosGridView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+    @AppStorage("sarosGridSpiralRarity") private var spiralRarityRaw = FlipRarity.rare.rawValue
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
 
     @State private var activeSeries: [ActiveSarosPhaseSeries] = []
@@ -17,6 +19,16 @@ struct SarosGridView: View {
             GeometryReader { geometry in
                 let metrics = Self.gridMetrics(in: geometry.size)
                 let nearestFlip = nearestFlip(at: context.date)
+                let spiralItems = spiralItems(at: context.date, rarity: selectedSpiralRarity)
+                let positions = SarosSquareSpiralGeometry.positions(
+                    count: spiralItems.count,
+                    in: metrics.contentRect,
+                    nodeSize: metrics.cellSize
+                )
+                let guidePoints = SarosSquareSpiralGeometry.guidePoints(
+                    in: metrics.contentRect,
+                    nodeSize: metrics.cellSize
+                )
 
                 ZStack(alignment: .bottom) {
                     if activeSeries.isEmpty {
@@ -44,35 +56,49 @@ struct SarosGridView: View {
                             .padding(.top, 12)
                         }
 
+                        spiralRaritySelector
+                            .padding(.top, 8)
+
                         Spacer(minLength: 0)
                     }
 
-                    LazyVGrid(columns: metrics.columns, spacing: metrics.spacing) {
-                        ForEach(Array(activeSeries.prefix(Self.gridCapacity))) { series in
-                            if let reading = series.reading(at: context.date, harmonicDepth: harmonicDepth) {
-                                Button {
-                                    selectedSeries = series
-                                } label: {
-                                    SarosPhaseGridCell(
-                                        saros: series.saros,
-                                        reading: reading,
-                                        date: context.date,
-                                        size: metrics.cellSize,
-                                        highlightRarity: nearestFlip?.saros == series.saros ? nearestFlip?.rarity : nil,
-                                        primeTint: primeColorsBySaros[series.saros]
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
+                    Path { path in
+                        guard let first = guidePoints.first else { return }
+                        path.move(to: first)
+                        for position in guidePoints.dropFirst() {
+                            path.addLine(to: position)
                         }
                     }
-                    .padding(.horizontal, metrics.horizontalPadding)
-                    .padding(.bottom, metrics.bottomPadding)
+                    .stroke(
+                        Color.secondary.opacity(0.16),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                    )
+
+                    ForEach(Array(spiralItems.enumerated()), id: \.element.id) { index, item in
+                        let isCenterEndpoint = index == 0 || index == spiralItems.count - 1
+                        let centerOffset = index == 0 ? -metrics.cellSize * 0.34 : metrics.cellSize * 0.34
+
+                        Button {
+                            selectedSeries = item.series
+                        } label: {
+                            SarosPhaseGridCell(
+                                saros: item.series.saros,
+                                reading: item.reading,
+                                size: metrics.cellSize * (isCenterEndpoint ? 0.68 : 0.82),
+                                spikeRarity: item.spike.rarity,
+                                primeTint: primeColorsBySaros[item.series.saros]
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .position(positions[index])
+                        .offset(x: isCenterEndpoint ? centerOffset : 0)
+                        .zIndex(isCenterEndpoint ? 1 : 0)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
         }
-        .task {
+        .task(id: activeSarosNonPartialOnly) {
             loadActiveSeries()
         }
         .refreshable {
@@ -86,9 +112,45 @@ struct SarosGridView: View {
         }
     }
 
-    private static let gridColumnCount = 5
-    private static let gridRowCount = 8
-    private static let gridCapacity = 40
+    private static let gridCapacity = SarosSquareSpiralGeometry.capacity
+
+    private var selectedSpiralRarity: FlipRarity {
+        let rarity = FlipRarity(rawValue: spiralRarityRaw)?.baseRarity ?? .rare
+        return rarity.supports(harmonicDepth: JournalSettings.clampedHarmonicDepth(harmonicDepth))
+            ? rarity
+            : .rare
+    }
+
+    private var spiralRaritySelector: some View {
+        HStack(spacing: 7) {
+            ForEach(
+                FlipRarity.eventBaseRarities.filter {
+                    $0.supports(harmonicDepth: JournalSettings.clampedHarmonicDepth(harmonicDepth))
+                }
+            ) { rarity in
+                Button {
+                    spiralRarityRaw = rarity.rawValue
+                } label: {
+                    Text(rarity.title)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(selectedSpiralRarity == rarity ? .black : rarity.color)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            selectedSpiralRarity == rarity ? rarity.color : Color.clear,
+                            in: Capsule()
+                        )
+                        .overlay {
+                            Capsule()
+                                .stroke(rarity.color.opacity(0.8), lineWidth: 1.5)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Square spiral spike rarity")
+    }
 
     private var primeColorsBySaros: [Int: Color] {
         tags.filter(\.isPrime).reduce(into: [Int: Color]()) { colors, tag in
@@ -98,43 +160,64 @@ struct SarosGridView: View {
 
     private struct GridMetrics {
         let cellSize: CGFloat
-        let spacing: CGFloat
         let horizontalPadding: CGFloat
-        let bottomPadding: CGFloat
-
-        var columns: [GridItem] {
-            Array(
-                repeating: GridItem(.fixed(cellSize), spacing: spacing),
-                count: SarosGridView.gridColumnCount
-            )
-        }
+        let contentRect: CGRect
     }
 
     private static func gridMetrics(in size: CGSize) -> GridMetrics {
         let horizontalPadding: CGFloat = 16
         let bottomPadding: CGFloat = 24
-        let topBreathingRoom: CGFloat = 78
-        let targetSpacing: CGFloat = 10
+        let topBreathingRoom: CGFloat = 126
         let availableWidth = max(size.width - horizontalPadding * 2, 1)
         let availableHeight = max(size.height - bottomPadding - topBreathingRoom, 1)
-        let widthCell = (availableWidth - targetSpacing * CGFloat(gridColumnCount - 1)) / CGFloat(gridColumnCount)
-        let heightCell = (availableHeight - targetSpacing * CGFloat(gridRowCount - 1)) / CGFloat(gridRowCount)
-        let cellSize = max(min(widthCell, heightCell), 34)
-        let horizontalSpacing = max(
-            (availableWidth - cellSize * CGFloat(gridColumnCount)) / CGFloat(max(gridColumnCount - 1, 1)),
-            4
-        )
-        let verticalSpacing = max(
-            (availableHeight - cellSize * CGFloat(gridRowCount)) / CGFloat(max(gridRowCount - 1, 1)),
-            4
-        )
+        let cellSize = max(min(availableWidth / 5.25, availableHeight / 5.25, 68), 42)
 
         return GridMetrics(
             cellSize: cellSize,
-            spacing: min(horizontalSpacing, verticalSpacing, 14),
             horizontalPadding: horizontalPadding,
-            bottomPadding: bottomPadding
+            contentRect: CGRect(
+                x: horizontalPadding,
+                y: topBreathingRoom,
+                width: availableWidth,
+                height: availableHeight
+            )
         )
+    }
+
+    private func spiralItems(at date: Date, rarity: FlipRarity) -> [SarosGridSpiralItem] {
+        let projected = activeSeries
+            .compactMap { series -> SarosGridSpiralItem? in
+                guard let reading = series.reading(at: date, harmonicDepth: harmonicDepth) else {
+                    return nil
+                }
+                guard let spike = SarosGridSpiralProjection.nearestSpike(
+                    reading: reading,
+                    family: rarity,
+                    now: date
+                ) else {
+                    return nil
+                }
+                return SarosGridSpiralItem(
+                    series: series,
+                    reading: reading,
+                    spike: spike
+                )
+            }
+            .sorted {
+                let leftDistance = abs($0.spike.date.timeIntervalSince(date))
+                let rightDistance = abs($1.spike.date.timeIntervalSince(date))
+                if leftDistance != rightDistance {
+                    return leftDistance < rightDistance
+                }
+                return $0.series.saros < $1.series.saros
+            }
+
+        return Array(projected.prefix(Self.gridCapacity)).sorted {
+            if $0.spike.date != $1.spike.date {
+                return $0.spike.date < $1.spike.date
+            }
+            return $0.series.saros < $1.series.saros
+        }
     }
 
     private func nearestFlip(at date: Date) -> SarosGridNearestFlip? {
@@ -177,12 +260,13 @@ struct SarosGridView: View {
 
     private func pulseReading(at date: Date) -> SarosPulseReading? {
         let resolvedSaros: Int?
-        if pulseSaros > 0 {
+        if pulseSaros > 0, activeSeries.contains(where: { $0.saros == pulseSaros }) {
             resolvedSaros = pulseSaros
         } else {
             resolvedSaros = try? SarosPulseCalculator.defaultActiveSaros(
                 at: date,
-                eclipseService: services.eclipseService
+                eclipseService: services.eclipseService,
+                policy: activeSarosPolicy
             )
         }
 
@@ -191,8 +275,13 @@ struct SarosGridView: View {
             saros: resolvedSaros,
             date: date,
             harmonicDepth: harmonicDepth,
-            eclipseService: services.eclipseService
+            eclipseService: services.eclipseService,
+            policy: activeSarosPolicy
         )
+    }
+
+    private var activeSarosPolicy: SarosActivityPolicy {
+        SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
     }
 
     private func moonReading(at date: Date) -> MoonPhaseOctalReading? {
@@ -203,28 +292,18 @@ struct SarosGridView: View {
     private func loadActiveSeries() {
         let now = Date()
         let eclipseService = services.eclipseService
+        let policy = activeSarosPolicy
 
         Task.detached(priority: .userInitiated) {
             let result: Result<[ActiveSarosPhaseSeries], Error> = Result {
-                try eclipseService.allSarosSeries()
-                    .filter { summary in
-                        summary.firstEclipseDate < now && summary.lastEclipseDate > now
-                    }
-                    .compactMap { summary -> ActiveSarosPhaseSeries? in
-                        guard let interval = try? eclipseService.previousAndNextEclipse(
-                            saros: summary.saros,
-                            around: now
-                        ) else {
-                            return nil
-                        }
-
+                try eclipseService.activeSarosIntervals(at: now, policy: policy)
+                    .map { active in
                         return ActiveSarosPhaseSeries(
-                            summary: summary,
-                            previousEclipse: interval.previous,
-                            nextEclipse: interval.next
+                            summary: active.summary,
+                            previousEclipse: active.interval.previous,
+                            nextEclipse: active.interval.next
                         )
                     }
-                    .sorted { $0.saros < $1.saros }
             }
 
             await MainActor.run {
@@ -244,6 +323,7 @@ struct SarosGridView: View {
 struct SarosCurrentWaveTimelineView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     @State private var activeSeries: [ActiveSarosPhaseSeries] = []
     @State private var currentFlip: SarosGridNearestFlip?
@@ -265,7 +345,7 @@ struct SarosCurrentWaveTimelineView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
         }
-        .task {
+        .task(id: activeSarosNonPartialOnly) {
             loadActiveSeries()
         }
         .onReceive(timer) { date in
@@ -310,28 +390,18 @@ struct SarosCurrentWaveTimelineView: View {
     private func loadActiveSeries() {
         let now = Date()
         let eclipseService = services.eclipseService
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
 
         Task.detached(priority: .userInitiated) {
             let result: Result<[ActiveSarosPhaseSeries], Error> = Result {
-                try eclipseService.allSarosSeries()
-                    .filter { summary in
-                        summary.firstEclipseDate < now && summary.lastEclipseDate > now
-                    }
-                    .compactMap { summary -> ActiveSarosPhaseSeries? in
-                        guard let interval = try? eclipseService.previousAndNextEclipse(
-                            saros: summary.saros,
-                            around: now
-                        ) else {
-                            return nil
-                        }
-
+                try eclipseService.activeSarosIntervals(at: now, policy: policy)
+                    .map { active in
                         return ActiveSarosPhaseSeries(
-                            summary: summary,
-                            previousEclipse: interval.previous,
-                            nextEclipse: interval.next
+                            summary: active.summary,
+                            previousEclipse: active.interval.previous,
+                            nextEclipse: active.interval.next
                         )
                     }
-                    .sorted { $0.saros < $1.saros }
             }
 
             await MainActor.run {
@@ -377,6 +447,127 @@ private struct ActiveSarosPhaseSeries: Identifiable, Hashable {
             next: nextEclipse,
             now: date,
             harmonicDepth: JournalSettings.clampedHarmonicDepth(harmonicDepth)
+        )
+    }
+}
+
+private struct SarosGridSpiralItem: Identifiable {
+    let series: ActiveSarosPhaseSeries
+    let reading: SarosClockReading
+    let spike: SarosGridProjectedSpike
+
+    var id: Int { series.saros }
+}
+
+struct SarosGridProjectedSpike: Hashable {
+    let date: Date
+    let binIndex: Int
+    let rarity: FlipRarity
+}
+
+enum SarosGridSpiralProjection {
+    static func nextCountdown(from countdowns: [SarosFlipCountdown]) -> SarosFlipCountdown? {
+        countdowns
+            .filter { $0.timeUntilFlip >= 0 }
+            .min {
+                if $0.timeUntilFlip != $1.timeUntilFlip {
+                    return $0.timeUntilFlip < $1.timeUntilFlip
+                }
+                return $0.rarity > $1.rarity
+            }
+    }
+
+    static func nearestSpike(
+        reading: SarosClockReading,
+        family: FlipRarity,
+        now: Date
+    ) -> SarosGridProjectedSpike? {
+        let family = family.baseRarity
+        let candidateFamilies = FlipRarity.eventBaseRarities.filter {
+            $0 >= family && $0.supports(harmonicDepth: reading.harmonicDepth)
+        }
+        let countdowns = candidateFamilies
+            .flatMap(\.subrarities)
+            .compactMap { reading.countdown(rarity: $0, now: now) }
+
+        let candidates = countdowns.flatMap { countdown -> [SarosGridProjectedSpike] in
+            let previousBin = max(countdown.targetBinIndex - countdown.binStride, 0)
+            return [
+                SarosGridProjectedSpike(
+                    date: countdown.periodStartDate,
+                    binIndex: previousBin,
+                    rarity: reading.flipRarity(forBinIndex: previousBin)
+                ),
+                SarosGridProjectedSpike(
+                    date: countdown.flipDate,
+                    binIndex: countdown.targetBinIndex,
+                    rarity: reading.flipRarity(forBinIndex: countdown.targetBinIndex)
+                )
+            ]
+        }
+        .filter { $0.rarity.contributes(toWaveformFamily: family) }
+
+        return candidates.min {
+            let leftDistance = abs($0.date.timeIntervalSince(now))
+            let rightDistance = abs($1.date.timeIntervalSince(now))
+            if leftDistance != rightDistance {
+                return leftDistance < rightDistance
+            }
+            if $0.date != $1.date {
+                return $0.date < $1.date
+            }
+            return $0.rarity > $1.rarity
+        }
+    }
+}
+
+enum SarosSquareSpiralGeometry {
+    static let capacity = 26
+
+    private static let clockwiseInwardCells: [(column: Int, row: Int)] = [
+        (0, 0), (1, 0), (2, 0), (3, 0), (4, 0),
+        (4, 1), (4, 2), (4, 3), (4, 4),
+        (3, 4), (2, 4), (1, 4), (0, 4),
+        (0, 3), (0, 2), (0, 1),
+        (1, 1), (2, 1), (3, 1),
+        (3, 2), (3, 3), (2, 3), (1, 3), (1, 2),
+        (2, 2)
+    ]
+
+    static func positions(count: Int, in rect: CGRect, nodeSize: CGFloat) -> [CGPoint] {
+        guard count > 0 else { return [] }
+        let center = point(for: (2, 2), in: rect, nodeSize: nodeSize)
+        if count == 1 { return [center] }
+
+        let middleCount = min(max(count - 2, 0), clockwiseInwardCells.count - 1)
+        return [center]
+            + clockwiseInwardCells.prefix(middleCount).map {
+                point(for: $0, in: rect, nodeSize: nodeSize)
+            }
+            + [center]
+    }
+
+    static func guidePoints(in rect: CGRect, nodeSize: CGFloat) -> [CGPoint] {
+        clockwiseInwardCells.map {
+            point(for: $0, in: rect, nodeSize: nodeSize)
+        }
+    }
+
+    private static func point(
+        for cell: (column: Int, row: Int),
+        in rect: CGRect,
+        nodeSize: CGFloat
+    ) -> CGPoint {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let step = min(
+            max((rect.width - nodeSize) / 4, 0),
+            max((rect.height - nodeSize) / 4, 0),
+            nodeSize * 1.08
+        )
+
+        return CGPoint(
+            x: center.x + CGFloat(cell.column - 2) * step,
+            y: center.y + CGFloat(cell.row - 2) * step
         )
     }
 }
@@ -583,6 +774,7 @@ private struct SarosSpikeWaveLayer: Identifiable {
 
 private struct SarosSpikeWaveCacheKey: Hashable {
     let harmonicDepth: Int
+    let nonPartialOnly: Bool
     let waveformModelID: String
     let parabolaAKey: Int
     let mergesCloseSpikes: Bool
@@ -1254,6 +1446,7 @@ private struct SarosSpikeWaveTimelineView: View {
     @AppStorage(JournalSettings.timelineWaveColorModeKey) private var timelineWaveColorModeRaw = TimelineWaveColorMode.current.rawValue
 
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     private let densityOptions: [FlipRarity] = [.rare, .epic, .legendary, .mythic]
 
@@ -2076,12 +2269,14 @@ private struct SarosSpikeWaveTimelineView: View {
             "\(Int(displayInterval.start.timeIntervalSince1970))",
             "\(Int(displayInterval.end.timeIntervalSince1970))",
             "\(pulseSaros > 0 ? pulseSaros : flip.saros)",
-            "\(flip.harmonicDepth)"
+            "\(flip.harmonicDepth)",
+            activeSarosNonPartialOnly ? "central" : "all"
         ].joined(separator: "-")
     }
 
     private var waveformTaskID: String {
         [
+            activeSarosNonPartialOnly ? "central" : "all",
             "\(Self.parabolaCacheKey(JournalWaveformSettings.currentParabolaA))",
             waveformMergeCloseSpikes ? "merged" : "raw",
             waveformNormalizedAmplitude ? "norm" : "weighted",
@@ -2107,7 +2302,7 @@ private struct SarosSpikeWaveTimelineView: View {
 
     private var currentWaveformOptions: JournalWaveformOptions {
         JournalWaveformOptions(
-            ignorePartialEclipses: false,
+            ignorePartialEclipses: activeSarosNonPartialOnly,
             mergeCloseSpikes: waveformMergeCloseSpikes,
             normalizedAmplitude: waveformNormalizedAmplitude,
             subdivisionDepth: clampedSubdivisionDepth,
@@ -2176,13 +2371,21 @@ private struct SarosSpikeWaveTimelineView: View {
     }
 
     private func pulseReading(at date: Date) -> SarosPulseReading? {
-        let resolvedSaros = pulseSaros > 0 ? pulseSaros : flip.saros
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
+        let configuredIsActive = pulseSaros > 0 &&
+            ((try? services.eclipseService.activeSarosInterval(
+                saros: pulseSaros,
+                at: date,
+                policy: policy
+            )) != nil)
+        let resolvedSaros = configuredIsActive ? pulseSaros : flip.saros
         guard resolvedSaros > 0 else { return nil }
         return try? SarosPulseCalculator.reading(
             saros: resolvedSaros,
             date: date,
             harmonicDepth: flip.harmonicDepth,
-            eclipseService: services.eclipseService
+            eclipseService: services.eclipseService,
+            policy: policy
         )
     }
 
@@ -2317,6 +2520,7 @@ private struct SarosSpikeWaveTimelineView: View {
         let waveformModel = JournalWaveformModel.parabola
         let parabolaA = JournalWaveformSettings.currentParabolaA
         let waveformOptions = currentWaveformOptions
+        let activityPolicy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
         let loadInterval = loadInterval
         let displayInterval = displayInterval
         let waveSampleCount = Self.waveSampleCount
@@ -2358,7 +2562,8 @@ private struct SarosSpikeWaveTimelineView: View {
                     eclipseService: eclipseService,
                     harmonicDepth: harmonicDepth,
                     minimumRarity: generationMinimumRarity,
-                    includeSeriesEclipseMetrics: true
+                    includeSeriesEclipseMetrics: true,
+                    policy: activityPolicy
                 )
 
                 let tickEvents = allRequiredEvents.filter {
@@ -2430,6 +2635,7 @@ private struct SarosSpikeWaveTimelineView: View {
     ) -> SarosSpikeWaveCacheKey {
         SarosSpikeWaveCacheKey(
             harmonicDepth: harmonicDepth,
+            nonPartialOnly: options.ignorePartialEclipses,
             waveformModelID: waveformModel.id,
             parabolaAKey: parabolaCacheKey(parabolaA),
             mergesCloseSpikes: options.mergeCloseSpikes,
@@ -2837,7 +3043,14 @@ private struct SarosSpikeWaveTimelineView: View {
     @MainActor
     private func loadPulseTicks() async {
         let displayInterval = displayInterval
-        let resolvedSaros = pulseSaros > 0 ? pulseSaros : flip.saros
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
+        let configuredIsActive = pulseSaros > 0 &&
+            ((try? services.eclipseService.activeSarosInterval(
+                saros: pulseSaros,
+                at: flip.observedAt,
+                policy: policy
+            )) != nil)
+        let resolvedSaros = configuredIsActive ? pulseSaros : flip.saros
         let harmonicDepth = flip.harmonicDepth
         let eclipseService = services.eclipseService
         let loaded = await Task.detached(priority: .utility) {
@@ -2846,7 +3059,8 @@ private struct SarosSpikeWaveTimelineView: View {
                 saros: resolvedSaros,
                 harmonicDepth: harmonicDepth,
                 eclipseService: eclipseService,
-                units: [.rollover, .giga, .mega, .kilo]
+                units: [.rollover, .giga, .mega, .kilo],
+                policy: policy
             )) ?? []
         }.value
         pulseTicks = loaded
@@ -3844,46 +4058,31 @@ private struct SarosSpikeWaveAxisLabel: View {
 private struct SarosPhaseGridCell: View {
     let saros: Int
     let reading: SarosClockReading
-    let date: Date
     let size: CGFloat
-    let highlightRarity: FlipRarity?
+    let spikeRarity: FlipRarity?
     let primeTint: Color?
 
-    private var upcomingRarity: FlipRarity? {
-        reading.rarityCountdowns(now: date)
-            .filter { $0.timeUntilFlip >= 0 && $0.timeUntilFlip <= 24 * 60 * 60 && $0.rarity >= .epic }
-            .sorted {
-                if $0.timeUntilFlip != $1.timeUntilFlip {
-                    return $0.timeUntilFlip < $1.timeUntilFlip
-                }
-                return $0.rarity > $1.rarity
-            }.first?.rarity
-    }
-
-    private var tint: Color {
-        highlightRarity?.color ?? primeTint ?? upcomingRarity?.color ?? .white
-    }
-
-    private var isHighlighted: Bool {
-        highlightRarity != nil || upcomingRarity != nil || primeTint != nil
-    }
+    private var glyphTint: Color { primeTint ?? .white }
+    private var ringTint: Color { spikeRarity?.color ?? .secondary }
 
     var body: some View {
         OctalGlyph(
             value: reading.octalAddress,
             depth: reading.harmonicDepth,
-            color: tint
+            color: glyphTint
         )
         .frame(width: size * 0.66, height: size * 0.66)
         .padding(size * 0.17)
-        .background(.black.opacity(isHighlighted ? 0.38 : 0.18), in: Circle())
+        .background(.black.opacity(0.46), in: Circle())
         .overlay {
             Circle()
-                .stroke(tint.opacity(isHighlighted ? 0.62 : 0.24), lineWidth: isHighlighted ? 2 : 1)
+                .stroke(ringTint.opacity(spikeRarity == nil ? 0.3 : 0.92), lineWidth: 2.5)
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Saros \(saros), phase \(reading.octalAddress)")
+        .accessibilityLabel(
+            "Saros \(saros), phase \(reading.octalAddress), selected spike \(spikeRarity?.title ?? "unknown")"
+        )
     }
 }
 
@@ -5102,49 +5301,66 @@ fileprivate struct SarosFlipMonthDistribution: Hashable {
     }
 }
 
+private struct SarosFlipDistributionCacheKey: Hashable {
+    let harmonicDepth: Int
+    let policy: SarosActivityPolicy
+}
+
 actor SarosFlipDistributionStore {
-    private var monthCache: [Int: [String: SarosFlipMonthDistribution]] = [:]
-    private var dayCache: [Int: [Int: SarosFlipDayDistribution]] = [:]
-    private var prewarmingDepths: Set<Int> = []
+    private var monthCache: [SarosFlipDistributionCacheKey: [String: SarosFlipMonthDistribution]] = [:]
+    private var dayCache: [SarosFlipDistributionCacheKey: [Int: SarosFlipDayDistribution]] = [:]
+    private var prewarmingKeys: Set<SarosFlipDistributionCacheKey> = []
 
     func prewarm(
         around date: Date,
         harmonicDepth rawHarmonicDepth: Int,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy
     ) async {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
-        guard !prewarmingDepths.contains(harmonicDepth) else { return }
-        prewarmingDepths.insert(harmonicDepth)
+        let cacheKey = SarosFlipDistributionCacheKey(
+            harmonicDepth: harmonicDepth,
+            policy: policy
+        )
+        guard !prewarmingKeys.contains(cacheKey) else { return }
+        prewarmingKeys.insert(cacheKey)
 
         _ = monthDistributions(
             for: SarosGlobalTimelineMonth.months(around: date),
             harmonicDepth: harmonicDepth,
-            eclipseService: eclipseService
+            eclipseService: eclipseService,
+            policy: policy
         )
-        prewarmingDepths.remove(harmonicDepth)
+        prewarmingKeys.remove(cacheKey)
     }
 
     fileprivate func monthDistributions(
         for months: [SarosGlobalTimelineMonth],
         harmonicDepth rawHarmonicDepth: Int,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy
     ) -> [String: SarosFlipMonthDistribution] {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
-        let cachedMonths = monthCache[harmonicDepth] ?? [:]
+        let cacheKey = SarosFlipDistributionCacheKey(
+            harmonicDepth: harmonicDepth,
+            policy: policy
+        )
+        let cachedMonths = monthCache[cacheKey] ?? [:]
         let missingMonths = months.filter { cachedMonths[$0.id] == nil }
 
         if !missingMonths.isEmpty,
            let computed = try? computeDistributions(
             for: missingMonths,
             harmonicDepth: harmonicDepth,
-            eclipseService: eclipseService
+            eclipseService: eclipseService,
+            policy: policy
            )
         {
-            monthCache[harmonicDepth, default: [:]].merge(computed.months) { _, new in new }
-            dayCache[harmonicDepth, default: [:]].merge(computed.days) { _, new in new }
+            monthCache[cacheKey, default: [:]].merge(computed.months) { _, new in new }
+            dayCache[cacheKey, default: [:]].merge(computed.days) { _, new in new }
         }
 
-        let currentMonths = monthCache[harmonicDepth] ?? [:]
+        let currentMonths = monthCache[cacheKey] ?? [:]
         return Dictionary(uniqueKeysWithValues: months.compactMap { month in
             currentMonths[month.id].map { (month.id, $0) }
         })
@@ -5152,16 +5368,22 @@ actor SarosFlipDistributionStore {
 
     fileprivate func dayDistribution(
         for day: Date,
-        harmonicDepth rawHarmonicDepth: Int
+        harmonicDepth rawHarmonicDepth: Int,
+        policy: SarosActivityPolicy
     ) -> SarosFlipDayDistribution? {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
-        return dayCache[harmonicDepth]?[SarosGlobalTimelineBuilder.dayKey(for: day)]
+        let cacheKey = SarosFlipDistributionCacheKey(
+            harmonicDepth: harmonicDepth,
+            policy: policy
+        )
+        return dayCache[cacheKey]?[SarosGlobalTimelineBuilder.dayKey(for: day)]
     }
 
     private func computeDistributions(
         for months: [SarosGlobalTimelineMonth],
         harmonicDepth: Int,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy
     ) throws -> (
         months: [String: SarosFlipMonthDistribution],
         days: [Int: SarosFlipDayDistribution]
@@ -5176,7 +5398,8 @@ actor SarosFlipDistributionStore {
                 in: month.dateInterval,
                 summaries: summaries,
                 eclipseService: eclipseService,
-                harmonicDepth: harmonicDepth
+                harmonicDepth: harmonicDepth,
+                policy: policy
             )
             var monthDistribution = SarosFlipMonthDistribution()
 
@@ -5197,6 +5420,7 @@ actor SarosFlipDistributionStore {
 private struct SarosGlobalFlipTimelineView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     let referenceDate: Date
     let referenceEvent: SarosPhaseFlipEvent?
@@ -5304,7 +5528,7 @@ private struct SarosGlobalFlipTimelineView: View {
                     }
                 }
             }
-            .task(id: "\(harmonicDepth)-\(activeReferenceDate.timeIntervalSince1970)-\(pastMonthRadius)-\(futureMonthRadius)") {
+            .task(id: "\(harmonicDepth)-\(activeSarosNonPartialOnly)-\(activeReferenceDate.timeIntervalSince1970)-\(pastMonthRadius)-\(futureMonthRadius)") {
                 loadMonthDistributions()
                 scrollToReferenceMonth(with: proxy)
                 openReferenceMonth()
@@ -5344,12 +5568,14 @@ private struct SarosGlobalFlipTimelineView: View {
         let harmonicDepth = harmonicDepth
         let eclipseService = services.eclipseService
         let store = services.sarosFlipDistributionStore
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
 
         Task {
             monthDistributions = await store.monthDistributions(
                 for: months,
                 harmonicDepth: harmonicDepth,
-                eclipseService: eclipseService
+                eclipseService: eclipseService,
+                policy: policy
             )
         }
     }
@@ -5397,6 +5623,7 @@ private struct SarosCalendarReferencePicker: View {
 private struct SarosGlobalMonthTimelineView: View {
     @EnvironmentObject private var services: AppServices
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey) private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
 
     let referenceDate: Date
     let referenceEvent: SarosPhaseFlipEvent?
@@ -5478,7 +5705,7 @@ private struct SarosGlobalMonthTimelineView: View {
             }
             .navigationTitle(visibleMonth.title)
             .navigationBarTitleDisplayMode(.inline)
-            .task(id: "\(visibleMonth.id)-\(harmonicDepth)") {
+            .task(id: "\(visibleMonth.id)-\(harmonicDepth)-\(activeSarosNonPartialOnly)") {
                 loadFixedTimeline()
                 scrollToReference(with: proxy, delay: 0.18)
             }
@@ -5510,6 +5737,7 @@ private struct SarosGlobalMonthTimelineView: View {
 
         let eclipseService = services.eclipseService
         let harmonicDepth = harmonicDepth
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
         let days = days
         let monthInterval = visibleMonth.dateInterval
 
@@ -5521,7 +5749,8 @@ private struct SarosGlobalMonthTimelineView: View {
                     in: monthInterval,
                     summaries: summaries,
                     eclipseService: eclipseService,
-                    harmonicDepth: harmonicDepth
+                    harmonicDepth: harmonicDepth,
+                    policy: policy
                 )
 
                 return Dictionary(uniqueKeysWithValues: days.enumerated().map { index, day in
@@ -6266,7 +6495,8 @@ private enum SarosGlobalTimelineBuilder {
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
         minimumRarity: FlipRarity = .epic,
-        includeSeriesEclipseMetrics: Bool = false
+        includeSeriesEclipseMetrics: Bool = false,
+        policy: SarosActivityPolicy = .allEclipses
     ) -> [SarosGlobalFlipEvent] {
         let start = calendar.startOfDay(for: day)
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
@@ -6276,7 +6506,8 @@ private enum SarosGlobalTimelineBuilder {
             eclipseService: eclipseService,
             harmonicDepth: rawHarmonicDepth,
             minimumRarity: minimumRarity,
-            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics
+            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics,
+            policy: policy
         )
     }
 
@@ -6286,7 +6517,8 @@ private enum SarosGlobalTimelineBuilder {
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
         minimumRarity: FlipRarity = .epic,
-        includeSeriesEclipseMetrics: Bool = false
+        includeSeriesEclipseMetrics: Bool = false,
+        policy: SarosActivityPolicy = .allEclipses
     ) -> [Int: [SarosGlobalFlipEvent]] {
         Dictionary(grouping: events(
             in: interval,
@@ -6294,7 +6526,8 @@ private enum SarosGlobalTimelineBuilder {
             eclipseService: eclipseService,
             harmonicDepth: rawHarmonicDepth,
             minimumRarity: minimumRarity,
-            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics
+            includeSeriesEclipseMetrics: includeSeriesEclipseMetrics,
+            policy: policy
         )) { event in
             dayKey(for: event.date)
         }
@@ -6310,7 +6543,8 @@ private enum SarosGlobalTimelineBuilder {
         eclipseService: any EclipseService,
         harmonicDepth rawHarmonicDepth: Int,
         minimumRarity: FlipRarity = .epic,
-        includeSeriesEclipseMetrics: Bool = false
+        includeSeriesEclipseMetrics: Bool = false,
+        policy: SarosActivityPolicy = .allEclipses
     ) -> [SarosGlobalFlipEvent] {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
         let start = interval.start
@@ -6322,7 +6556,8 @@ private enum SarosGlobalTimelineBuilder {
                 summary: summary,
                 start: start,
                 end: end,
-                eclipseService: eclipseService
+                eclipseService: eclipseService,
+                policy: policy
             )
 
             for interval in intervals {
@@ -6510,33 +6745,35 @@ private enum SarosGlobalTimelineBuilder {
         summary: SarosSeriesSummary,
         start: Date,
         end: Date,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy
     ) -> [SarosInterval] {
-        let duration = end.timeIntervalSince(start)
-        let probes = [
-            start,
-            start.addingTimeInterval(duration / 2),
-            end.addingTimeInterval(-1)
-        ]
-
-        var seen = Set<String>()
-        var intervals: [SarosInterval] = []
-
-        for probe in probes {
-            guard let interval = try? eclipseService.previousAndNextEclipse(
-                saros: summary.saros,
-                around: probe
-            ) else {
-                continue
-            }
-
-            let key = "\(interval.previous.id)-\(interval.next.id)"
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            intervals.append(interval)
+        guard let eclipses = try? eclipseService.eclipses(forSaros: summary.saros) else {
+            return []
         }
 
-        return intervals
+        let eligible = eclipses
+            .filter(policy.includes)
+            .sorted { $0.date < $1.date }
+        guard eligible.count >= 2 else { return [] }
+
+        return zip(eligible, eligible.dropFirst()).compactMap { pair in
+            let (previous, next) = pair
+            guard previous.date < end, next.date > start else { return nil }
+            let duration = next.date.timeIntervalSince(previous.date)
+            guard duration > 0 else { return nil }
+            let probe = min(max(start, previous.date), next.date)
+            let phase = min(
+                max(probe.timeIntervalSince(previous.date) / duration, 0),
+                1 - Double.ulpOfOne
+            )
+            return SarosInterval(
+                saros: summary.saros,
+                previous: previous,
+                next: next,
+                normalizedPhase: phase
+            )
+        }
     }
 
     private static func firstCandidateBin(reading: SarosClockReading, rarity: FlipRarity) -> Int? {

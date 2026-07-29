@@ -23,7 +23,12 @@ final class SarosEventContextService {
         harmonicDepth rawHarmonicDepth: Int = JournalSettings.supportedHarmonicDepth.upperBound
     ) throws -> JournalEventContext {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
-        let allSpikes = try candidateSpikes(around: date, harmonicDepth: harmonicDepth)
+        let activityPolicy = JournalSettings.currentActiveSarosPolicy
+        let allSpikes = try candidateSpikes(
+            around: date,
+            harmonicDepth: harmonicDepth,
+            activityPolicy: activityPolicy
+        )
         let past = allSpikes
             .filter { $0.date <= date }
             .sorted { $0.date > $1.date }
@@ -53,7 +58,8 @@ final class SarosEventContextService {
             try? closestSarosPhase(
                 at: date,
                 closestSpike: $0,
-                harmonicDepth: harmonicDepth
+                harmonicDepth: harmonicDepth,
+                activityPolicy: activityPolicy
             )
         }
 
@@ -72,15 +78,12 @@ final class SarosEventContextService {
     }
 
     func closestEclipse(to date: Date) throws -> Eclipse {
-        let candidates = try eclipseService.allSarosSeries()
-            .filter { $0.firstEclipseDate <= date && $0.lastEclipseDate >= date }
-            .flatMap { summary -> [Eclipse] in
-                guard let interval = try? eclipseService.previousAndNextEclipse(
-                    saros: summary.saros,
-                    around: date
-                ) else {
-                    return []
-                }
+        let candidates = try eclipseService.activeSarosIntervals(
+            at: date,
+            policy: JournalSettings.currentActiveSarosPolicy
+        )
+            .flatMap { activeSeries -> [Eclipse] in
+                let interval = activeSeries.interval
                 return [eclipseWithMetrics(interval.previous), eclipseWithMetrics(interval.next)]
             }
 
@@ -105,19 +108,23 @@ final class SarosEventContextService {
         return try closestSarosPhase(
             at: context.eventDate,
             closestSpike: closestSpike,
-            harmonicDepth: harmonicDepth
+            harmonicDepth: harmonicDepth,
+            activityPolicy: JournalSettings.currentActiveSarosPolicy
         )
     }
 
     private func closestSarosPhase(
         at date: Date,
         closestSpike: JournalSpikeReference,
-        harmonicDepth: Int
+        harmonicDepth: Int,
+        activityPolicy: SarosActivityPolicy
     ) throws -> JournalSarosPhaseReference {
-        guard let interval = try eclipseService.previousAndNextEclipse(
+        guard let interval = try eclipseService.activeSarosInterval(
             saros: closestSpike.saros,
-            around: date
-        ) else {
+            at: date,
+            policy: activityPolicy
+        )?.interval
+        else {
             throw EclipseServiceError.sarosNotFound(closestSpike.saros)
         }
 
@@ -144,6 +151,7 @@ final class SarosEventContextService {
         paddingDuration: TimeInterval = 172_800
     ) throws -> [JournalSpikeReference] {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        let activityPolicy = JournalSettings.currentActiveSarosPolicy
         let anchorOffsets: [TimeInterval] = [
             -paddingDuration,
             -displayDuration,
@@ -157,7 +165,11 @@ final class SarosEventContextService {
         for offset in anchorOffsets {
             do {
                 let anchorDate = date.addingTimeInterval(offset)
-                for spike in try candidateSpikes(around: anchorDate, harmonicDepth: harmonicDepth) {
+                for spike in try candidateSpikes(
+                    around: anchorDate,
+                    harmonicDepth: harmonicDepth,
+                    activityPolicy: activityPolicy
+                ) {
                     upsert(spike, into: &spikesByKey)
                 }
             } catch {
@@ -188,19 +200,22 @@ final class SarosEventContextService {
 
     private func candidateSpikes(
         around date: Date,
-        harmonicDepth: Int
+        harmonicDepth: Int,
+        activityPolicy: SarosActivityPolicy
     ) throws -> [JournalSpikeReference] {
-        let summaries = try eclipseService.allSarosSeries()
-            .filter { $0.firstEclipseDate < date && $0.lastEclipseDate > date }
+        let activeIntervals = try eclipseService.activeSarosIntervals(
+            at: date,
+            policy: activityPolicy
+        )
+            .map(\.interval)
             .sorted { $0.saros < $1.saros }
         let rarities = FlipRarity.eventRarities(for: harmonicDepth)
             .filter { $0 >= .epic }
         var spikesByKey: [String: JournalSpikeReference] = [:]
 
-        for summary in summaries {
-            guard let interval = try eclipseService.previousAndNextEclipse(saros: summary.saros, around: date),
-                  let reading = try? SarosClockCalculator.reading(
-                    saros: summary.saros,
+        for interval in activeIntervals {
+            guard let reading = try? SarosClockCalculator.reading(
+                    saros: interval.saros,
                     previous: interval.previous,
                     next: interval.next,
                     now: date,

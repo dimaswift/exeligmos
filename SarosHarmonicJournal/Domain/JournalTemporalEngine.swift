@@ -457,7 +457,9 @@ enum JournalTemporalEngine {
         parabolaA: Double = JournalWaveformSettings.currentParabolaA,
         options: JournalWaveformOptions = .current
     ) -> JournalWaveMetricsSnapshot {
-        let sorted = spikes.sorted { $0.date < $1.date }
+        let sorted = spikes
+            .filter { !options.ignorePartialEclipses || !$0.isPartialEclipse }
+            .sorted { $0.date < $1.date }
         let majorPeriod: TimeInterval
         if let first = sorted.first?.date, let last = sorted.last?.date {
             majorPeriod = max(last.timeIntervalSince(first), 0)
@@ -505,15 +507,17 @@ enum JournalTemporalEngine {
         spikes: [JournalSpikeReference],
         options: JournalWaveformOptions
     ) -> [SpikeCluster] {
-        let sortedSpikes = spikes.sorted { lhs, rhs in
-            if lhs.date != rhs.date {
-                return lhs.date < rhs.date
+        let sortedSpikes = spikes
+            .filter { !options.ignorePartialEclipses || !$0.isPartialEclipse }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date {
+                    return lhs.date < rhs.date
+                }
+                if lhs.rarity != rhs.rarity {
+                    return lhs.rarity > rhs.rarity
+                }
+                return lhs.saros < rhs.saros
             }
-            if lhs.rarity != rhs.rarity {
-                return lhs.rarity > rhs.rarity
-            }
-            return lhs.saros < rhs.saros
-        }
 
         guard options.mergeCloseSpikes else {
             return sortedSpikes.map { SpikeCluster(primary: $0, contributors: [$0]) }

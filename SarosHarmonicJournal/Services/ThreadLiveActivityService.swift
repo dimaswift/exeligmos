@@ -485,26 +485,38 @@ enum ThreadLiveActivityService {
         eclipseService: any EclipseService
     ) -> LivePulseBounds? {
         let configuredSaros = UserDefaults.standard.integer(forKey: JournalSettings.pulseSarosKey)
+        let policy = JournalSettings.currentActiveSarosPolicy
         let saros: Int?
-        if configuredSaros > 0 {
+        if configuredSaros > 0,
+           (try? eclipseService.activeSarosInterval(
+                saros: configuredSaros,
+                at: date,
+                policy: policy
+           )) != nil
+        {
             saros = configuredSaros
         } else {
             saros = try? SarosPulseCalculator.defaultActiveSaros(
                 at: date,
-                eclipseService: eclipseService
+                eclipseService: eclipseService,
+                policy: policy
             )
         }
 
         guard let saros,
-              let interval = try? eclipseService.previousAndNextEclipse(saros: saros, around: date)
+              let active = try? eclipseService.activeSarosInterval(
+                saros: saros,
+                at: date,
+                policy: policy
+              )
         else {
             return nil
         }
 
         return LivePulseBounds(
             saros: saros,
-            startDate: interval.previous.date,
-            endDate: interval.next.date
+            startDate: active.interval.previous.date,
+            endDate: active.interval.next.date
         )
     }
 

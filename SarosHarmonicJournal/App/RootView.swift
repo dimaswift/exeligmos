@@ -40,6 +40,8 @@ struct RootView: View {
     @Query private var entries: [JournalEntry]
     @Query(sort: \JournalTag.createdAt, order: .forward) private var tags: [JournalTag]
     @AppStorage(JournalSettings.harmonicDepthKey) private var harmonicDepth = JournalSettings.defaultHarmonicDepth
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey)
+    private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.pulseSarosKey) private var pulseSaros = 0
     @AppStorage(JournalSettings.onboardingCompletedKey) private var onboardingCompleted = false
     @AppStorage(JournalSettings.syncServerURLKey) private var syncServerURL = JournalSettings.defaultSyncServerURL
@@ -160,6 +162,10 @@ struct RootView: View {
             consumeCompletedCountdownIfNeeded()
         }
         .onChange(of: harmonicDepth) { _, _ in
+            prewarmSarosFlipDistribution()
+            refreshSarosEventNotifications()
+        }
+        .onChange(of: activeSarosNonPartialOnly) { _, _ in
             prewarmSarosFlipDistribution()
             refreshSarosEventNotifications()
         }
@@ -341,11 +347,13 @@ struct RootView: View {
     }
 
     private func prewarmSarosFlipDistribution() {
+        let policy = SarosActivityPolicy(nonPartialOnly: activeSarosNonPartialOnly)
         Task {
             await services.sarosFlipDistributionStore.prewarm(
                 around: Date(),
                 harmonicDepth: harmonicDepth,
-                eclipseService: services.eclipseService
+                eclipseService: services.eclipseService,
+                policy: policy
             )
         }
     }
@@ -2341,6 +2349,8 @@ private struct LiveTrackingRolloverObserver: View {
     @EnvironmentObject private var services: AppServices
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \TrackedEntity.createdAt, order: .forward) private var entities: [TrackedEntity]
+    @AppStorage(JournalSettings.activeSarosNonPartialOnlyKey)
+    private var activeSarosNonPartialOnly = JournalSettings.defaultActiveSarosNonPartialOnly
     @AppStorage(JournalSettings.widgetWaveformKilosarosRangeKey) private var widgetWaveformKilosarosRange = JournalWaveformSettings.defaultWidgetWaveformKilosarosRange
 
     @State private var isUpdating = false
@@ -2368,6 +2378,11 @@ private struct LiveTrackingRolloverObserver: View {
                 }
             }
             .onChange(of: widgetWaveformKilosarosRange) { _, _ in
+                Task {
+                    await rollOverIfNeeded(at: Date(), forceJournalRefresh: true)
+                }
+            }
+            .onChange(of: activeSarosNonPartialOnly) { _, _ in
                 Task {
                     await rollOverIfNeeded(at: Date(), forceJournalRefresh: true)
                 }

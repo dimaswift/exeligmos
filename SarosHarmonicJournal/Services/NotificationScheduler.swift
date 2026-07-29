@@ -250,6 +250,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
         let now = Date()
         let depth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
+        let activityPolicy = JournalSettings.currentActiveSarosPolicy
         let interval = DateInterval(
             start: now.addingTimeInterval(-horizon),
             end: now.addingTimeInterval(horizon)
@@ -270,7 +271,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             in: interval,
             summaries: summaries,
             eclipseService: eclipseService,
-            harmonicDepth: depth
+            harmonicDepth: depth,
+            activityPolicy: activityPolicy
         )
         let timelineEvents = Self.distinctTimelineEvents(events)
         let peakCandidates = timelineEvents.enumerated()
@@ -307,20 +309,24 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
 
         let configuredPulseSaros = UserDefaults.standard.integer(forKey: JournalSettings.pulseSarosKey)
-        let pulseSaros = configuredPulseSaros > 0
+        let activeSaros = (
+            try? eclipseService.activeSarosIntervals(
+                at: now,
+                policy: activityPolicy
+            )
+        ) ?? []
+        let activeSarosNumbers = Set(activeSaros.map(\.summary.saros))
+        let pulseSaros = configuredPulseSaros > 0 && activeSarosNumbers.contains(configuredPulseSaros)
             ? configuredPulseSaros
-            : summaries
-                .filter { $0.firstEclipseDate < now && $0.lastEclipseDate > now }
-                .map(\.saros)
-                .sorted()
-                .first
+            : activeSaros.first?.summary.saros
         if let pulseSaros {
             await scheduleGigaPulseNotifications(
                 saros: pulseSaros,
                 eclipseService: eclipseService,
                 harmonicDepth: depth,
                 now: now,
-                horizon: horizon
+                horizon: horizon,
+                activityPolicy: activityPolicy
             )
         }
 
@@ -441,6 +447,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         harmonicDepth: Int,
         now: Date,
         horizon: TimeInterval,
+        activityPolicy: SarosActivityPolicy,
         limit: Int = 24
     ) async {
         let displayInterval = DateInterval(
@@ -451,7 +458,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             in: displayInterval,
             saros: saros,
             harmonicDepth: harmonicDepth,
-            eclipseService: eclipseService
+            eclipseService: eclipseService,
+            policy: activityPolicy
         ) else {
             return
         }
@@ -464,7 +472,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             await scheduleGigaPulseNotification(
                 tick: tick,
                 eclipseService: eclipseService,
-                harmonicDepth: harmonicDepth
+                harmonicDepth: harmonicDepth,
+                activityPolicy: activityPolicy
             )
         }
     }
@@ -472,14 +481,16 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     private func scheduleGigaPulseNotification(
         tick: SarosPulseTick,
         eclipseService: any EclipseService,
-        harmonicDepth: Int
+        harmonicDepth: Int,
+        activityPolicy: SarosActivityPolicy
     ) async {
         let notifyDate = tick.date.addingTimeInterval(-Self.waveformNotificationLeadTime)
         let pulseReading = try? SarosPulseCalculator.reading(
             saros: tick.saros,
             date: tick.date.addingTimeInterval(0.001),
             harmonicDepth: harmonicDepth,
-            eclipseService: eclipseService
+            eclipseService: eclipseService,
+            policy: activityPolicy
         )
 
         let content = UNMutableNotificationContent()
@@ -951,7 +962,8 @@ private extension NotificationScheduler {
         in interval: DateInterval,
         summaries: [SarosSeriesSummary],
         eclipseService: any EclipseService,
-        harmonicDepth rawHarmonicDepth: Int
+        harmonicDepth rawHarmonicDepth: Int,
+        activityPolicy: SarosActivityPolicy
     ) -> [ScheduledSarosEvent] {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
         let start = interval.start
@@ -963,7 +975,8 @@ private extension NotificationScheduler {
                 summary: summary,
                 start: start,
                 end: end,
-                eclipseService: eclipseService
+                eclipseService: eclipseService,
+                activityPolicy: activityPolicy
             ) {
                 guard let reading = try? SarosClockCalculator.reading(
                     saros: summary.saros,
@@ -1052,7 +1065,8 @@ private extension NotificationScheduler {
         summary: SarosSeriesSummary,
         start: Date,
         end: Date,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        activityPolicy: SarosActivityPolicy
     ) -> [SarosInterval] {
         let duration = end.timeIntervalSince(start)
         let probes = [
@@ -1064,10 +1078,11 @@ private extension NotificationScheduler {
         var intervals: [SarosInterval] = []
 
         for probe in probes {
-            guard let interval = try? eclipseService.previousAndNextEclipse(
+            guard let interval = try? eclipseService.activeSarosInterval(
                 saros: summary.saros,
-                around: probe
-            ) else {
+                at: probe,
+                policy: activityPolicy
+            )?.interval else {
                 continue
             }
 

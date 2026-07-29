@@ -3,6 +3,110 @@ import XCTest
 @testable import SarosHarmonicJournal
 
 final class SarosClockTests: XCTestCase {
+    func testSarosSpiralSelectsEarliestIncomingSpikeAndHighestRarityOnTie() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let later = SarosFlipCountdown(
+            order: 6,
+            rarity: .mythicDigit(7),
+            binStride: 1,
+            targetBinIndex: 30,
+            targetOctalAddress: "777777",
+            periodStartDate: now,
+            flipDate: now.addingTimeInterval(30),
+            timeUntilFlip: 30
+        )
+        let lowerRarity = SarosFlipCountdown(
+            order: 3,
+            rarity: .rareDigit(2),
+            binStride: 1,
+            targetBinIndex: 10,
+            targetOctalAddress: "123222",
+            periodStartDate: now,
+            flipDate: now.addingTimeInterval(10),
+            timeUntilFlip: 10
+        )
+        let higherRarity = SarosFlipCountdown(
+            order: 5,
+            rarity: .legendaryDigit(2),
+            binStride: 1,
+            targetBinIndex: 10,
+            targetOctalAddress: "122222",
+            periodStartDate: now,
+            flipDate: now.addingTimeInterval(10),
+            timeUntilFlip: 10
+        )
+        let elapsed = SarosFlipCountdown(
+            order: 6,
+            rarity: .mythicDigit(7),
+            binStride: 1,
+            targetBinIndex: 0,
+            targetOctalAddress: "777777",
+            periodStartDate: now.addingTimeInterval(-20),
+            flipDate: now.addingTimeInterval(-1),
+            timeUntilFlip: -1
+        )
+
+        let selected = try XCTUnwrap(
+            SarosGridSpiralProjection.nextCountdown(
+                from: [later, lowerRarity, elapsed, higherRarity]
+            )
+        )
+
+        XCTAssertEqual(selected.timeUntilFlip, 10)
+        XCTAssertEqual(selected.rarity, .legendaryDigit(2))
+    }
+
+    func testSquareSarosSpiralSharesCenterBetweenFirstAndLastGlyph() throws {
+        let rect = CGRect(x: 0, y: 0, width: 350, height: 500)
+        let positions = SarosSquareSpiralGeometry.positions(
+            count: SarosSquareSpiralGeometry.capacity,
+            in: rect,
+            nodeSize: 60
+        )
+
+        XCTAssertEqual(positions.count, 26)
+        XCTAssertEqual(positions.first, positions.last)
+        XCTAssertEqual(positions.first, CGPoint(x: rect.midX, y: rect.midY))
+        XCTAssertEqual(Set(positions.dropFirst().dropLast()).count, 24)
+
+        let guide = SarosSquareSpiralGeometry.guidePoints(in: rect, nodeSize: 60)
+        XCTAssertEqual(guide.count, 25)
+        XCTAssertEqual(guide.last, CGPoint(x: rect.midX, y: rect.midY))
+    }
+
+    func testSquareSpiralProjectionUsesSelectedWaveformFamilyAroundNow() throws {
+        let now = Fixtures.previousDate.addingTimeInterval(Fixtures.interval * 0.47)
+        let reading = try SarosClockCalculator.reading(
+            saros: 141,
+            previous: Fixtures.previous,
+            next: Fixtures.next,
+            now: now,
+            harmonicDepth: 6
+        )
+
+        let triplex = try XCTUnwrap(
+            SarosGridSpiralProjection.nearestSpike(
+                reading: reading,
+                family: .rare,
+                now: now
+            )
+        )
+        let nihil = try XCTUnwrap(
+            SarosGridSpiralProjection.nearestSpike(
+                reading: reading,
+                family: .mythic,
+                now: now
+            )
+        )
+
+        XCTAssertTrue(triplex.rarity.contributes(toWaveformFamily: .rare))
+        XCTAssertTrue(nihil.rarity.contributes(toWaveformFamily: .mythic))
+        XCTAssertLessThanOrEqual(
+            abs(triplex.date.timeIntervalSince(now)),
+            abs(nihil.date.timeIntervalSince(now))
+        )
+    }
+
     func testPhotoBoothMirrorReflectsPositiveSide() throws {
         let image = Self.splitColorImage()
         let mirrored = try XCTUnwrap(
@@ -61,6 +165,97 @@ final class SarosClockTests: XCTestCase {
         XCTAssertNotNil(eclipse.gamma)
         XCTAssertNotNil(eclipse.magnitude)
         XCTAssertFalse(geometry.polygons.isEmpty)
+    }
+
+    func testNonPartialSolarTypeUsesExplicitCentralEclipseAllowList() {
+        XCTAssertTrue(EclipseType.totalSolar.isNonPartialSolar)
+        XCTAssertTrue(EclipseType.annularSolar.isNonPartialSolar)
+        XCTAssertTrue(EclipseType.hybridSolar.isNonPartialSolar)
+
+        XCTAssertFalse(EclipseType.partialSolar.isNonPartialSolar)
+        XCTAssertFalse(EclipseType.totalLunar.isNonPartialSolar)
+        XCTAssertFalse(EclipseType.partialLunar.isNonPartialSolar)
+        XCTAssertFalse(EclipseType.penumbralLunar.isNonPartialSolar)
+        XCTAssertFalse(EclipseType.unknown.isNonPartialSolar)
+
+        let eclipses = EclipseType.allCases.map { type in
+            Eclipse(
+                id: type.rawValue,
+                saros: 1,
+                date: .distantPast,
+                type: type,
+                maximumPoint: nil,
+                gamma: nil,
+                magnitude: nil,
+                durationSeconds: nil,
+                pathWidthKm: nil,
+                visibilitySummary: nil
+            )
+        }
+
+        XCTAssertEqual(
+            eclipses.filter(SarosActivityPolicy.nonPartialOnly.includes).map(\.type),
+            [.totalSolar, .annularSolar, .hybridSolar]
+        )
+        XCTAssertEqual(
+            eclipses.filter(SarosActivityPolicy.allEclipses.includes).count,
+            EclipseType.allCases.count
+        )
+    }
+
+    func testNonPartialActivityUsesEligibleLifespanAndEligibleBrackets() throws {
+        let service = PolicyFixtureEclipseService()
+        let beforeFirstCentral = Date(timeIntervalSince1970: 5)
+
+        XCTAssertEqual(
+            try service.activeSarosIntervals(at: beforeFirstCentral, policy: .allEclipses).map(\.summary.saros),
+            [200]
+        )
+        XCTAssertTrue(
+            try service.activeSarosIntervals(at: beforeFirstCentral, policy: .nonPartialOnly).isEmpty
+        )
+
+        let betweenCentralEclipses = Date(timeIntervalSince1970: 15)
+        let active = try XCTUnwrap(
+            service.activeSarosInterval(
+                saros: 200,
+                at: betweenCentralEclipses,
+                policy: .nonPartialOnly
+            )
+        )
+
+        XCTAssertEqual(active.interval.previous.type, .totalSolar)
+        XCTAssertEqual(active.interval.next.type, .annularSolar)
+        XCTAssertEqual(active.interval.normalizedPhase, 0.5, accuracy: 0.000001)
+
+        let afterLastCentral = Date(timeIntervalSince1970: 25)
+        XCTAssertTrue(
+            try service.activeSarosIntervals(at: afterLastCentral, policy: .nonPartialOnly).isEmpty
+        )
+        XCTAssertEqual(
+            try service.activeSarosIntervals(at: afterLastCentral, policy: .allEclipses).map(\.summary.saros),
+            [200]
+        )
+    }
+
+    func testBundledActiveSarosPolicyRegressionForJuly2026() throws {
+        let service = BundledSolarEclipseService()
+        let date = Self.date(year: 2026, month: 7, day: 29)
+
+        let all = try service.activeSarosIntervals(at: date, policy: .allEclipses)
+        let nonPartial = try service.activeSarosIntervals(at: date, policy: .nonPartialOnly)
+
+        XCTAssertEqual(all.map(\.summary.saros), Array(117...156))
+        XCTAssertEqual(
+            nonPartial.map(\.summary.saros),
+            [120, 121] + Array(126...148) + [152]
+        )
+        XCTAssertEqual(all.count, 40)
+        XCTAssertEqual(nonPartial.count, 26)
+        XCTAssertTrue(nonPartial.allSatisfy {
+            $0.interval.previous.type.isNonPartialSolar &&
+                $0.interval.next.type.isNonPartialSolar
+        })
     }
 
     func testBundledMoonPhaseDatabaseSummary() throws {
@@ -409,12 +604,63 @@ final class JournalWaveformSpikeSemanticsTests: XCTestCase {
         )
     }
 
+    func testIgnoringPartialEclipsesRemovesThemFromTemporalComponents() {
+        let first = Self.spike(
+            saros: 141,
+            timestamp: 1_700_000_000,
+            address: "700000",
+            rarity: .rareDigit(1),
+            magnitude: 1,
+            type: .totalSolar
+        )
+        let partial = Self.spike(
+            saros: 142,
+            timestamp: 1_700_010_000,
+            address: "700000",
+            rarity: .rareDigit(1),
+            magnitude: 1,
+            type: .partialSolar
+        )
+        let last = Self.spike(
+            saros: 143,
+            timestamp: 1_700_020_000,
+            address: "700000",
+            rarity: .rareDigit(1),
+            magnitude: 1,
+            type: .annularSolar
+        )
+
+        var allOptions = JournalWaveformOptions.default
+        allOptions.ignorePartialEclipses = false
+        let allSeries = JournalTemporalEngine.series(
+            spikes: [first, partial, last],
+            options: allOptions
+        )
+
+        XCTAssertEqual(allSeries.components.count, 3)
+        XCTAssertNotNil(allSeries.component(for: partial))
+
+        var nonPartialOptions = allOptions
+        nonPartialOptions.ignorePartialEclipses = true
+        let nonPartialSeries = JournalTemporalEngine.series(
+            spikes: [first, partial, last],
+            options: nonPartialOptions
+        )
+
+        XCTAssertEqual(nonPartialSeries.components.count, 2)
+        XCTAssertNil(nonPartialSeries.component(for: partial))
+        XCTAssertTrue(nonPartialSeries.components.allSatisfy {
+            $0.contributorSpikes.allSatisfy { !$0.isPartialEclipse }
+        })
+    }
+
     private static func spike(
         saros: Int,
         timestamp: Int64,
         address: String,
         rarity: FlipRarity,
-        magnitude: Double?
+        magnitude: Double?,
+        type: EclipseType = .totalSolar
     ) -> JournalSpikeReference {
         JournalSpikeReference(
             saros: saros,
@@ -424,7 +670,7 @@ final class JournalWaveformSpikeSemanticsTests: XCTestCase {
             rarityRawValue: rarity.rawValue,
             gamma: saros.isMultiple(of: 2) ? -0.4 : 0.4,
             magnitude: magnitude,
-            eclipseTypeRawValue: EclipseType.totalSolar.rawValue,
+            eclipseTypeRawValue: type.rawValue,
             sarosSequence: 10,
             sarosSeriesCount: 20,
             seriesProgressesSouthToNorth: nil
@@ -1133,6 +1379,112 @@ private final class FixtureEclipseService: EclipseService {
         abs(date.timeIntervalSince(Fixtures.previous.date)) < abs(date.timeIntervalSince(Fixtures.next.date))
             ? Fixtures.previous
             : Fixtures.next
+    }
+
+    func pathGeometry(for eclipseID: String) throws -> EclipsePathGeometry? {
+        nil
+    }
+}
+
+private final class PolicyFixtureEclipseService: EclipseService {
+    private let records: [Eclipse] = [
+        Eclipse(
+            id: "partial-leading",
+            saros: 200,
+            date: Date(timeIntervalSince1970: 0),
+            type: .partialSolar,
+            maximumPoint: nil,
+            gamma: nil,
+            magnitude: nil,
+            durationSeconds: nil,
+            pathWidthKm: nil,
+            visibilitySummary: nil
+        ),
+        Eclipse(
+            id: "total",
+            saros: 200,
+            date: Date(timeIntervalSince1970: 10),
+            type: .totalSolar,
+            maximumPoint: nil,
+            gamma: nil,
+            magnitude: nil,
+            durationSeconds: nil,
+            pathWidthKm: nil,
+            visibilitySummary: nil
+        ),
+        Eclipse(
+            id: "annular",
+            saros: 200,
+            date: Date(timeIntervalSince1970: 20),
+            type: .annularSolar,
+            maximumPoint: nil,
+            gamma: nil,
+            magnitude: nil,
+            durationSeconds: nil,
+            pathWidthKm: nil,
+            visibilitySummary: nil
+        ),
+        Eclipse(
+            id: "partial-trailing",
+            saros: 200,
+            date: Date(timeIntervalSince1970: 30),
+            type: .partialSolar,
+            maximumPoint: nil,
+            gamma: nil,
+            magnitude: nil,
+            durationSeconds: nil,
+            pathWidthKm: nil,
+            visibilitySummary: nil
+        )
+    ]
+
+    func allSarosSeries() throws -> [SarosSeriesSummary] {
+        [
+            SarosSeriesSummary(
+                saros: 200,
+                eclipseCount: records.count,
+                firstEclipseDate: records[0].date,
+                lastEclipseDate: records[records.count - 1].date
+            )
+        ]
+    }
+
+    func allEclipses() throws -> [Eclipse] {
+        records
+    }
+
+    func eclipses(forSaros saros: Int) throws -> [Eclipse] {
+        saros == 200 ? records : []
+    }
+
+    func eclipse(withID eclipseID: String) throws -> Eclipse? {
+        records.first { $0.id == eclipseID }
+    }
+
+    func previousAndNextEclipse(saros: Int, around date: Date) throws -> SarosInterval? {
+        guard saros == 200 else { return nil }
+        let nextIndex = records.firstIndex { $0.date > date } ?? records.count - 1
+        let previousIndex = max(nextIndex - 1, 0)
+        guard previousIndex != nextIndex else { return nil }
+        let previous = records[previousIndex]
+        let next = records[nextIndex]
+        let duration = next.date.timeIntervalSince(previous.date)
+        return SarosInterval(
+            saros: saros,
+            previous: previous,
+            next: next,
+            normalizedPhase: date.timeIntervalSince(previous.date) / duration
+        )
+    }
+
+    func eclipseBracket(around date: Date) throws -> EclipseBracket? {
+        nil
+    }
+
+    func nearestEclipse(to date: Date) throws -> Eclipse? {
+        records.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
     }
 
     func pathGeometry(for eclipseID: String) throws -> EclipsePathGeometry? {

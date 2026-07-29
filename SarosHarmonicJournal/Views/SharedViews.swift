@@ -129,6 +129,7 @@ enum JournalRecordMarkers {
 
 enum JournalSettings {
     static let harmonicDepthKey = "harmonicDepth"
+    static let activeSarosNonPartialOnlyKey = "activeSarosNonPartialOnly"
     static let waveformModelKey = "waveformModel"
     static let waveformParabolaAKey = "waveformParabolaA"
     static let waveformMergeCloseSpikesKey = "waveformMergeCloseSpikes"
@@ -168,12 +169,23 @@ enum JournalSettings {
     static let cameraTimedVideoForwardEnabledKey = "camera.timedVideoForwardEnabled"
     static let cameraTimedVideoBackwardEnabledKey = "camera.timedVideoBackwardEnabled"
     static let defaultHarmonicDepth = 7
+    static let defaultActiveSarosNonPartialOnly = false
     static let canonicalHarmonicDepth = 8
     static let defaultCatalogStartCentury = 20
     static let defaultCatalogEndCentury = 21
     static let supportedHarmonicDepth = 3...8
     static let supportedCatalogCenturies = 1...30
     static let averageSarosPeriod: TimeInterval = 6_585.3211 * 24 * 60 * 60
+
+    static func activeSarosPolicy(defaults: UserDefaults = .standard) -> SarosActivityPolicy {
+        SarosActivityPolicy(
+            nonPartialOnly: defaults.bool(forKey: activeSarosNonPartialOnlyKey)
+        )
+    }
+
+    static var currentActiveSarosPolicy: SarosActivityPolicy {
+        activeSarosPolicy()
+    }
 
     static func clampedHarmonicDepth(_ value: Int) -> Int {
         min(max(value, supportedHarmonicDepth.lowerBound), supportedHarmonicDepth.upperBound)
@@ -315,7 +327,7 @@ struct JournalWaveformOptions: Hashable, Sendable {
 
     static var current: JournalWaveformOptions {
         JournalWaveformOptions(
-            ignorePartialEclipses: false,
+            ignorePartialEclipses: JournalSettings.currentActiveSarosPolicy.nonPartialOnly,
             mergeCloseSpikes: UserDefaults.standard.bool(forKey: JournalSettings.waveformMergeCloseSpikesKey),
             normalizedAmplitude: UserDefaults.standard.bool(forKey: JournalSettings.waveformNormalizedAmplitudeKey),
             subdivisionDepth: JournalWaveformSettings.currentSubdivisionDepth,
@@ -2137,24 +2149,29 @@ enum SarosPulseCalculator {
 
     static func defaultActiveSaros(
         at date: Date,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy = JournalSettings.currentActiveSarosPolicy
     ) throws -> Int? {
-        try eclipseService.allSarosSeries()
-            .filter { $0.firstEclipseDate < date && $0.lastEclipseDate > date }
-            .map(\.saros)
-            .sorted()
-            .first
+        try eclipseService.activeSarosIntervals(at: date, policy: policy)
+            .first?
+            .summary
+            .saros
     }
 
     static func reading(
         saros: Int,
         date: Date,
         harmonicDepth rawHarmonicDepth: Int,
-        eclipseService: any EclipseService
+        eclipseService: any EclipseService,
+        policy: SarosActivityPolicy = JournalSettings.currentActiveSarosPolicy
     ) throws -> SarosPulseReading {
         let harmonicDepth = JournalSettings.clampedHarmonicDepth(rawHarmonicDepth)
         guard saros > 0,
-              let interval = try eclipseService.previousAndNextEclipse(saros: saros, around: date)
+              let active = try eclipseService.activeSarosInterval(
+                saros: saros,
+                at: date,
+                policy: policy
+              )
         else {
             return SarosPulseReading(
                 saros: saros,
@@ -2166,8 +2183,8 @@ enum SarosPulseCalculator {
 
         let reading = try SarosClockCalculator.reading(
             saros: saros,
-            previous: interval.previous,
-            next: interval.next,
+            previous: active.interval.previous,
+            next: active.interval.next,
             now: date,
             harmonicDepth: harmonicDepth
         )
@@ -2204,23 +2221,36 @@ enum SarosPulseCalculator {
         saros: Int,
         harmonicDepth rawHarmonicDepth: Int,
         eclipseService: any EclipseService,
-        units: [SarosPulseUnit] = SarosPulseUnit.rulerUnits
+        units: [SarosPulseUnit] = SarosPulseUnit.rulerUnits,
+        policy: SarosActivityPolicy = JournalSettings.currentActiveSarosPolicy
     ) throws -> [SarosPulseTick] {
         guard saros > 0 else { return [] }
 
         var ticks: [SarosPulseTick] = []
-        var probeDate = displayInterval.start
-        var visitedIntervals = Set<String>()
+        let eligible = try eclipseService.eclipses(forSaros: saros)
+            .filter(policy.includes)
+            .sorted { $0.date < $1.date }
+        guard eligible.count >= 2 else { return [] }
 
-        for _ in 0..<4 {
-            guard probeDate < displayInterval.end,
-                  let interval = try eclipseService.previousAndNextEclipse(saros: saros, around: probeDate)
+        for pair in zip(eligible, eligible.dropFirst()) {
+            let (previous, next) = pair
+            guard
+                previous.date < displayInterval.end,
+                next.date > displayInterval.start
             else {
-                break
+                continue
             }
-
-            let key = "\(interval.previous.id)-\(interval.next.id)"
-            guard visitedIntervals.insert(key).inserted else { break }
+            let duration = next.date.timeIntervalSince(previous.date)
+            guard duration > 0 else { continue }
+            let interval = SarosInterval(
+                saros: saros,
+                previous: previous,
+                next: next,
+                normalizedPhase: min(
+                    max(displayInterval.start.timeIntervalSince(previous.date) / duration, 0),
+                    1 - Double.ulpOfOne
+                )
+            )
 
             appendTicks(
                 in: displayInterval,
@@ -2229,8 +2259,6 @@ enum SarosPulseCalculator {
                 units: units,
                 into: &ticks
             )
-
-            probeDate = interval.next.date.addingTimeInterval(1)
         }
 
         return ticks.sorted { lhs, rhs in
