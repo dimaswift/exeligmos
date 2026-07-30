@@ -13,6 +13,12 @@ export function isReferenceKind(value: string): value is ReferenceKind {
 }
 
 export function referenceInspectorHref(reference: EntityReference): string {
+  if (reference.kind === "record") {
+    if (!/^[A-Za-z0-9_-]{5}$/.test(reference.id)) {
+      throw new TypeError("Record reference id must be a five-character public ID.");
+    }
+    return `/r/${reference.id}`;
+  }
   if (!isEntityId(reference.id)) {
     throw new TypeError("Reference entity id must be a UUID.");
   }

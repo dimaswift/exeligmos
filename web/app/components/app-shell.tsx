@@ -28,6 +28,7 @@ const dataNavigation = [
 const systemNavigation = [
   { to: "/jobs", label: "Jobs" },
   { to: "/workers", label: "Workers" },
+  { to: "/dreamer", label: "Dreamer" },
   { to: "/lab/engines", label: "System lab" },
 ] as const;
 

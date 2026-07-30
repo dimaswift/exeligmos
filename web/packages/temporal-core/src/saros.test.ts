@@ -12,6 +12,7 @@ import {
   sarosPulseReading,
   sarosPulseTickReading,
   sarosRealtimeWindow,
+  upcomingSarosRollovers,
   type SarosInterval,
   type SarosSpikeReference,
 } from "./index.js";
@@ -83,6 +84,33 @@ describe("native Saros parity", () => {
       exponent: 3,
       exactDurationSeconds: 1,
     });
+  });
+
+  it("orders one upcoming Tera rollover per active Saros interval", () => {
+    const rollovers = upcomingSarosRollovers(
+      [
+        { ...realtimeInterval(1_024), saros: 142 },
+        { ...realtimeInterval(512), saros: 141 },
+      ],
+      100,
+    );
+
+    expect(rollovers).toEqual([
+      {
+        id: "141:101000",
+        saros: 141,
+        epochSeconds: 101,
+        periodSeconds: 1,
+        octalAddress: "000000",
+      },
+      {
+        id: "142:102000",
+        saros: 142,
+        epochSeconds: 102,
+        periodSeconds: 2,
+        octalAddress: "000000",
+      },
+    ]);
   });
 
   it("reads a Saros pulse tick as two five-digit MSB-first glyphs", () => {

@@ -1628,6 +1628,235 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /workers/current/dreamed/{recordId}:
+    post:
+      operationId: markRecordDreamed
+      tags: [Workers]
+      summary: Mark a source record as consumed by the bound Dreamer worker
+      x-required-scopes: [records:write]
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 5
+            maxLength: 5
+            pattern: '^[A-Za-z0-9_-]{5}$'
+      responses:
+        '204':
+          description: The Dreamer tag is attached, or was already attached.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /workers/current/dreamer-runtime:
+    put:
+      operationId: updateDreamerRuntime
+      tags: [Workers]
+      summary: Report the bound Dreamer worker schedule and execution state
+      x-required-scopes: [records:write]
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DreamerRuntime'
+      responses:
+        '204':
+          description: Runtime state recorded.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /records/{recordId}/dream:
+    parameters:
+      - name: recordId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 5
+          maxLength: 5
+          pattern: '^[A-Za-z0-9_-]{5}$'
+    get:
+      operationId: getRecordDreamRequest
+      tags: [Workers]
+      summary: Read the latest on-demand Dreamer job for a record
+      security:
+        - JwtBearer: []
+      responses:
+        '200':
+          description: Latest request, or null when the record has not been queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DreamRequestEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createRecordDreamRequest
+      tags: [Workers]
+      summary: Queue this public record for on-demand dreaming
+      security:
+        - JwtBearer: []
+      responses:
+        '200':
+          description: An existing active or completed request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DreamRequest'
+        '202':
+          description: A new request was queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DreamRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /workers/current/dream-requests/claim:
+    post:
+      operationId: claimDreamRequest
+      tags: [Workers]
+      summary: Claim or resume the oldest on-demand Dreamer job
+      x-required-scopes: [records:write]
+      security:
+        - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Claimed request, or null when the queue is empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DreamRequestEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /workers/current/dream-requests/{jobId}/complete:
+    post:
+      operationId: completeDreamRequest
+      tags: [Workers]
+      summary: Complete an on-demand Dreamer job
+      x-required-scopes: [records:write]
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dreamRecordId]
+              properties:
+                dreamRecordId:
+                  type: string
+                  minLength: 5
+                  maxLength: 5
+                  pattern: '^[A-Za-z0-9_-]{5}$'
+              additionalProperties: false
+      responses:
+        '204':
+          description: Dream request completed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /workers/current/dream-requests/{jobId}/fail:
+    post:
+      operationId: failDreamRequest
+      tags: [Workers]
+      summary: Fail an on-demand Dreamer job
+      x-required-scopes: [records:write]
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+              additionalProperties: false
+      responses:
+        '204':
+          description: Dream request marked failed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /workers/{deviceId}:
     patch:
       operationId: updateWorker
@@ -5374,7 +5603,7 @@ components:
       additionalProperties: false
     WorkerConfig:
       type: object
-      required: [enabled, mountName, descriptionModel, descriptionPrompt, embeddingModel, whisperModel]
+      required: [enabled, mountName, pollIntervalMs, descriptionProvider, descriptionBaseUrl, descriptionModel, descriptionPrompt, embeddingProvider, embeddingBaseUrl, embeddingModel, whisperModel, imageGenerationEnabled, imageProvider, imageBaseUrl, imageModel, imagePromptReference, imageSize, imageSteps, imageGuidance, imageTimeoutMs]
       properties:
         enabled:
           type: boolean
@@ -5382,6 +5611,17 @@ components:
           type: string
           minLength: 1
           maxLength: 80
+        pollIntervalMs:
+          type: integer
+          minimum: 100
+          maximum: 86400000
+        descriptionProvider:
+          type: string
+          enum: [ollama, speshu]
+        descriptionBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
         descriptionModel:
           type: string
           minLength: 1
@@ -5390,6 +5630,13 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+        embeddingProvider:
+          type: string
+          enum: [ollama, speshu]
+        embeddingBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
         embeddingModel:
           type: string
           minLength: 1
@@ -5398,6 +5645,38 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        imageGenerationEnabled:
+          type: boolean
+        imageProvider:
+          type: string
+          enum: [mlx-studio]
+        imageBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+        imageModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        imagePromptReference:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        imageSize:
+          type: string
+          pattern: '^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$'
+        imageSteps:
+          type: integer
+          minimum: 1
+          maximum: 200
+        imageGuidance:
+          type: number
+          minimum: 0
+          maximum: 100
+        imageTimeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 600000
       additionalProperties: false
     WorkerConfigPatch:
       type: object
@@ -5409,6 +5688,17 @@ components:
           type: string
           minLength: 1
           maxLength: 80
+        pollIntervalMs:
+          type: integer
+          minimum: 100
+          maximum: 86400000
+        descriptionProvider:
+          type: string
+          enum: [ollama, speshu]
+        descriptionBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
         descriptionModel:
           type: string
           minLength: 1
@@ -5417,6 +5707,13 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+        embeddingProvider:
+          type: string
+          enum: [ollama, speshu]
+        embeddingBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
         embeddingModel:
           type: string
           minLength: 1
@@ -5425,6 +5722,108 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        imageGenerationEnabled:
+          type: boolean
+        imageProvider:
+          type: string
+          enum: [mlx-studio]
+        imageBaseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+        imageModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        imagePromptReference:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        imageSize:
+          type: string
+          pattern: '^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$'
+        imageSteps:
+          type: integer
+          minimum: 1
+          maximum: 200
+        imageGuidance:
+          type: number
+          minimum: 0
+          maximum: 100
+        imageTimeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 600000
+      additionalProperties: false
+    DreamerRuntime:
+      type: object
+      required: [state, nextRolloverAt, saros, scheduleId, startedAt, sourceRecordId, message]
+      properties:
+        state:
+          type: string
+          enum: [disabled, waiting, creating, error]
+        nextRolloverAt:
+          type: [string, 'null']
+          format: date-time
+        saros:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 999
+        scheduleId:
+          type: [string, 'null']
+          maxLength: 120
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        sourceRecordId:
+          type: [string, 'null']
+          minLength: 5
+          maxLength: 5
+        message:
+          type: [string, 'null']
+          maxLength: 2000
+      additionalProperties: false
+    DreamRequest:
+      type: object
+      required: [jobId, recordId, status, requestedAt, startedAt, finishedAt, dreamRecordId, error]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        recordId:
+          type: string
+          minLength: 5
+          maxLength: 5
+          pattern: '^[A-Za-z0-9_-]{5}$'
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        requestedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+        dreamRecordId:
+          type: [string, 'null']
+          minLength: 5
+          maxLength: 5
+          pattern: '^[A-Za-z0-9_-]{5}$'
+        error:
+          type: [string, 'null']
+          maxLength: 4000
+      additionalProperties: false
+    DreamRequestEnvelope:
+      type: object
+      required: [request]
+      properties:
+        request:
+          oneOf:
+            - $ref: '#/components/schemas/DreamRequest'
+            - type: 'null'
       additionalProperties: false
     WorkerStats:
       type: object
@@ -5448,13 +5847,16 @@ components:
       additionalProperties: false
     Worker:
       type: object
-      required: [deviceId, name, revision, lastSeenAt, config, stats]
+      required: [deviceId, name, type, revision, lastSeenAt, config, runtime, stats]
       properties:
         deviceId:
           type: string
           format: uuid
         name:
           type: string
+        type:
+          type: string
+          enum: [thumb-cam, dreamer]
         revision:
           type: integer
           format: int64
@@ -5464,6 +5866,10 @@ components:
           format: date-time
         config:
           $ref: '#/components/schemas/WorkerConfig'
+        runtime:
+          oneOf:
+            - $ref: '#/components/schemas/DreamerRuntime'
+            - type: 'null'
         stats:
           $ref: '#/components/schemas/WorkerStats'
       additionalProperties: false

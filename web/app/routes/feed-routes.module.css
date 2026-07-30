@@ -25,3 +25,10 @@
   border-color: var(--color-accent);
   color: var(--color-accent-strong);
 }
+
+.routeActions a[aria-current="page"],
+.activeAction {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent), transparent 88%);
+  color: var(--color-accent-strong);
+}

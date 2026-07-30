@@ -1040,6 +1040,7 @@ final class SyncServiceV2Tests: XCTestCase {
         XCTAssertNil(record.occurredAt)
         XCTAssertNil(record.payload)
         XCTAssertNil(record.tagIDs)
+        XCTAssertEqual(record.references ?? [], [])
     }
 
     func testLocalStoreOwnerBindingCannotSilentlySwitchAccounts() throws {
@@ -1209,6 +1210,14 @@ final class SyncServiceV2Tests: XCTestCase {
             emoji: "☀️",
             mediaItems: [],
             tagIDs: ["007"],
+            references: [
+                JournalResourceReference(
+                    relation: "dream-of",
+                    targetType: "record",
+                    targetUserID: UUID(),
+                    targetID: "Ref_1"
+                )
+            ],
             context: .empty(date: eventDate),
             latitude: 55.75,
             longitude: 37.62,
@@ -1235,7 +1244,8 @@ final class SyncServiceV2Tests: XCTestCase {
             endedAt: endDate,
             payload: .object(ownerPayload),
             tagIDs: [],
-            media: []
+            media: [],
+            references: original.references ?? []
         )
 
         let mapped = try SyncPayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])
@@ -1248,6 +1258,7 @@ final class SyncServiceV2Tests: XCTestCase {
         XCTAssertEqual(mapped.unixTimestamp, original.unixTimestamp)
         XCTAssertEqual(mapped.version, 7)
         XCTAssertEqual(mapped.tagIDs, ["007"])
+        XCTAssertEqual(mapped.references, original.references)
         XCTAssertEqual(mapped.sourceDeviceID, "SOURCE-PHONE")
         XCTAssertEqual(mapped.text, "Imported observation")
     }
@@ -1281,7 +1292,8 @@ final class SyncServiceV2Tests: XCTestCase {
                 ])
             ]),
             tagIDs: [],
-            media: []
+            media: [],
+            references: []
         )
 
         let mapped = try SyncPayloadMapper.entrySnapshot(from: remote, localMedia: [], tags: [:])

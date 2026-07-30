@@ -18,6 +18,23 @@ enum JournalRecordPublicID {
     }
 }
 
+struct JournalResourceReference: Codable, Hashable, Identifiable {
+    let relation: String
+    let targetType: String
+    let targetUserID: UUID
+    let targetID: String
+
+    var id: String {
+        "\(relation):\(targetType):\(targetUserID.uuidString):\(targetID)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case relation, targetType
+        case targetUserID = "targetUserId"
+        case targetID = "targetId"
+    }
+}
+
 enum JournalWaveDirection: String, Codable, CaseIterable, Identifiable {
     case ascending
     case descending
@@ -403,6 +420,7 @@ final class JournalEntry {
     var contextJSON: Data
     var tagIDsRawValue: String?
     var tagIDsJSON: Data?
+    var referencesJSON: Data?
 
     var latitude: Double?
     var longitude: Double?
@@ -429,6 +447,7 @@ final class JournalEntry {
         mediaItems: [JournalMediaItem] = [],
         context: JournalEventContext,
         tagIDs: [String] = [],
+        references: [JournalResourceReference] = [],
         latitude: Double? = nil,
         longitude: Double? = nil,
         sourceRecordID: UUID? = nil,
@@ -455,6 +474,7 @@ final class JournalEntry {
         self.contextJSON = (try? JSONEncoder().encode(context)) ?? Data()
         self.tagIDsRawValue = Self.encodeTagIDs(tagIDs)
         self.tagIDsJSON = nil
+        self.referencesJSON = try? JSONEncoder().encode(references)
         self.latitude = latitude
         self.longitude = longitude
         self.sourceRecordID = sourceRecordID
@@ -532,6 +552,17 @@ final class JournalEntry {
         }
         set {
             tagIDsRawValue = Self.encodeTagIDs(newValue)
+            updatedAt = Date()
+        }
+    }
+
+    var references: [JournalResourceReference] {
+        get {
+            guard let referencesJSON else { return [] }
+            return (try? JSONDecoder().decode([JournalResourceReference].self, from: referencesJSON)) ?? []
+        }
+        set {
+            referencesJSON = try? JSONEncoder().encode(newValue)
             updatedAt = Date()
         }
     }

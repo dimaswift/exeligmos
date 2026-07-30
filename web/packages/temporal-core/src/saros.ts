@@ -100,6 +100,16 @@ export interface SarosPulseReading {
   readonly units: readonly SarosPulseUnitReading[];
 }
 
+export interface SarosTeraRollover {
+  /** Stable identity for one scheduled rollover of one Saros series. */
+  readonly id: string;
+  readonly saros: number;
+  readonly epochSeconds: number;
+  readonly periodSeconds: number;
+  /** A Tera boundary starts a fresh native six-digit pulse. */
+  readonly octalAddress: "000000";
+}
+
 export type SarosPulseTickColor = "neutral" | "blue" | "purple" | "yellow" | "red";
 export type SarosPulseImminentUnit = "kilo" | "mega" | "giga" | "tera";
 
@@ -407,6 +417,48 @@ export function sarosPulseReading(
     color: pulseColor(normalizedTrailingZeroCount),
     units,
   };
+}
+
+/**
+ * Return the next native Tera boundary for every supplied active Saros
+ * interval, sorted into one deterministic global schedule.
+ */
+export function upcomingSarosRollovers(
+  intervals: readonly SarosInterval[],
+  instantEpochSeconds: number,
+): readonly SarosTeraRollover[] {
+  if (!Number.isFinite(instantEpochSeconds)) {
+    throw new RangeError("Saros rollover instant must be finite.");
+  }
+  const divisions =
+    canonicalCatalog.radix.value ** SAROS_PULSE_PARENT_EXPONENT;
+  return intervals
+    .map((interval): SarosTeraRollover => {
+      const duration =
+        interval.next.epochSeconds - interval.previous.epochSeconds;
+      if (!Number.isFinite(duration) || duration <= 0) {
+        throw new RangeError(
+          `Saros ${interval.saros} interval must have a positive finite duration.`,
+        );
+      }
+      const periodSeconds = duration / divisions;
+      const elapsedPeriods =
+        (instantEpochSeconds - interval.previous.epochSeconds) / periodSeconds;
+      const nextPeriodIndex = Math.floor(elapsedPeriods) + 1;
+      const epochSeconds =
+        interval.previous.epochSeconds + nextPeriodIndex * periodSeconds;
+      return {
+        id: `${interval.saros}:${Math.round(epochSeconds * 1_000)}`,
+        saros: interval.saros,
+        epochSeconds,
+        periodSeconds,
+        octalAddress: "000000",
+      };
+    })
+    .sort(
+      (left, right) =>
+        left.epochSeconds - right.epochSeconds || left.saros - right.saros,
+    );
 }
 
 /** Resolve the configured pulse anchor without silently substituting another series. */

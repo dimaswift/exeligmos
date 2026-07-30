@@ -22,6 +22,7 @@ or events.
   packages for the API client, domain catalog, temporal engine, glyph core, and
   React/SVG UI.
 - `thumb-cam-worker/` — macOS Node worker for mounted THUMB_CAM media,
+- `dreamer-worker/` — future-dated generative records linked to their source,
   symmetry processing, local Ollama/Whisper inference, verified uploads,
   embeddings, and durable server job progress.
 - `domain-spec/` — language-neutral canonical catalog and conformance vectors

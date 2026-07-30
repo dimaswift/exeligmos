@@ -139,6 +139,7 @@ struct JournalEntrySnapshot: Codable, Identifiable {
     let emoji: String?
     let mediaItems: [JournalMediaItem]
     let tagIDs: [String]?
+    let references: [JournalResourceReference]?
     let context: JournalEventContext
     let latitude: Double?
     let longitude: Double?
@@ -555,6 +556,7 @@ extension JournalEntrySnapshot {
             emoji: entry.emoji,
             mediaItems: portableMediaItems,
             tagIDs: entry.tagIDs,
+            references: entry.references,
             context: entry.context,
             latitude: entry.latitude,
             longitude: entry.longitude,

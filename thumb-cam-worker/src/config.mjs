@@ -14,12 +14,23 @@ const defaults = Object.freeze({
   minimumFileAgeMs: 30_000,
   scanConcurrency: 2,
   snapshotConcurrency: 2,
-  ollamaUrl: "http://127.0.0.1:11434",
+  descriptionProvider: "ollama",
+  descriptionBaseUrl: "http://127.0.0.1:11434",
   descriptionModel: "gemma4",
   descriptionPrompt: DEFAULT_DESCRIPTION_PROMPT,
+  embeddingProvider: "ollama",
+  embeddingBaseUrl: "http://127.0.0.1:11434",
   embeddingModel: "embeddinggemma",
-  whisperExecutable: "whisper",
-  whisperModel: "base",
+  imageGenerationEnabled: true,
+  imageProvider: "mlx-studio",
+  imageBaseUrl: "http://127.0.0.1:8001",
+  imageModel: "schnell",
+  imageSize: "512x512",
+  imageSteps: 4,
+  imageGuidance: 0,
+  imageTimeoutMs: 30_000,
+  pythonExecutable: "python3",
+  whisperModel: "mlx-community/whisper-large-v3-mlx",
   ffmpegExecutable: "ffmpeg",
   ffprobeExecutable: "ffprobe",
   workRoot: "~/Library/Application Support/Fractonica/ThumbCam",
@@ -30,10 +41,18 @@ const cliNames = new Map([
   ["--device-id", "deviceId"],
   ["--volume", "mountName"],
   ["--mount-root", "mountRoot"],
+  ["--description-provider", "descriptionProvider"],
+  ["--description-base-url", "descriptionBaseUrl"],
   ["--model", "descriptionModel"],
   ["--prompt", "descriptionPrompt"],
+  ["--embedding-provider", "embeddingProvider"],
+  ["--embedding-base-url", "embeddingBaseUrl"],
   ["--embedding-model", "embeddingModel"],
-  ["--ollama", "ollamaUrl"],
+  ["--image-base-url", "imageBaseUrl"],
+  ["--image-model", "imageModel"],
+  ["--image-size", "imageSize"],
+  ["--image-steps", "imageSteps"],
+  ["--image-guidance", "imageGuidance"],
   ["--whisper-model", "whisperModel"],
   ["--poll-ms", "pollIntervalMs"],
   ["--settle-ms", "settleDelayMs"],
@@ -58,6 +77,16 @@ export async function loadConfig(
     ...environmentConfig(env),
     ...parsed.overrides,
     apiKey: parsed.apiKey ?? env.THUMB_CAM_API_KEY ?? fileConfig.apiKey,
+    descriptionApiKey:
+      env.THUMB_CAM_DESCRIPTION_API_KEY ??
+      fileConfig.descriptionApiKey ??
+      env.SPESHU_API_KEY,
+    embeddingApiKey:
+      env.THUMB_CAM_EMBEDDING_API_KEY ??
+      fileConfig.embeddingApiKey ??
+      env.SPESHU_API_KEY,
+    imageApiKey:
+      env.THUMB_CAM_IMAGE_API_KEY ?? fileConfig.imageApiKey,
     once: parsed.once,
   };
 
@@ -67,11 +96,18 @@ export async function loadConfig(
     "apiKey",
     "mountName",
     "mountRoot",
-    "ollamaUrl",
+    "descriptionProvider",
+    "descriptionBaseUrl",
     "descriptionModel",
     "descriptionPrompt",
+    "embeddingProvider",
+    "embeddingBaseUrl",
     "embeddingModel",
-    "whisperExecutable",
+    "imageProvider",
+    "imageBaseUrl",
+    "imageModel",
+    "imageSize",
+    "pythonExecutable",
     "whisperModel",
     "ffmpegExecutable",
     "ffprobeExecutable",
@@ -84,12 +120,37 @@ export async function loadConfig(
   if (!isUuid(config.deviceId)) {
     throw new Error("deviceId must be the UUID of the THUMB device.");
   }
+  for (const name of ["descriptionProvider", "embeddingProvider"]) {
+    if (!["ollama", "speshu"].includes(config[name])) {
+      throw new Error(`${name} must be ollama or speshu.`);
+    }
+    const secretName =
+      name === "descriptionProvider" ? "descriptionApiKey" : "embeddingApiKey";
+    if (
+      config[name] === "speshu" &&
+      (typeof config[secretName] !== "string" ||
+        config[secretName].trim() === "")
+    ) {
+      throw new Error(
+        `${secretName} is required when ${name} is speshu.`,
+      );
+    }
+  }
   for (const key of ["pollIntervalMs", "settleDelayMs"]) {
     if (!Number.isSafeInteger(config[key]) || config[key] < 100) {
       throw new Error(
         `${key} must be an integer of at least 100 milliseconds.`,
       );
     }
+  }
+  if (!Number.isSafeInteger(config.imageSteps) || config.imageSteps < 1) {
+    throw new Error("imageSteps must be a positive integer.");
+  }
+  if (!Number.isFinite(config.imageGuidance) || config.imageGuidance < 0) {
+    throw new Error("imageGuidance must be a non-negative number.");
+  }
+  if (!Number.isSafeInteger(config.imageTimeoutMs) || config.imageTimeoutMs < 1) {
+    throw new Error("imageTimeoutMs must be a positive integer.");
   }
   if (
     !Number.isSafeInteger(config.minimumFileAgeMs) ||
@@ -110,7 +171,15 @@ export async function loadConfig(
   return Object.freeze({
     ...config,
     serverUrl: absoluteHttpUrl(config.serverUrl, "serverUrl"),
-    ollamaUrl: absoluteHttpUrl(config.ollamaUrl, "ollamaUrl"),
+    descriptionBaseUrl: absoluteHttpUrl(
+      config.descriptionBaseUrl,
+      "descriptionBaseUrl",
+    ),
+    embeddingBaseUrl: absoluteHttpUrl(
+      config.embeddingBaseUrl,
+      "embeddingBaseUrl",
+    ),
+    imageBaseUrl: absoluteHttpUrl(config.imageBaseUrl, "imageBaseUrl"),
     mountPath: path.resolve(config.mountRoot, config.mountName),
     workRoot: expandHome(config.workRoot),
   });
@@ -148,6 +217,8 @@ function parseArguments(argv) {
       "minimumFileAgeMs",
       "scanConcurrency",
       "snapshotConcurrency",
+      "imageSteps",
+      "imageGuidance",
     ].includes(key)
       ? Number(value)
       : value;
@@ -161,11 +232,17 @@ function environmentConfig(env) {
     ["THUMB_CAM_DEVICE_ID", "deviceId"],
     ["THUMB_CAM_MOUNT_NAME", "mountName"],
     ["THUMB_CAM_MOUNT_ROOT", "mountRoot"],
-    ["THUMB_CAM_OLLAMA_URL", "ollamaUrl"],
+    ["THUMB_CAM_DESCRIPTION_PROVIDER", "descriptionProvider"],
+    ["THUMB_CAM_DESCRIPTION_BASE_URL", "descriptionBaseUrl"],
     ["THUMB_CAM_DESCRIPTION_MODEL", "descriptionModel"],
     ["THUMB_CAM_DESCRIPTION_PROMPT", "descriptionPrompt"],
+    ["THUMB_CAM_EMBEDDING_PROVIDER", "embeddingProvider"],
+    ["THUMB_CAM_EMBEDDING_BASE_URL", "embeddingBaseUrl"],
     ["THUMB_CAM_EMBEDDING_MODEL", "embeddingModel"],
-    ["THUMB_CAM_WHISPER_EXECUTABLE", "whisperExecutable"],
+    ["THUMB_CAM_IMAGE_BASE_URL", "imageBaseUrl"],
+    ["THUMB_CAM_IMAGE_MODEL", "imageModel"],
+    ["THUMB_CAM_IMAGE_SIZE", "imageSize"],
+    ["THUMB_CAM_PYTHON_EXECUTABLE", "pythonExecutable"],
     ["THUMB_CAM_WHISPER_MODEL", "whisperModel"],
     ["THUMB_CAM_FFMPEG_EXECUTABLE", "ffmpegExecutable"],
     ["THUMB_CAM_FFPROBE_EXECUTABLE", "ffprobeExecutable"],
@@ -181,6 +258,9 @@ function environmentConfig(env) {
     ["THUMB_CAM_MINIMUM_FILE_AGE_MS", "minimumFileAgeMs"],
     ["THUMB_CAM_SCAN_CONCURRENCY", "scanConcurrency"],
     ["THUMB_CAM_SNAPSHOT_CONCURRENCY", "snapshotConcurrency"],
+    ["THUMB_CAM_IMAGE_STEPS", "imageSteps"],
+    ["THUMB_CAM_IMAGE_GUIDANCE", "imageGuidance"],
+    ["THUMB_CAM_IMAGE_TIMEOUT_MS", "imageTimeoutMs"],
   ]) {
     if (env[environmentName] !== undefined)
       result[key] = Number(env[environmentName]);

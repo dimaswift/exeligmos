@@ -1051,7 +1051,8 @@ final class SyncService {
     ) -> Bool {
         guard entry.syncOwnerUserID == ownerID,
               entry.publicID == remote.id,
-              (entry.acknowledgedServerRevision ?? 0) >= remote.revision else {
+              (entry.acknowledgedServerRevision ?? 0) >= remote.revision,
+              entry.references == (remote.references ?? []) else {
             return false
         }
         let localByID = Dictionary(uniqueKeysWithValues: entry.mediaItems.map { ($0.id, $0) })
@@ -1411,6 +1412,7 @@ final class SyncService {
                         payload: payload,
                         tagIDs: (snapshot.tagIDs ?? []).compactMap { tagIDByCompactID[$0] },
                         mediaIDs: mediaIDs,
+                        references: snapshot.references ?? [],
                         metadata: .object([
                             "clientVersion": .string(appVersion)
                         ]),
@@ -1961,6 +1963,8 @@ final class SyncService {
         if entry.mediaItems != snapshot.mediaItems { entry.mediaItems = snapshot.mediaItems }
         let tagIDs = snapshot.tagIDs ?? []
         if entry.tagIDs != tagIDs { entry.tagIDs = tagIDs }
+        let references = snapshot.references ?? []
+        if entry.references != references { entry.references = references }
         if entry.context != snapshot.context { entry.context = snapshot.context }
         if entry.latitude != snapshot.latitude { entry.latitude = snapshot.latitude }
         if entry.longitude != snapshot.longitude { entry.longitude = snapshot.longitude }
@@ -2576,6 +2580,7 @@ enum SyncPayloadMapper {
                 emoji: imported.emoji,
                 mediaItems: localMedia,
                 tagIDs: imported.tagIDs ?? remoteTagIDs.compactMap { tags[$0]?.compactID },
+                references: remote.references ?? [],
                 context: imported.context,
                 latitude: imported.latitude,
                 longitude: imported.longitude,
@@ -2606,6 +2611,7 @@ enum SyncPayloadMapper {
             emoji: object["emoji"]?.stringValue,
             mediaItems: localMedia,
             tagIDs: remoteTagIDs.compactMap { tags[$0]?.compactID },
+            references: remote.references ?? [],
             context: context,
             latitude: location?["latitude"]?.doubleValue,
             longitude: location?["longitude"]?.doubleValue,
@@ -2896,9 +2902,10 @@ struct SyncRecordResource: Decodable, Sendable {
     let payload: SyncJSONValue?
     let tagIDs: [UUID]?
     let media: [SyncMediaResource]
+    let references: [JournalResourceReference]?
 
     enum CodingKeys: String, CodingKey {
-        case id, visibility, revision, createdAt, updatedAt, occurredAt, endedAt, payload, media
+        case id, visibility, revision, createdAt, updatedAt, occurredAt, endedAt, payload, media, references
         case originID = "originId"
         case userID = "userId"
         case deviceID = "deviceId"
@@ -3176,11 +3183,12 @@ private struct SyncRecordInput: Encodable {
     let payload: SyncJSONValue
     let tagIDs: [UUID]
     let mediaIDs: [UUID]
+    let references: [JournalResourceReference]
     let metadata: SyncJSONValue
     let source: SyncSourceInput
 
     enum CodingKeys: String, CodingKey {
-        case id, visibility, occurredAt, endedAt, payload, metadata, source
+        case id, visibility, occurredAt, endedAt, payload, metadata, source, references
         case originID = "originId"
         case deviceID = "deviceId"
         case tagIDs = "tagIds"
@@ -3333,6 +3341,7 @@ private extension JournalEntry {
             mediaItems: snapshot.mediaItems,
             context: snapshot.context,
             tagIDs: snapshot.tagIDs ?? [],
+            references: snapshot.references ?? [],
             latitude: snapshot.latitude,
             longitude: snapshot.longitude,
             sourceRecordID: snapshot.sourceRecordID,

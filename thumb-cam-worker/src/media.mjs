@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -120,51 +120,32 @@ export async function transcribeAudio(config, absolutePath) {
     `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   );
   await mkdir(outputDirectory, { recursive: true });
+  const outputPath = path.join(outputDirectory, "transcript.json");
   try {
     await runFile(
-      config.whisperExecutable,
+      config.pythonExecutable,
       [
+        path.resolve(import.meta.dirname, "../scripts/transcribe-mlx.py"),
         absolutePath,
-        "--model",
         config.whisperModel,
-        "--output_format",
-        "json",
-        "--output_dir",
-        outputDirectory,
-        "--fp16",
-        "False",
-        "--verbose",
-        "False",
+        outputPath,
       ],
       commandOptions(64 * 1024 * 1024),
     );
-    const output = (await readdir(outputDirectory)).find((name) =>
-      name.endsWith(".json"),
-    );
-    if (output === undefined)
-      throw new Error("Whisper did not create a JSON transcript.");
-    const document = JSON.parse(
-      await readFile(path.join(outputDirectory, output), "utf8"),
-    );
+    const document = JSON.parse(await readFile(outputPath, "utf8"));
     const text = typeof document.text === "string" ? document.text.trim() : "";
-    if (text === "") throw new Error("Whisper returned an empty transcript.");
+    if (text === "") throw new Error("MLX Whisper returned an empty transcript.");
     return text;
   } catch (cause) {
     const stderr = typeof cause?.stderr === "string" ? cause.stderr : "";
-    if (/CERTIFICATE_VERIFY_FAILED/.test(stderr)) {
-      throw new Error(
-        `Whisper model ${config.whisperModel} is not cached and Python could not verify its download certificate. Run the Python “Install Certificates.command” helper or select an installed model.`,
-        { cause },
-      );
-    }
     if (cause?.code === "ENOENT") {
       throw new Error(
-        `Whisper executable ${config.whisperExecutable} was not found.`,
+        `Python executable ${config.pythonExecutable} was not found.`,
         { cause },
       );
     }
     throw new Error(
-      `Whisper failed for ${path.basename(absolutePath)}: ${
+      `MLX Whisper failed for ${path.basename(absolutePath)} with model ${config.whisperModel}: ${
         stderr.trim().split("\n").at(-1) ?? cause?.message ?? "unknown error"
       }`,
       { cause },

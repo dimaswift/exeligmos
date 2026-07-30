@@ -9,6 +9,10 @@ describe("references", () => {
     ).toBe("/references/user/2dca8eab-00a8-4e94-9bd2-2fcbfe17e890");
   });
 
+  it("routes record references to the public record page", () => {
+    expect(referenceInspectorHref({ kind: "record", id: "aB_9-" })).toBe("/r/aB_9-");
+  });
+
   it("rejects non-UUID entity ids", () => {
     expect(() => referenceInspectorHref({ kind: "user", id: "sun/activity" })).toThrow("UUID");
   });

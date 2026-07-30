@@ -257,6 +257,8 @@ struct JournalEntryDetailView: View {
     @State private var isEditingEntry = false
     @State private var errorMessage: String?
     @State private var previewDocumentURL: URL?
+    @State private var referenceTargets: [String: JournalEntry] = [:]
+    @State private var selectedReferenceEntry: JournalEntry?
 
     private var context: JournalEventContext {
         entry.context
@@ -485,6 +487,19 @@ struct JournalEntryDetailView: View {
                 }
             }
 
+            if !entry.references.isEmpty {
+                Section("References") {
+                    ForEach(entry.references) { reference in
+                        JournalEntryReferenceRow(
+                            reference: reference,
+                            target: referenceTargets[reference.targetID]
+                        ) { target in
+                            selectedReferenceEntry = target
+                        }
+                    }
+                }
+            }
+
             JournalEntrySpikesSection(
                 spikes: context.spikes,
                 highlightedSpikeID: context.closestSpike?.id,
@@ -552,6 +567,14 @@ struct JournalEntryDetailView: View {
             audioPlayer.stop()
         }
         .quickLookPreview($previewDocumentURL)
+        .sheet(item: $selectedReferenceEntry) { target in
+            NavigationStack {
+                JournalEntryDetailView(entry: target, tags: tags)
+            }
+        }
+        .task(id: entry.references) {
+            resolveReferenceTargets()
+        }
         .confirmationDialog("Delete this entry?", isPresented: $isDeleteConfirmationPresented, titleVisibility: .visible) {
             Button("Delete Record", role: .destructive) {
                 deleteEntry()
@@ -567,6 +590,23 @@ struct JournalEntryDetailView: View {
 
     private var displayDepth: Int {
         JournalSettings.clampedHarmonicDepth(harmonicDepth)
+    }
+
+    private func resolveReferenceTargets() {
+        var resolved: [String: JournalEntry] = [:]
+
+        for reference in entry.references where reference.targetType == "record" {
+            let targetID = reference.targetID
+            var descriptor = FetchDescriptor<JournalEntry>(
+                predicate: #Predicate { $0.publicID == targetID }
+            )
+            descriptor.fetchLimit = 1
+            if let target = try? modelContext.fetch(descriptor).first {
+                resolved[targetID] = target
+            }
+        }
+
+        referenceTargets = resolved
     }
 
     private var moonMetadataReading: MoonPhaseOctalReading? {
@@ -632,6 +672,36 @@ struct JournalEntryDetailView: View {
         }
     }
 
+}
+
+private struct JournalEntryReferenceRow: View {
+    let reference: JournalResourceReference
+    let target: JournalEntry?
+    let open: (JournalEntry) -> Void
+
+    var body: some View {
+        if reference.targetType == "record", let target {
+            Button {
+                open(target)
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(target.firstTextLine)
+                        Text("\(reference.relation) · \(reference.targetID)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Text(JournalRecordMarkers.marker(from: target.emoji))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            LabeledContent(reference.relation, value: reference.targetID)
+        }
+    }
 }
 
 struct JournalEntryCaptureView: View {

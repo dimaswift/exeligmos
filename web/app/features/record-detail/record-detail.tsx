@@ -1,4 +1,6 @@
 import { GlyphRenderer } from "@fractonica/ui";
+import type { ApiSchemas } from "@fractonica/api-client";
+import { Form } from "react-router";
 
 import { SarosPulseGlyphPair } from "~/components/saros-pulse-glyph-pair";
 import {
@@ -11,12 +13,20 @@ import { journalRecordPresentation } from "../activity-feed/journal-presentation
 
 import styles from "./record-detail.module.css";
 
+type DreamRequest = ApiSchemas["DreamRequest"];
+
 export function RecordDetailView({
   record,
   backHref,
+  canDream = false,
+  dreamError,
+  dreamRequest,
 }: {
   readonly record: ActivityRecord;
   readonly backHref: string;
+  readonly canDream?: boolean;
+  readonly dreamError?: string;
+  readonly dreamRequest?: DreamRequest | null;
 }) {
   const presentation = journalRecordPresentation(record);
   const isPrivate = record.visibility === "private";
@@ -92,7 +102,66 @@ export function RecordDetailView({
                 ))}
               </ul>
             )}
+            {record.references.length === 0 ? null : (
+              <section aria-labelledby="record-references" className={styles.references}>
+                <h2 id="record-references">References</h2>
+                <ul>
+                  {record.references.map((reference) => {
+                    const href =
+                      reference.targetType === "record"
+                        ? `/r/${encodeURIComponent(reference.targetId)}`
+                        : `/references/${reference.targetType}/${encodeURIComponent(reference.targetId)}`;
+                    return (
+                      <li
+                        key={`${reference.relation}:${reference.targetType}:${reference.targetId}`}
+                      >
+                        <a href={href}>
+                          <span>{reference.relation}</span>
+                          <strong>{reference.targetId}</strong>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
           </>
+        )}
+
+        {!canDream ? null : (
+          <section aria-label="Dream this record" className={styles.dream}>
+            <div>
+              <strong>{dreamStatusTitle(dreamRequest)}</strong>
+              <span>{dreamStatusDetail(dreamRequest)}</span>
+              {dreamError === undefined ? null : (
+                <span className={styles.dreamError} role="alert">
+                  {dreamError}
+                </span>
+              )}
+            </div>
+            {dreamRequest?.status === "completed" &&
+            dreamRequest.dreamRecordId !== null ? (
+              <a href={`/r/${encodeURIComponent(dreamRequest.dreamRecordId)}`}>
+                Open dream →
+              </a>
+            ) : (
+              <Form method="post">
+                <button
+                  disabled={
+                    dreamRequest?.status === "queued" ||
+                    dreamRequest?.status === "processing"
+                  }
+                  type="submit"
+                >
+                  {dreamRequest?.status === "processing"
+                    ? "Dreaming…"
+                    : dreamRequest?.status === "queued"
+                      ? "Dream queued"
+                      : "Dream"}
+                </button>
+              </Form>
+            )}
+          </section>
         )}
 
         <footer className={styles.footer}>
@@ -102,4 +171,34 @@ export function RecordDetailView({
       </article>
     </main>
   );
+}
+
+function dreamStatusTitle(request: DreamRequest | null | undefined): string {
+  switch (request?.status) {
+    case "queued":
+      return "Waiting for Dreamer";
+    case "processing":
+      return "Dreaming this record";
+    case "completed":
+      return "Dream created";
+    case "failed":
+      return "The dream faded";
+    default:
+      return "Send into the future";
+  }
+}
+
+function dreamStatusDetail(request: DreamRequest | null | undefined): string {
+  switch (request?.status) {
+    case "queued":
+      return "This record is in the on-demand queue.";
+    case "processing":
+      return "The Dreamer worker is interpreting it now.";
+    case "completed":
+      return "Its future echo is ready.";
+    case "failed":
+      return request.error ?? "You can ask Dreamer to try again.";
+    default:
+      return "Create a future dream derived from this exact record.";
+  }
 }

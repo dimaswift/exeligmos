@@ -1,6 +1,9 @@
 import rawSolarData from "../../web/app/features/temporal/generated/solar-temporal-data.json" with { type: "json" };
 
-import { journalEventContext } from "./generated/temporal-core.mjs";
+import {
+  journalEventContext,
+  upcomingSarosRollovers,
+} from "./generated/temporal-core.mjs";
 
 const CONTEXT_HARMONIC_DEPTH = 8;
 const solarData = rawSolarData;
@@ -47,7 +50,14 @@ export function recordTemporalContextAt(occurredAt) {
   return context;
 }
 
-function activeSarosIntervals(instantEpochSeconds) {
+export function sarosRolloverScheduleAt(instantEpochSeconds) {
+  return upcomingSarosRollovers(
+    activeSarosIntervals(instantEpochSeconds),
+    instantEpochSeconds,
+  );
+}
+
+export function activeSarosIntervals(instantEpochSeconds) {
   return solarData.series.flatMap(([saros, eclipses]) => {
     const first = eclipses[0]?.[0];
     const last = eclipses.at(-1)?.[0];

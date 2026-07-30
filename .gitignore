@@ -10,5 +10,7 @@ sync-server/var
 sync-server/.playwright-cli
 thumb-cam-worker/thumb-cam.config.json
 thumb-cam-worker/.env
+dreamer-worker/dreamer.config.json
+dreamer-worker/.env
 .playwright-cli
 output

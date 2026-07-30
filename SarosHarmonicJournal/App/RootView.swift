@@ -640,6 +640,8 @@ private struct FeedView: View {
     @State private var now = Date()
     @State private var analyticsEntries: [JournalEntry] = []
     @State private var isLoadingAnalyticsEntries = false
+    @State private var analyticsReferenceDate = Date()
+    @State private var analyticsRefreshGeneration = 0
     @Binding var feedMode: FeedMode
     let isActive: Bool
     let entryLimit: Int
@@ -663,14 +665,6 @@ private struct FeedView: View {
     }
 
     private var analyticsQueryID: String {
-        let latestEntryFingerprint: String
-        if let latest = entries.first {
-            latestEntryFingerprint = latest.id.uuidString
-                + ":"
-                + String(latest.updatedAt.timeIntervalSince1970)
-        } else {
-            latestEntryFingerprint = "empty"
-        }
         let parts: [String] = [
             feedMode.rawValue,
             selectedRarity?.rawValue ?? "-",
@@ -682,8 +676,7 @@ private struct FeedView: View {
             selectedSynodicBin.map { String($0) } ?? "-",
             selectedAnomalisticBin.map { String($0) } ?? "-",
             selectedDraconicBin.map { String($0) } ?? "-",
-            String(lastSyncAt),
-            latestEntryFingerprint
+            String(analyticsRefreshGeneration)
         ]
         return parts.joined(separator: "|")
     }
@@ -796,7 +789,7 @@ private struct FeedView: View {
         let calendar = Calendar.current
         let halfWindow = 12 * 60 * 60.0
         var harmonic = 0
-        var targetDate = now
+        var targetDate = analyticsReferenceDate
 
         while true {
             harmonic += 1
@@ -836,14 +829,14 @@ private struct FeedView: View {
     }
 
     private func lunarEchoGroups(for series: LunarEchoSeries) -> [FeedEntryGroup] {
-        let candidateEntries = sourceEntries.filter { $0.eventDate < now }
+        let candidateEntries = sourceEntries.filter { $0.eventDate < analyticsReferenceDate }
         guard let oldestDate = candidateEntries.map(\.eventDate).min() else { return [] }
 
         var groups: [FeedEntryGroup] = []
         let calendar = Calendar.current
 
         var harmonic = 0
-        var targetDate = now
+        var targetDate = analyticsReferenceDate
 
         while true {
             harmonic += 1
@@ -897,7 +890,7 @@ private struct FeedView: View {
     ) -> [FeedEntryGroupItem] {
         (candidateEntries ?? sourceEntries)
             .filter { entry in
-                entry.eventDate < now
+                entry.eventDate < analyticsReferenceDate
                     && abs(entry.eventDate.timeIntervalSince(targetDate)) <= halfWindow
             }
             .sorted {
@@ -1026,11 +1019,13 @@ private struct FeedView: View {
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await refreshFromRelay()
+            analyticsRefreshGeneration += 1
         }
         .onReceive(feedClock) { date in
             now = date
         }
         .task(id: analyticsQueryID) {
+            analyticsReferenceDate = Date()
             await loadAnalyticsEntries()
         }
         .toolbar {

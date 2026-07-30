@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { SarosInterval } from "@fractonica/temporal-core";
@@ -80,6 +81,86 @@ describe("record detail timestamps", () => {
 
     expect(pulse).toContain('data-saros-anchor="142"');
     expectGlyphOrder(pulse, "76543", "21012");
+  });
+
+  it("links record references through the public record route", () => {
+    const referencedRecord = {
+      ...record,
+      references: [
+        {
+          relation: "dream-of",
+          targetType: "record",
+          targetUserId: record.userId,
+          targetId: "Ab_12",
+        },
+      ],
+    } as ActivityRecord;
+
+    const markup = renderToStaticMarkup(
+      <RecordDetailView backHref="/feed" record={referencedRecord} />,
+    );
+
+    expect(markup).toContain('href="/r/Ab_12"');
+    expect(markup).toContain("dream-of");
+  });
+
+  it("renders the owner-only dream action and its durable queue state", () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <RecordDetailView
+              backHref="/feed"
+              canDream
+              dreamRequest={{
+                jobId: "10000000-0000-4000-8000-000000000002",
+                recordId: record.id,
+                status: "queued",
+                requestedAt: "2026-07-15T12:32:00Z",
+                startedAt: null,
+                finishedAt: null,
+                dreamRecordId: null,
+                error: null,
+              }}
+              record={record}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    const markup = renderToStaticMarkup(
+      <RouterProvider router={router} />,
+    );
+
+    expect(markup).toContain('aria-label="Dream this record"');
+    expect(markup).toContain("Waiting for Dreamer");
+    expect(markup).toContain(">Dream queued</button>");
+    expect(markup).toContain("disabled");
+  });
+
+  it("links a completed on-demand dream from its source record", () => {
+    const markup = renderToStaticMarkup(
+      <RecordDetailView
+        backHref="/feed"
+        canDream
+        dreamRequest={{
+          jobId: "10000000-0000-4000-8000-000000000002",
+          recordId: record.id,
+          status: "completed",
+          requestedAt: "2026-07-15T12:32:00Z",
+          startedAt: "2026-07-15T12:32:02Z",
+          finishedAt: "2026-07-15T12:33:00Z",
+          dreamRecordId: "Dr34m",
+          error: null,
+        }}
+        record={record}
+      />,
+    );
+
+    expect(markup).toContain('href="/r/Dr34m"');
+    expect(markup).toContain("Open dream");
   });
 });
 

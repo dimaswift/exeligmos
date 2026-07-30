@@ -4,10 +4,14 @@ import test from "node:test";
 import {
   chooseRecordEmoji,
   combineObservations,
-} from "../src/ollama.mjs";
+  createImagePrompt,
+} from "../src/agent-tasks.mjs";
 
 const config = {
-  ollamaUrl: "http://ollama.test",
+  descriptionProvider: "ollama",
+  descriptionBaseUrl: "http://ollama.test",
+  embeddingProvider: "ollama",
+  embeddingBaseUrl: "http://ollama.test",
   descriptionModel: "gemma4",
   descriptionPrompt: "Write a short first-person diary entry.",
 };
@@ -67,6 +71,38 @@ test("chooses one emoji only after receiving the record summary", async () => {
     );
     assert.equal(emoji, "🌧️");
     assert.match(prompt, /I hear rain while photographing the street/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("turns the final summary into a visual-only generation prompt", async () => {
+  let prompt;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_input, init) => {
+    prompt = JSON.parse(init.body).messages[0].content;
+    return Response.json({
+      message: {
+        content:
+          "First-person view of a rain-slick street under amber lamps, cinematic reflections",
+      },
+    });
+  };
+
+  try {
+    const result = await createImagePrompt(
+      {
+        ...config,
+        imagePromptReference:
+          "A compact workstation on a walnut desk, product photo",
+      },
+      "I walk along a wet street beneath amber lamps.",
+    );
+    assert.match(result, /rain-slick street/);
+    assert.match(prompt, /I walk along a wet street/);
+    assert.match(prompt, /visually renderable/);
+    assert.match(prompt, /compact workstation on a walnut desk/);
+    assert.match(prompt, /Do not copy its scene/);
   } finally {
     globalThis.fetch = originalFetch;
   }

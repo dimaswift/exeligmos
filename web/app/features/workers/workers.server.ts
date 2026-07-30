@@ -9,6 +9,7 @@ import type { StoredAuthSession } from "~/lib/session.server";
 type Authorization = Readonly<Pick<StoredAuthSession, "accessToken">>;
 export type Worker = ApiSchemas["Worker"];
 export type WorkerConfigPatch = ApiSchemas["WorkerConfigPatch"];
+export type DreamRequest = ApiSchemas["DreamRequest"];
 
 export async function readWorkers(
   auth: Authorization,
@@ -39,5 +40,36 @@ export async function updateWorker(
         body: patch,
       }),
     "Could not update the worker.",
+  );
+}
+
+export async function readRecordDreamRequest(
+  auth: Authorization,
+  recordId: string,
+  signal?: AbortSignal,
+): Promise<DreamRequest | null> {
+  const client = createBackendApiClient({ accessToken: auth.accessToken });
+  const envelope = await readBackendData(
+    () =>
+      client.GET("/records/{recordId}/dream", {
+        params: { path: { recordId } },
+        signal,
+      }),
+    "Could not load the record's Dreamer job.",
+  );
+  return envelope.request;
+}
+
+export async function scheduleRecordDream(
+  auth: Authorization,
+  recordId: string,
+): Promise<DreamRequest> {
+  const client = createBackendApiClient({ accessToken: auth.accessToken });
+  return readBackendData(
+    () =>
+      client.POST("/records/{recordId}/dream", {
+        params: { path: { recordId } },
+      }),
+    "Could not schedule this record for Dreamer.",
   );
 }

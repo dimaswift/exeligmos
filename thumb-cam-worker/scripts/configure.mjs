@@ -81,13 +81,24 @@ try {
       minimumFileAgeMs: 30_000,
       scanConcurrency: 2,
       snapshotConcurrency: 2,
-      ollamaUrl: "http://127.0.0.1:11434",
+      descriptionProvider: "ollama",
+      descriptionBaseUrl: "http://127.0.0.1:11434",
       descriptionModel: "gemma4",
       descriptionPrompt:
         "describe the image from 1st person perspective as if you have captured it yourself in present tense, like an entry in the diary. Keep it short and informative",
+      embeddingProvider: "ollama",
+      embeddingBaseUrl: "http://127.0.0.1:11434",
       embeddingModel: "embeddinggemma",
-      whisperExecutable: await executablePath("whisper"),
-      whisperModel: "base",
+      imageGenerationEnabled: true,
+      imageProvider: "mlx-studio",
+      imageBaseUrl: "http://127.0.0.1:8001",
+      imageModel: "schnell",
+      imageSize: "512x512",
+      imageSteps: 4,
+      imageGuidance: 0,
+      imageTimeoutMs: 30_000,
+      pythonExecutable: await pythonWithMlxWhisper(),
+      whisperModel: "mlx-community/whisper-large-v3-mlx",
       ffmpegExecutable: await executablePath("ffmpeg"),
       ffprobeExecutable: await executablePath("ffprobe"),
       workRoot: "~/Library/Application Support/Fractonica/ThumbCam",
@@ -194,4 +205,24 @@ async function executablePath(name) {
     // The config validator and worker diagnostics will report the missing tool.
   }
   return name;
+}
+
+async function pythonWithMlxWhisper() {
+  const candidates = new Set([
+    await executablePath("python"),
+    await executablePath("python3"),
+  ]);
+  for (const candidate of candidates) {
+    try {
+      await run(candidate, ["-c", "import mlx_whisper"], {
+        encoding: "utf8",
+      });
+      return candidate;
+    } catch {
+      // Continue until an interpreter with mlx_whisper is found.
+    }
+  }
+  throw new Error(
+    "No Python interpreter with mlx_whisper was found. Install mlx-whisper in python or python3 before configuring the worker.",
+  );
 }

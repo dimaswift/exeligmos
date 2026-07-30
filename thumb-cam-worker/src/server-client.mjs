@@ -18,6 +18,7 @@ export class FractonicaClient {
     this.baseUrl = config.serverUrl;
     this.apiKey = config.apiKey;
     this.deviceId = config.deviceId;
+    this.idempotencyPrefix = config.idempotencyPrefix ?? "thumb-cam";
   }
 
   async getCurrentWorker() {
@@ -51,8 +52,10 @@ export class FractonicaClient {
       deviceId: this.deviceId,
       source: { volume: config.mountName },
       config: {
+        descriptionProvider: config.descriptionProvider,
         descriptionModel: config.descriptionModel,
         descriptionPrompt: config.descriptionPrompt,
+        embeddingProvider: config.embeddingProvider,
         embeddingModel: config.embeddingModel,
         whisperModel: config.whisperModel,
         sarosWindowSeconds: config.sarosGroupSeconds,
@@ -115,7 +118,7 @@ export class FractonicaClient {
       attempt += 1
     ) {
       const submitted = await this.json("POST", "/media-upload-sessions", {
-        idempotencyKey: `thumb-cam:${item.sourceKey}:media:${requestedMediaId}:reserve:${reservationSeed}`,
+        idempotencyKey: `${this.idempotencyPrefix}:${item.sourceKey}:media:${requestedMediaId}:reserve:${reservationSeed}`,
         body: {
           mediaId: requestedMediaId,
           deviceId: this.deviceId,
@@ -162,7 +165,7 @@ export class FractonicaClient {
       "POST",
       `/media-upload-sessions/${encodeURIComponent(reservation.id)}/complete`,
       {
-        idempotencyKey: `thumb-cam:${item.sourceKey}:media:${reservation.id}:complete`,
+        idempotencyKey: `${this.idempotencyPrefix}:${item.sourceKey}:media:${reservation.id}:complete`,
       },
     );
   }
@@ -204,7 +207,9 @@ export class FractonicaClient {
         metadata: {
           ingest: {
             source: config.mountName,
+            descriptionProvider: config.descriptionProvider,
             descriptionModel: config.descriptionModel,
+            embeddingProvider: config.embeddingProvider,
             embeddingModel: config.embeddingModel,
             mirror: "paired-rotated",
             groupKey,

@@ -6,6 +6,7 @@ import {
   feedPageLinks,
   hasFeedCursor,
   readFeedCursorQuery,
+  readRecordTimeQuery,
 } from "./feed-query.server.js";
 
 describe("feed cursor query", () => {
@@ -113,6 +114,29 @@ describe("feed cursor query", () => {
     expect(() => feedPageLinks(new URL(oversized), "recordsCursor", undefined)).toThrow(
       FeedQueryError,
     );
+  });
+});
+
+describe("record time query", () => {
+  const now = new Date("2026-07-30T12:00:00.000Z");
+
+  it("hides future records by default", () => {
+    expect(readRecordTimeQuery(new Request("https://app.example/feed"), now)).toEqual({
+      mode: "past",
+      boundary: now.toISOString(),
+    });
+  });
+
+  it("supports a stable future boundary across cursor pages", () => {
+    expect(
+      readRecordTimeQuery(
+        new Request("https://app.example/feed?time=future&at=2026-07-30T12%3A00%3A00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ).toEqual({
+      mode: "future",
+      boundary: "2026-07-30T12:00:00.000Z",
+    });
   });
 });
 

@@ -21,6 +21,7 @@ export default [
     route("jobs", "routes/jobs.tsx"),
     route("jobs/poll", "routes/jobs-poll.ts"),
     route("workers", "routes/workers.tsx"),
+    route("dreamer", "routes/dreamer.tsx"),
     route("lab/engines", "routes/engine-lab.tsx"),
     route("references/:entityType/:entityId", "routes/reference-inspector.tsx"),
   ]),

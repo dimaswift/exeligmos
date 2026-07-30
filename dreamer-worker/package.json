@@ -1,0 +1,15 @@
+{
+  "name": "fractonica-dreamer-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "configure": "node scripts/configure.mjs",
+    "install-service": "node scripts/install-service.mjs",
+    "start": "node --env-file-if-exists=.env src/cli.mjs",
+    "once": "node --env-file-if-exists=.env src/cli.mjs --once",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

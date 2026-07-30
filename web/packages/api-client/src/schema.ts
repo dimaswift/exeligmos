@@ -576,6 +576,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workers/current/dreamed/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark a source record as consumed by the bound Dreamer worker */
+        post: operations["markRecordDreamed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current/dreamer-runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Report the bound Dreamer worker schedule and execution state */
+        put: operations["updateDreamerRuntime"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/records/{recordId}/dream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        /** Read the latest on-demand Dreamer job for a record */
+        get: operations["getRecordDreamRequest"];
+        put?: never;
+        /** Queue this public record for on-demand dreaming */
+        post: operations["createRecordDreamRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current/dream-requests/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim or resume the oldest on-demand Dreamer job */
+        post: operations["claimDreamRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current/dream-requests/{jobId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete an on-demand Dreamer job */
+        post: operations["completeDreamRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current/dream-requests/{jobId}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail an on-demand Dreamer job */
+        post: operations["failDreamRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workers/{deviceId}": {
         parameters: {
             query?: never;
@@ -2020,18 +2125,88 @@ export interface components {
         WorkerConfig: {
             enabled: boolean;
             mountName: string;
+            pollIntervalMs: number;
+            /** @enum {string} */
+            descriptionProvider: "ollama" | "speshu";
+            /** Format: uri */
+            descriptionBaseUrl: string;
             descriptionModel: string;
             descriptionPrompt: string;
+            /** @enum {string} */
+            embeddingProvider: "ollama" | "speshu";
+            /** Format: uri */
+            embeddingBaseUrl: string;
             embeddingModel: string;
             whisperModel: string;
+            imageGenerationEnabled: boolean;
+            /** @enum {string} */
+            imageProvider: "mlx-studio";
+            /** Format: uri */
+            imageBaseUrl: string;
+            imageModel: string;
+            imagePromptReference: string;
+            imageSize: string;
+            imageSteps: number;
+            imageGuidance: number;
+            imageTimeoutMs: number;
         };
         WorkerConfigPatch: {
             enabled?: boolean;
             mountName?: string;
+            pollIntervalMs?: number;
+            /** @enum {string} */
+            descriptionProvider?: "ollama" | "speshu";
+            /** Format: uri */
+            descriptionBaseUrl?: string;
             descriptionModel?: string;
             descriptionPrompt?: string;
+            /** @enum {string} */
+            embeddingProvider?: "ollama" | "speshu";
+            /** Format: uri */
+            embeddingBaseUrl?: string;
             embeddingModel?: string;
             whisperModel?: string;
+            imageGenerationEnabled?: boolean;
+            /** @enum {string} */
+            imageProvider?: "mlx-studio";
+            /** Format: uri */
+            imageBaseUrl?: string;
+            imageModel?: string;
+            imagePromptReference?: string;
+            imageSize?: string;
+            imageSteps?: number;
+            imageGuidance?: number;
+            imageTimeoutMs?: number;
+        };
+        DreamerRuntime: {
+            /** @enum {string} */
+            state: "disabled" | "waiting" | "creating" | "error";
+            /** Format: date-time */
+            nextRolloverAt: string | null;
+            saros: number | null;
+            scheduleId: string | null;
+            /** Format: date-time */
+            startedAt: string | null;
+            sourceRecordId: string | null;
+            message: string | null;
+        };
+        DreamRequest: {
+            /** Format: uuid */
+            jobId: string;
+            recordId: string;
+            /** @enum {string} */
+            status: "queued" | "processing" | "completed" | "failed";
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            startedAt: string | null;
+            /** Format: date-time */
+            finishedAt: string | null;
+            dreamRecordId: string | null;
+            error: string | null;
+        };
+        DreamRequestEnvelope: {
+            request: components["schemas"]["DreamRequest"] | null;
         };
         WorkerStats: {
             jobs: number;
@@ -2045,11 +2220,14 @@ export interface components {
             /** Format: uuid */
             deviceId: string;
             name: string;
+            /** @enum {string} */
+            type: "thumb-cam" | "dreamer";
             /** Format: int64 */
             revision: number;
             /** Format: date-time */
             lastSeenAt: string | null;
             config: components["schemas"]["WorkerConfig"];
+            runtime: components["schemas"]["DreamerRuntime"] | null;
             stats: components["schemas"]["WorkerStats"];
         };
         WorkerPage: {
@@ -4115,6 +4293,209 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    markRecordDreamed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Dreamer tag is attached, or was already attached. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateDreamerRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DreamerRuntime"];
+            };
+        };
+        responses: {
+            /** @description Runtime state recorded. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getRecordDreamRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest request, or null when the record has not been queued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamRequestEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createRecordDreamRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An existing active or completed request. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamRequest"];
+                };
+            };
+            /** @description A new request was queued. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamRequest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    claimDreamRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claimed request, or null when the queue is empty. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamRequestEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    completeDreamRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    dreamRecordId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Dream request completed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    failDreamRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    error: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Dream request marked failed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     updateWorker: {

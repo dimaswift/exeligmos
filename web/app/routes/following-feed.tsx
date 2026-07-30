@@ -54,7 +54,9 @@ export async function loader({ context, request, url }: Route.LoaderArgs) {
 
 export default function FollowingFeed({ loaderData }: Route.ComponentProps) {
   const referenceHref = (reference: ActivityReference) =>
-    `/references/${reference.targetType}/${encodeURIComponent(reference.targetId)}`;
+    reference.targetType === "record"
+      ? `/r/${encodeURIComponent(reference.targetId)}`
+      : `/references/${reference.targetType}/${encodeURIComponent(reference.targetId)}`;
   return (
     <FeedWorkspace
       actions={<a href="/explore">Discover public actors</a>}

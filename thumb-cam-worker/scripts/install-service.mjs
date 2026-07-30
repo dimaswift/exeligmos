@@ -75,8 +75,6 @@ ${arguments_.map((value) => `    <string>${xml(value)}</string>`).join("\n")}
   <true/>
   <key>KeepAlive</key>
   <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
   <key>StandardOutPath</key>
   <string>${xml(stdout)}</string>
   <key>StandardErrorPath</key>

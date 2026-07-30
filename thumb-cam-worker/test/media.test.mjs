@@ -42,10 +42,10 @@ test("derives a stable RFC 4122 UUID from a content fingerprint", () => {
   );
 });
 
-test("removes Whisper output after returning the transcript", async (context) => {
+test("uses the MLX Whisper bridge and removes output after transcription", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "thumb-whisper-"));
   context.after(() => rm(root, { force: true, recursive: true }));
-  const executable = path.join(root, "fake-whisper.mjs");
+  const executable = path.join(root, "fake-python.mjs");
   const audioPath = path.join(root, "capture.wav");
   await writeFile(audioPath, "audio");
   await writeFile(
@@ -53,10 +53,8 @@ test("removes Whisper output after returning the transcript", async (context) =>
     [
       "#!/usr/bin/env node",
       'const fs = await import("node:fs");',
-      'const path = await import("node:path");',
-      'const index = process.argv.indexOf("--output_dir");',
-      "const output = process.argv[index + 1];",
-      'fs.writeFileSync(path.join(output, "capture.json"), JSON.stringify({ text: "  hello world  " }));',
+      "const output = process.argv[5];",
+      'fs.writeFileSync(output, JSON.stringify({ text: "  hello world  " }));',
     ].join("\n"),
   );
   await chmod(executable, 0o755);
@@ -64,8 +62,8 @@ test("removes Whisper output after returning the transcript", async (context) =>
   const text = await transcribeAudio(
     {
       workRoot: root,
-      whisperExecutable: executable,
-      whisperModel: "test",
+      pythonExecutable: executable,
+      whisperModel: "mlx-community/test-whisper-mlx",
     },
     audioPath,
   );
@@ -78,10 +76,8 @@ test("removes Whisper output after returning the transcript", async (context) =>
     [
       "#!/usr/bin/env node",
       'const fs = await import("node:fs");',
-      'const path = await import("node:path");',
-      'const index = process.argv.indexOf("--output_dir");',
-      "const output = process.argv[index + 1];",
-      'fs.writeFileSync(path.join(output, "partial.json"), "{}");',
+      "const output = process.argv[5];",
+      'fs.writeFileSync(output, "{}");',
       "process.exitCode = 1;",
     ].join("\n"),
   );
@@ -89,12 +85,12 @@ test("removes Whisper output after returning the transcript", async (context) =>
     transcribeAudio(
       {
         workRoot: root,
-        whisperExecutable: executable,
-        whisperModel: "test",
+        pythonExecutable: executable,
+        whisperModel: "mlx-community/test-whisper-mlx",
       },
       audioPath,
     ),
-    /Whisper failed/,
+    /MLX Whisper failed/,
   );
   assert.deepEqual(await readdir(path.join(root, "transcripts")), []);
 });

@@ -1,4 +1,5 @@
 import { Children, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { resolveEventType } from "@fractonica/domain-catalog";
 import type { SarosPulseTickReading } from "@fractonica/temporal-core";
@@ -636,11 +637,14 @@ export function RecordMediaGrid({
         )}
       </div>
       {viewerIndex === undefined ? null : (
-        <MediaViewer
-          initialIndex={viewerIndex}
-          media={visualMedia}
-          onClose={() => setViewerIndex(undefined)}
-        />
+        createPortal(
+          <MediaViewer
+            initialIndex={viewerIndex}
+            media={visualMedia}
+            onClose={() => setViewerIndex(undefined)}
+          />,
+          document.body,
+        )
       )}
     </>
   );

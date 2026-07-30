@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
 
+import { createAgent } from "../../agent-module/src/index.mjs";
+
 export async function describeVisual(config, imagePath) {
   const image = (await readFile(imagePath)).toString("base64");
-  return ollamaChat(config, config.descriptionPrompt, [image]);
+  return agentChat(config, config.descriptionPrompt, image);
 }
 
 export async function normalizeTranscript(config, transcript) {
-  return ollamaChat(
+  return agentChat(
     config,
     [
       "Normalize this speech-to-text transcript into a short first-person diary entry in present tense.",
@@ -27,7 +29,7 @@ export async function combineObservations(config, observations) {
         `${index + 1}. ${observation.kind} captured at ${observation.capturedAt}: ${observation.text}`,
     )
     .join("\n");
-  return ollamaChat(
+  return agentChat(
     config,
     [
       config.descriptionPrompt,
@@ -42,7 +44,7 @@ export async function combineObservations(config, observations) {
 }
 
 export async function chooseRecordEmoji(config, summary) {
-  const response = await ollamaChat(
+  const response = await agentChat(
     config,
     [
       "Choose the single emoji that best captures this diary entry.",
@@ -54,75 +56,76 @@ export async function chooseRecordEmoji(config, summary) {
   const emoji = firstEmoji(response);
   if (emoji === undefined) {
     throw new Error(
-      `Ollama model ${config.descriptionModel} did not return an emoji.`,
+      `Agent model ${config.descriptionModel} did not return an emoji.`,
     );
   }
   return emoji;
 }
 
+export async function createImagePrompt(config, summary) {
+  return agentChat(
+    config,
+    [
+      "Write a concise image-generation prompt that recreates the scene in this diary entry.",
+      "Describe only visible subjects, setting, lighting, camera angle, mood, and composition.",
+      "The scene must be upright: sky and ceilings above, ground and floors below, and no inverted subjects.",
+      "Do not mention a diary, summary, text, prompt, model, or anything that is not visually renderable.",
+      ...(typeof config.imagePromptReference === "string" &&
+      config.imagePromptReference.trim() !== ""
+        ? [
+            "Use the following only as a reference for prompt structure, specificity, and style. Do not copy its scene:",
+            config.imagePromptReference.trim(),
+          ]
+        : []),
+      "Reply with the prompt only.",
+      "",
+      summary,
+    ].join("\n"),
+  );
+}
+
 export async function createEmbedding(config, text) {
-  const response = await ollamaRequest(config, "/api/embed", {
+  const response = await embeddingAgent(config).embed({
     model: config.embeddingModel,
     input: text,
   });
-  const embedding = Array.isArray(response.embeddings)
-    ? response.embeddings[0]
-    : response.embedding;
-  if (
-    !Array.isArray(embedding) ||
-    embedding.length < 1 ||
-    embedding.some(
-      (value) => typeof value !== "number" || !Number.isFinite(value),
-    )
-  ) {
-    throw new Error("Ollama returned an invalid embedding.");
-  }
-  return embedding;
+  return response.vectors[0];
 }
 
-async function ollamaChat(config, content, images = []) {
-  const response = await ollamaRequest(config, "/api/chat", {
+async function agentChat(config, content, image) {
+  const response = await descriptionAgent(config).complete({
     model: config.descriptionModel,
-    stream: false,
     messages: [
       {
         role: "user",
-        content,
-        ...(images.length === 0 ? {} : { images }),
+        content:
+          image === undefined
+            ? content
+            : [
+                { type: "text", text: content },
+                { type: "image", mediaType: "image/jpeg", data: image },
+              ],
       },
     ],
-    options: { temperature: 0.2 },
+    temperature: 0.2,
   });
-  const text = response?.message?.content;
-  if (typeof text !== "string" || text.trim() === "") {
-    throw new Error(
-      `Ollama model ${config.descriptionModel} returned an empty response.`,
-    );
-  }
-  return text.trim();
+  return response.text;
 }
 
-async function ollamaRequest(config, pathname, body) {
-  let response;
-  try {
-    response = await fetch(`${config.ollamaUrl}${pathname}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10 * 60_000),
-    });
-  } catch (cause) {
-    throw new Error(`Could not reach Ollama at ${config.ollamaUrl}.`, {
-      cause,
-    });
-  }
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 2_000);
-    throw new Error(
-      `Ollama ${pathname} failed (${response.status}): ${detail}`,
-    );
-  }
-  return response.json();
+function descriptionAgent(config) {
+  return createAgent({
+    provider: config.descriptionProvider,
+    baseUrl: config.descriptionBaseUrl,
+    apiKey: config.descriptionApiKey,
+  });
+}
+
+function embeddingAgent(config) {
+  return createAgent({
+    provider: config.embeddingProvider,
+    baseUrl: config.embeddingBaseUrl,
+    apiKey: config.embeddingApiKey,
+  });
 }
 
 function firstEmoji(value) {

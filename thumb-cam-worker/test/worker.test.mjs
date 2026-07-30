@@ -4,8 +4,30 @@ import test from "node:test";
 import {
   batchMediaGroups,
   partitionMatureGroups,
+  rawTranscriptMarkdown,
   ThumbCamWorker,
 } from "../src/worker.mjs";
+
+test("preserves the raw Whisper result as a readable Markdown attachment", () => {
+  assert.equal(
+    rawTranscriptMarkdown(
+      {
+        relativePath: "AUDIO/WAV00006.wav",
+        capturedAt: "2026-07-30T12:34:56.000Z",
+      },
+      "  A lightly imperfect raw transcript.  ",
+    ),
+    [
+      "# Raw transcription",
+      "",
+      "- Source: WAV00006.wav",
+      "- Captured: 2026-07-30T12:34:56.000Z",
+      "",
+      "A lightly imperfect raw transcript.",
+      "",
+    ].join("\n"),
+  );
+});
 
 test("batches large scans without splitting a Saros group", () => {
   const groups = [

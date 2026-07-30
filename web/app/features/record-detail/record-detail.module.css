@@ -64,18 +64,51 @@
 }
 
 .sarosSection,
-.media {
+.media,
+.references {
   padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem) 0;
 }
 
 .sarosSection h2,
-.media h2 {
+.media h2,
+.references h2 {
   margin: 0 0 var(--space-3);
   color: var(--color-text-muted);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
+}
+
+.references ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.references a {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.references a:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+
+.references span {
+  color: var(--color-accent);
 }
 
 .sarosSection ul {
@@ -153,6 +186,54 @@
   font-size: 0.7rem;
 }
 
+.dream {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) clamp(1.25rem, 4vw, 2.5rem);
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: linear-gradient(90deg, rgb(155 140 255 / 10%), transparent);
+}
+
+.dream > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.dream strong {
+  color: var(--color-text);
+}
+
+.dream span {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.dream .dreamError {
+  color: #ff8585;
+}
+
+.dream button,
+.dream a {
+  display: inline-flex;
+  min-width: 7rem;
+  justify-content: center;
+  border: 1px solid #9b8cff;
+  border-radius: 999px;
+  padding: 0.6rem 1rem;
+  color: #f4f0ff;
+  background: #27203c;
+  font: 800 0.78rem var(--font-mono);
+  text-decoration: none;
+}
+
+.dream button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 @media (max-width: 42rem) {
   .hero {
     grid-template-columns: auto minmax(0, 1fr);
@@ -162,5 +243,10 @@
   .heroPulse {
     grid-column: 1 / -1;
     justify-self: end;
+  }
+
+  .dream {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

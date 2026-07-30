@@ -20,11 +20,41 @@ export interface FeedPageLinks {
   readonly previousHref: string | null;
 }
 
+export interface RecordTimeQuery {
+  readonly mode: "past" | "future";
+  readonly boundary: string;
+}
+
 export class FeedQueryError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "FeedQueryError";
   }
+}
+
+export function readRecordTimeQuery(
+  request: Request,
+  now: Date = new Date(),
+): RecordTimeQuery {
+  const url = new URL(request.url);
+  const modes = url.searchParams.getAll("time");
+  const boundaries = url.searchParams.getAll("at");
+  if (modes.length > 1 || boundaries.length > 1) {
+    throw new FeedQueryError("Record time filters may be supplied only once.");
+  }
+  const mode = modes[0] ?? "past";
+  if (mode !== "past" && mode !== "future") {
+    throw new FeedQueryError("time must be past or future.");
+  }
+  const rawBoundary = boundaries[0];
+  if (rawBoundary === undefined) {
+    return { mode, boundary: now.toISOString() };
+  }
+  const instant = Date.parse(rawBoundary);
+  if (!Number.isFinite(instant) || !rawBoundary.includes("T")) {
+    throw new FeedQueryError("at must be an RFC 3339 timestamp.");
+  }
+  return { mode, boundary: new Date(instant).toISOString() };
 }
 
 /** Reads independent opaque cursors without interpreting or normalizing their contents. */

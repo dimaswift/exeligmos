@@ -1,4 +1,5 @@
 import path from "node:path";
+import { rm, writeFile } from "node:fs/promises";
 
 import {
   cleanupVisualArtifacts,
@@ -10,11 +11,13 @@ import {
 } from "./media.mjs";
 import {
   combineObservations,
+  createImagePrompt,
   createEmbedding,
   describeVisual,
   chooseRecordEmoji,
   normalizeTranscript,
-} from "./ollama.mjs";
+} from "./agent-tasks.mjs";
+import { generateMirroredImage } from "./image-generation.mjs";
 import {
   groupMedia,
   isMounted,
@@ -419,6 +422,7 @@ export class ThumbCamWorker {
       });
 
       let transformed;
+      let transcriptPath;
       try {
         let observation;
         if (item.kind === "audio") {
@@ -427,6 +431,12 @@ export class ThumbCamWorker {
             item,
             "transcribing",
             () => transcribeAudio(this.config, item.absolutePath),
+          );
+          transcriptPath = `${item.absolutePath}.transcript.md`;
+          await writeFile(
+            transcriptPath,
+            rawTranscriptMarkdown(item, transcript),
+            "utf8",
           );
           observation = await this.withHeartbeat(job, item, "normalizing", () =>
             normalizeTranscript(this.config, transcript),
@@ -486,6 +496,23 @@ export class ThumbCamWorker {
           completedOutputs.push(completed);
           media.push(completed);
         }
+        if (transcriptPath !== undefined) {
+          const transcriptMedia = await this.withHeartbeat(
+            job,
+            item,
+            "uploading",
+            () =>
+              this.client.uploadMedia(
+                { sourceKey: `${item.sourceKey}:raw-transcript` },
+                {
+                  absolutePath: transcriptPath,
+                  contentType: "text/markdown",
+                  fileName: `${path.parse(item.relativePath).name}.transcript.md`,
+                },
+              ),
+          );
+          media.push(transcriptMedia);
+        }
         item.mediaId = completedOutputs[0].id;
         await this.updateItem(job, item, {
           status: "processing",
@@ -497,6 +524,9 @@ export class ThumbCamWorker {
       } finally {
         try {
           await cleanupVisualArtifacts(transformed);
+          if (transcriptPath !== undefined) {
+            await rm(transcriptPath, { force: true });
+          }
         } catch (error) {
           this.log.warn?.(
             `Could not clean temporary media for ${item.relativePath}: ${
@@ -521,6 +551,44 @@ export class ThumbCamWorker {
       "creating_record",
       () => chooseRecordEmoji(this.config, text),
     );
+    let generated;
+    if (this.config.imageGenerationEnabled !== false) {
+      try {
+        const prompt = await this.withHeartbeat(
+          job,
+          anchorItem,
+          "creating_record",
+          () => createImagePrompt(this.config, text),
+        );
+        generated = await this.withHeartbeat(
+          job,
+          anchorItem,
+          "creating_record",
+          () => generateMirroredImage(this.config, prompt),
+        );
+        const uploaded = await this.withHeartbeat(
+          job,
+          anchorItem,
+          "uploading",
+          () =>
+            this.client.uploadMedia(
+              {
+                sourceKey: `${group[0].groupKey}:generated:${generated.axis}`,
+              },
+              generated,
+            ),
+        );
+        media.push(uploaded);
+      } catch (error) {
+        this.log.warn?.(
+          `Image generation is unavailable; creating the record without it: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        await generated?.cleanup?.();
+      }
+    }
     const record = await this.withHeartbeat(
       job,
       anchorItem,
@@ -736,6 +804,18 @@ export class ThumbCamWorker {
       throw error;
     }
   }
+}
+
+export function rawTranscriptMarkdown(item, transcript) {
+  return [
+    "# Raw transcription",
+    "",
+    `- Source: ${path.basename(item.relativePath)}`,
+    `- Captured: ${item.capturedAt}`,
+    "",
+    transcript.trim(),
+    "",
+  ].join("\n");
 }
 
 export function batchMediaGroups(groups, maximumItems = 1_000) {

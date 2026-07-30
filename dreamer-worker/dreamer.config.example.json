@@ -1,0 +1,23 @@
+{
+  "serverUrl": "http://127.0.0.1:8788",
+  "deviceId": "00000000-0000-4000-8000-000000000000",
+  "pollIntervalMs": 60000,
+  "descriptionProvider": "ollama",
+  "descriptionBaseUrl": "http://127.0.0.1:11434",
+  "descriptionModel": "gemma4",
+  "descriptionPrompt": "Describe this image as one concise factual visual observation. Mention the subjects, setting, lighting, mood, and composition.",
+  "embeddingProvider": "ollama",
+  "embeddingBaseUrl": "http://127.0.0.1:11434",
+  "embeddingModel": "embeddinggemma",
+  "imageGenerationEnabled": true,
+  "imageProvider": "mlx-studio",
+  "imageBaseUrl": "http://127.0.0.1:8001",
+  "imageModel": "schnell",
+  "imagePromptReference": "A compact workstation on a walnut desk, soft window light, eye-level product photo, quiet focused mood",
+  "imageSize": "512x512",
+  "imageSteps": 4,
+  "imageGuidance": 0,
+  "imageTimeoutMs": 30000,
+  "ffmpegExecutable": "ffmpeg",
+  "workRoot": "~/Library/Application Support/Fractonica/Dreamer"
+}

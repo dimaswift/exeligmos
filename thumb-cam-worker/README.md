@@ -33,18 +33,25 @@ after the worker or Mac restarts.
   attached independently to the record.
 - Ollama describes processed photos with `gemma4` by default. Videos are never
   sent to Gemma.
-- Whisper transcribes audio; Gemma repairs likely recognition errors without
-  inventing content.
+- MLX Whisper transcribes audio locally with
+  `mlx-community/whisper-large-v3-mlx` by default; Gemma repairs likely
+  recognition errors without inventing content.
 - Gemma first describes each photo and normalizes each audio transcript.
   It then combines the photo and audio observations into one short,
   first-person diary entry; video descriptions are excluded from this
   record-wide summary.
 - After the summary is complete, Gemma chooses the single emoji that best
   represents the finished record text.
+- Gemma also converts the final summary into a visual prompt. MLX Studio
+  generates a square image with `schnell`. The worker corrects MLX Studio's
+  inverted output orientation, then preserves one half and reflects it across
+  the vertical axis. If generation is
+  unavailable, the record completes without the generated attachment.
 - Processed visual media and original audio are uploaded through Fractonica's
-  verified upload-session API.
-- Generated symmetric media, video preview frames, and Whisper transcripts are
-  removed from the worker directory after each attempt.
+  verified upload-session API. Each audio file also gets a readable
+  `<source>.transcript.md` attachment containing the raw MLX Whisper output.
+- Temporary generated media and local transcript files are removed from the
+  worker directory after each attempt.
 - The record's `occurredAt` is the first source-media capture time.
 - Every record stores the same depth-eight Saros context as the web/iOS record
   flow, including the closest octal phase and two past/two future spikes. Plain
@@ -53,7 +60,7 @@ after the worker or Mac restarts.
   without duplicating the attachment list inside JSON.
 - Ollama generates an `embeddinggemma` vector for the final text and the worker
   stores it through the record embedding API.
-- Long ffmpeg, Whisper, upload, and Ollama stages renew the server activity
+- Long ffmpeg, MLX Whisper, upload, and model-agent stages renew the server activity
   lease every 30 seconds. If the worker exits, `/jobs` becomes idle after two
   minutes while the unfinished item remains retryable.
 - If another worker advances the same job revision, this worker reloads the
@@ -66,8 +73,10 @@ Source files on the camera are never renamed, changed, or deleted.
 
 - Node.js 24 or newer
 - `ffmpeg` and `ffprobe`
-- Ollama running locally with the configured description and embedding models
-- the Python `whisper` command
+- Ollama running locally when using the default local description or embedding
+  agents
+- Python with the `mlx-whisper` package installed
+- MLX Studio on `http://127.0.0.1:8001` for optional generated attachments
 - a Fractonica `THUMB` device of kind `agent`
 - an API key bound to that device with:
   `jobs:read`, `jobs:write`, `records:read`, `records:write`, `media:read`,
@@ -93,9 +102,23 @@ All JSON settings also have environment-variable overrides. The most useful
 ones are:
 
 ```text
+THUMB_CAM_DESCRIPTION_PROVIDER
+THUMB_CAM_DESCRIPTION_BASE_URL
+THUMB_CAM_DESCRIPTION_API_KEY
 THUMB_CAM_DESCRIPTION_MODEL
 THUMB_CAM_DESCRIPTION_PROMPT
+THUMB_CAM_EMBEDDING_PROVIDER
+THUMB_CAM_EMBEDDING_BASE_URL
+THUMB_CAM_EMBEDDING_API_KEY
 THUMB_CAM_EMBEDDING_MODEL
+THUMB_CAM_IMAGE_BASE_URL
+THUMB_CAM_IMAGE_API_KEY
+THUMB_CAM_IMAGE_MODEL
+THUMB_CAM_IMAGE_SIZE
+THUMB_CAM_IMAGE_STEPS
+THUMB_CAM_IMAGE_GUIDANCE
+THUMB_CAM_IMAGE_TIMEOUT_MS
+THUMB_CAM_PYTHON_EXECUTABLE
 THUMB_CAM_WHISPER_MODEL
 THUMB_CAM_SERVER_URL
 THUMB_CAM_DEVICE_ID
@@ -134,11 +157,33 @@ Command-line overrides are available for the common settings:
 ```sh
 npm start -- \
   --config thumb-cam.config.json \
+  --description-provider ollama \
   --model gemma4 \
+  --embedding-provider ollama \
   --embedding-model embeddinggemma \
-  --whisper-model base \
+  --whisper-model mlx-community/whisper-large-v3-mlx \
   --prompt 'your prompt'
 ```
+
+The worker uses the shared [`@exeligmos/agent`](../agent-module/README.md)
+interface. `ollama` supports text, images, and embeddings. `speshu` uses
+`https://speshu.ai/api/v1/chat/completions` for text and image requests:
+
+```sh
+export SPESHU_API_KEY='...'
+npm start -- \
+  --config thumb-cam.config.json \
+  --description-provider speshu \
+  --description-base-url https://speshu.ai/api/v1 \
+  --model google/gemini-2.5-flash
+```
+
+SpeShu's documented chat API has no embeddings operation, so the default
+embedding agent remains Ollama. Agent keys belong in environment variables,
+never in `thumb-cam.config.json` or server-managed worker settings. For the
+background LaunchAgent, add `SPESHU_API_KEY=...` to the worker's ignored
+`.env` file; exported interactive-shell variables are not inherited by
+LaunchAgent processes.
 
 The worker first resumes unfinished jobs from verified local snapshots, even
 while the camera is absent, then submits a current mounted scan. Completed
