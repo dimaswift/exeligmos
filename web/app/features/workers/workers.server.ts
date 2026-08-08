@@ -1,15 +1,14 @@
 import type { ApiSchemas } from "@fractonica/api-client";
 
-import {
-  createBackendApiClient,
-  readBackendData,
-} from "~/lib/backend.server";
+import { createBackendApiClient, readBackendData } from "~/lib/backend.server";
 import type { StoredAuthSession } from "~/lib/session.server";
 
 type Authorization = Readonly<Pick<StoredAuthSession, "accessToken">>;
 export type Worker = ApiSchemas["Worker"];
 export type WorkerConfigPatch = ApiSchemas["WorkerConfigPatch"];
 export type DreamRequest = ApiSchemas["DreamRequest"];
+export type WorkerLog = ApiSchemas["WorkerLog"];
+export type WorkerReset = ApiSchemas["WorkerReset"];
 
 export async function readWorkers(
   auth: Authorization,
@@ -40,6 +39,38 @@ export async function updateWorker(
         body: patch,
       }),
     "Could not update the worker.",
+  );
+}
+
+export async function readWorkerLogs(
+  auth: Authorization,
+  deviceId: string,
+  limit = 100,
+  signal?: AbortSignal,
+): Promise<readonly WorkerLog[]> {
+  const client = createBackendApiClient({ accessToken: auth.accessToken });
+  const page = await readBackendData(
+    () =>
+      client.GET("/workers/{deviceId}/logs", {
+        params: {
+          path: { deviceId },
+          query: { limit },
+        },
+        signal,
+      }),
+    "Could not load worker logs.",
+  );
+  return page.data;
+}
+
+export async function resetWorker(auth: Authorization, deviceId: string): Promise<WorkerReset> {
+  const client = createBackendApiClient({ accessToken: auth.accessToken });
+  return readBackendData(
+    () =>
+      client.POST("/workers/{deviceId}/reset", {
+        params: { path: { deviceId } },
+      }),
+    "Could not reset the worker cache.",
   );
 }
 

@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   chooseMostDistantSource,
   createDreamEmojiSignature,
+  DreamAttemptFailure,
+  DreamerWorker,
+  MAX_DREAM_ATTEMPTS,
   nextRolloverInFuture,
   ROLLOVER_MILLISECONDS,
   validateDreamEmojiSignature,
@@ -89,6 +92,104 @@ test("asks the configured language agent for the signature", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("skips a source after its third durable Dreamer failure", async () => {
+  let attempts = 0;
+  const marked = [];
+  const worker = new DreamerWorker(
+    {
+      workRoot: "/tmp/dreamer-test",
+      imageGenerationEnabled: true,
+    },
+    {
+      client: {
+        async findDream() {
+          return undefined;
+        },
+        async startDreamAttempt(recordId) {
+          attempts += 1;
+          return {
+            recordId,
+            attempt: attempts,
+            maxAttempts: MAX_DREAM_ATTEMPTS,
+            allowed: attempts <= MAX_DREAM_ATTEMPTS,
+          };
+        },
+        async markDreamed(recordId) {
+          marked.push(recordId);
+        },
+      },
+      log: { info() {} },
+    },
+  );
+  worker.processDreamSource = async () => {
+    throw new Error("image generator unavailable");
+  };
+  const identity = { id: "schedule:141", kind: "scheduled" };
+  const source = { id: "src01" };
+
+  for (let expected = 1; expected <= MAX_DREAM_ATTEMPTS; expected += 1) {
+    await assert.rejects(
+      () => worker.dreamSource(identity, source, { id: "dreamer" }),
+      (error) => {
+        assert.ok(error instanceof DreamAttemptFailure);
+        assert.equal(error.attempt, expected);
+        assert.equal(error.exhausted, expected === MAX_DREAM_ATTEMPTS);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(marked, ["src01"]);
+});
+
+test("does not process a source whose durable attempt limit was already exceeded", async () => {
+  let processed = false;
+  const marked = [];
+  const worker = new DreamerWorker(
+    {
+      workRoot: "/tmp/dreamer-test",
+      imageGenerationEnabled: true,
+    },
+    {
+      client: {
+        async findDream() {
+          return undefined;
+        },
+        async startDreamAttempt(recordId) {
+          return {
+            recordId,
+            attempt: MAX_DREAM_ATTEMPTS + 1,
+            maxAttempts: MAX_DREAM_ATTEMPTS,
+            allowed: false,
+          };
+        },
+        async markDreamed(recordId) {
+          marked.push(recordId);
+        },
+      },
+      log: { info() {} },
+    },
+  );
+  worker.processDreamSource = async () => {
+    processed = true;
+  };
+
+  await assert.rejects(
+    () =>
+      worker.dreamSource(
+        { id: "schedule:141", kind: "scheduled" },
+        { id: "src01" },
+        { id: "dreamer" },
+      ),
+    (error) => {
+      assert.ok(error instanceof DreamAttemptFailure);
+      assert.equal(error.exhausted, true);
+      return true;
+    },
+  );
+  assert.equal(processed, false);
+  assert.deepEqual(marked, ["src01"]);
 });
 
 function record(id, occurredAt, tagIds, saros) {

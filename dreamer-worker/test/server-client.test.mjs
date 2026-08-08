@@ -101,3 +101,34 @@ test("claims and completes an on-demand dream request", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("starts a durable per-record Dreamer attempt", async () => {
+  let request;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    request = { input: String(input), init };
+    return Response.json({
+      recordId: "abc12",
+      attempt: 2,
+      maxAttempts: 3,
+      allowed: true,
+    });
+  };
+  try {
+    const client = new DreamerClient({
+      serverUrl: "http://server.test",
+      apiKey: "secret",
+      deviceId: "11111111-1111-4111-8111-111111111111",
+    });
+    const attempt = await client.startDreamAttempt("abc12");
+    assert.equal(
+      request.input,
+      "http://server.test/workers/current/dream-attempts/abc12",
+    );
+    assert.equal(request.init.method, "POST");
+    assert.equal(attempt.attempt, 2);
+    assert.equal(attempt.allowed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

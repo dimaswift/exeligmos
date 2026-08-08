@@ -1,7 +1,13 @@
 import { data, Form, redirect, useActionData, useNavigation, useSearchParams } from "react-router";
 
 import type { Route } from "./+types/workers";
-import { readWorkers, updateWorker } from "~/features/workers/workers.server";
+import {
+  readWorkerLogs,
+  readWorkers,
+  resetWorker,
+  updateWorker,
+  type WorkerLog,
+} from "~/features/workers/workers.server";
 import { assertSameOrigin, BackendRequestError } from "~/lib/auth.server";
 import { readRequestAuth } from "~/lib/auth-boundary.server";
 import { throwRouteError } from "~/lib/route-errors.server";
@@ -12,8 +18,21 @@ export const meta: Route.MetaFunction = () => [{ title: "Workers · Fractonica" 
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   try {
+    const auth = readRequestAuth(context).auth;
+    const workers = await readWorkers(auth, request.signal);
     return {
-      workers: await readWorkers(readRequestAuth(context).auth, request.signal),
+      workers,
+      logsByDevice: Object.fromEntries(
+        await Promise.all(
+          workers.map(
+            async (worker) =>
+              [
+                worker.deviceId,
+                await readWorkerLogs(auth, worker.deviceId, 50, request.signal),
+              ] as const,
+          ),
+        ),
+      ),
     };
   } catch (error) {
     return throwRouteError(error, request, { clearInvalidAuth: true });
@@ -24,6 +43,10 @@ export async function action({ context, request }: Route.ActionArgs) {
   assertSameOrigin(request);
   const form = await request.formData();
   try {
+    if (form.get("intent") === "reset") {
+      await resetWorker(readRequestAuth(context).auth, required(form, "deviceId"));
+      return redirect("/workers?reset=1");
+    }
     await updateWorker(
       readRequestAuth(context).auth,
       required(form, "deviceId"),
@@ -78,6 +101,9 @@ export default function Workers({ loaderData }: Route.ComponentProps) {
         </div>
       </header>
       {search.has("saved") ? <p className={styles.notice}>Worker settings saved.</p> : null}
+      {search.has("reset") ? (
+        <p className={styles.notice}>THUMB cache cleared and counters restarted.</p>
+      ) : null}
       {actionData?.error === undefined ? null : (
         <p className={styles.error} role="alert">
           {actionData.error}
@@ -116,7 +142,35 @@ export default function Workers({ loaderData }: Route.ComponentProps) {
               </dl>
               <p className={styles.lastSeen}>
                 Last seen: {worker.lastSeenAt === null ? "never" : formatDate(worker.lastSeenAt)}
+                {worker.stats.resetAt === null
+                  ? null
+                  : ` · counters since ${formatDate(worker.stats.resetAt)}`}
               </p>
+              <WorkerLogs logs={loaderData.logsByDevice[worker.deviceId] ?? []} />
+              {worker.type === "thumb-cam" ? (
+                <Form
+                  className={styles.reset}
+                  method="post"
+                  onSubmit={(event) => {
+                    if (
+                      !window.confirm(
+                        "Clear every THUMB processed-media cache and restart its counters? Existing records and media will be kept.",
+                      )
+                    ) {
+                      event.preventDefault();
+                    }
+                  }}
+                >
+                  <input name="deviceId" type="hidden" value={worker.deviceId} />
+                  <button disabled={busy} name="intent" type="submit" value="reset">
+                    {busy ? "Resetting…" : "Reset cache and counters"}
+                  </button>
+                  <p>
+                    Forgets processed camera files and local snapshots. Existing records, media, and
+                    logs are preserved.
+                  </p>
+                </Form>
+              ) : null}
               <details className={styles.editor}>
                 <summary>Edit worker</summary>
                 <Form className={styles.form} method="post">
@@ -302,6 +356,32 @@ export default function Workers({ loaderData }: Route.ComponentProps) {
         </div>
       )}
     </main>
+  );
+}
+
+function WorkerLogs({ logs }: { readonly logs: readonly WorkerLog[] }) {
+  return (
+    <details className={styles.logs}>
+      <summary>Recent logs ({logs.length})</summary>
+      {logs.length === 0 ? (
+        <p>No worker logs have been recorded yet.</p>
+      ) : (
+        <ol>
+          {logs.map((log) => (
+            <li data-level={log.level} key={log.id}>
+              <div>
+                <time dateTime={log.createdAt}>{formatDate(log.createdAt)}</time>
+                <strong>{log.level}</strong>
+              </div>
+              <p>{log.message}</p>
+              {Object.keys(log.context).length === 0 ? null : (
+                <pre>{JSON.stringify(log.context, null, 2)}</pre>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </details>
   );
 }
 

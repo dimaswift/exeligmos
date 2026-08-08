@@ -735,6 +735,30 @@ CREATE TABLE public.ingestion_job_items (
     CONSTRAINT ingestion_job_items_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'processing'::text, 'completed'::text, 'failed'::text])))
 );
 
+CREATE TABLE public.worker_dream_attempts (
+    user_id uuid NOT NULL,
+    device_id uuid NOT NULL,
+    record_id uuid NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT worker_dream_attempts_attempts_check CHECK ((attempts > 0))
+);
+
+CREATE TABLE public.worker_logs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    device_id uuid NOT NULL,
+    level text NOT NULL,
+    message text NOT NULL,
+    context jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT worker_logs_context_check CHECK ((jsonb_typeof(context) = 'object'::text)),
+    CONSTRAINT worker_logs_context_size_check CHECK ((public.exeligmos_jsonb_compact_octet_length(context) <= 32768)),
+    CONSTRAINT worker_logs_level_check CHECK ((level = ANY (ARRAY['debug'::text, 'info'::text, 'warn'::text, 'error'::text]))),
+    CONSTRAINT worker_logs_message_check CHECK (((message = btrim(message)) AND (char_length(message) >= 1) AND (char_length(message) <= 4000)))
+);
+
 CREATE TABLE public.idempotency_keys (
     user_id uuid NOT NULL,
     operation_id text NOT NULL,
@@ -1134,6 +1158,12 @@ ALTER TABLE ONLY public.ingestion_job_items
 ALTER TABLE ONLY public.ingestion_job_items
     ADD CONSTRAINT ingestion_job_items_user_device_source_key UNIQUE (user_id, device_id, source_key);
 
+ALTER TABLE ONLY public.worker_dream_attempts
+    ADD CONSTRAINT worker_dream_attempts_pkey PRIMARY KEY (user_id, device_id, record_id);
+
+ALTER TABLE ONLY public.worker_logs
+    ADD CONSTRAINT worker_logs_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (user_id, operation_id, idempotency_key);
 
@@ -1256,6 +1286,8 @@ CREATE INDEX ingestion_job_items_user_group_idx ON public.ingestion_job_items US
 CREATE INDEX ingestion_jobs_user_created_idx ON public.ingestion_jobs USING btree (user_id, created_at DESC, id DESC);
 
 CREATE INDEX ingestion_jobs_user_status_idx ON public.ingestion_jobs USING btree (user_id, status, updated_at DESC, id DESC);
+
+CREATE INDEX worker_logs_user_device_created_idx ON public.worker_logs USING btree (user_id, device_id, created_at DESC, id DESC);
 
 CREATE INDEX idempotency_keys_expiry_idx ON public.idempotency_keys USING btree (expires_at);
 
@@ -1425,6 +1457,15 @@ ALTER TABLE ONLY public.ingestion_job_items
 
 ALTER TABLE ONLY public.ingestion_job_items
     ADD CONSTRAINT ingestion_job_items_user_record_id_fkey FOREIGN KEY (user_id, record_id) REFERENCES public.records(user_id, id);
+
+ALTER TABLE ONLY public.worker_dream_attempts
+    ADD CONSTRAINT worker_dream_attempts_user_device_fkey FOREIGN KEY (user_id, device_id) REFERENCES public.devices(user_id, id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.worker_dream_attempts
+    ADD CONSTRAINT worker_dream_attempts_user_record_fkey FOREIGN KEY (user_id, record_id) REFERENCES public.records(user_id, id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.worker_logs
+    ADD CONSTRAINT worker_logs_user_device_fkey FOREIGN KEY (user_id, device_id) REFERENCES public.devices(user_id, id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.idempotency_keys
     ADD CONSTRAINT idempotency_keys_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;

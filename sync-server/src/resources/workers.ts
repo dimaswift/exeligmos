@@ -4,10 +4,7 @@ import type { Principal } from "../auth/principal.js";
 import type { Database, Queryable } from "../db/database.js";
 import { HttpProblem } from "../http/problem.js";
 import { assertRecordPublicId } from "./records.js";
-import {
-  requireMatchingEtag,
-  resourceEtag,
-} from "./shared.js";
+import { requireMatchingEtag, resourceEtag } from "./shared.js";
 
 export interface WorkerConfig {
   readonly enabled: boolean;
@@ -55,11 +52,30 @@ export interface DreamRequest {
   readonly error: string | null;
 }
 
+export type WorkerLogLevel = "debug" | "info" | "warn" | "error";
+
+export interface WorkerLog {
+  readonly id: string;
+  readonly deviceId: string;
+  readonly level: WorkerLogLevel;
+  readonly message: string;
+  readonly context: Readonly<Record<string, unknown>>;
+  readonly createdAt: string;
+}
+
+export interface DreamAttempt {
+  readonly recordId: string;
+  readonly attempt: number;
+  readonly maxAttempts: 3;
+  readonly allowed: boolean;
+}
+
 export interface WorkerView {
   readonly deviceId: string;
   readonly name: string;
   readonly type: "thumb-cam" | "dreamer";
   readonly revision: number;
+  readonly cacheGeneration: number;
   readonly lastSeenAt: string | null;
   readonly config: WorkerConfig;
   readonly runtime: DreamerRuntime | null;
@@ -69,7 +85,16 @@ export interface WorkerView {
     readonly records: number;
     readonly failedMedia: number;
     readonly lastJobAt: string | null;
+    readonly resetAt: string | null;
   };
+}
+
+export interface WorkerReset {
+  readonly deviceId: string;
+  readonly cacheGeneration: number;
+  readonly resetAt: string;
+  readonly removedJobs: number;
+  readonly removedItems: number;
 }
 
 interface WorkerRow extends QueryResultRow {
@@ -93,6 +118,15 @@ interface DreamRequestRow extends QueryResultRow {
   readonly created_at: Date | string;
   readonly started_at: Date | string | null;
   readonly finished_at: Date | string | null;
+}
+
+interface WorkerLogRow extends QueryResultRow {
+  readonly id: string;
+  readonly device_id: string;
+  readonly level: WorkerLogLevel;
+  readonly message: string;
+  readonly context: unknown;
+  readonly created_at: Date | string;
 }
 
 const DEFAULT_CONFIG: WorkerConfig = {
@@ -123,7 +157,9 @@ const DEFAULT_CONFIG: WorkerConfig = {
 export class WorkerService {
   constructor(private readonly database: Database) {}
 
-  async list(userId: string): Promise<{ readonly data: readonly WorkerView[] }> {
+  async list(
+    userId: string,
+  ): Promise<{ readonly data: readonly WorkerView[] }> {
     const result = await workerRows(this.database, userId);
     return { data: result.rows.map(workerView) };
   }
@@ -135,7 +171,8 @@ export class WorkerService {
         code: "worker_key_required",
         title: "Forbidden",
         type: "urn:exeligmos:problem:worker-key-required",
-        detail: "The current worker configuration requires a device-bound API key.",
+        detail:
+          "The current worker configuration requires a device-bound API key.",
       });
     }
     const result = await workerRows(
@@ -146,6 +183,101 @@ export class WorkerService {
     const row = result.rows[0];
     if (row === undefined) throw workerNotFound();
     return workerView(row);
+  }
+
+  async listLogs(
+    principal: Principal,
+    deviceId: string,
+    limit: number,
+  ): Promise<{ readonly data: readonly WorkerLog[] }> {
+    if (principal.kind !== "jwt") {
+      throw new HttpProblem({
+        status: 403,
+        code: "jwt_required",
+        title: "Forbidden",
+        type: "urn:exeligmos:problem:jwt-required",
+        detail: "Reading worker logs requires an authenticated user session.",
+      });
+    }
+    const device = await this.database.query(
+      `SELECT 1
+       FROM devices
+       WHERE user_id = $1 AND id = $2 AND kind = 'agent'
+         AND revoked_at IS NULL
+         AND metadata->>'source' IN ('THUMB_CAM', 'DREAMER')`,
+      [principal.userId, deviceId],
+    );
+    if (device.rows[0] === undefined) throw workerNotFound();
+    const logs = await this.database.query<WorkerLogRow>(
+      `SELECT id, device_id, level, message, context, created_at
+       FROM worker_logs
+       WHERE user_id = $1 AND device_id = $2
+       ORDER BY created_at DESC, id DESC
+       LIMIT $3`,
+      [principal.userId, deviceId, limit],
+    );
+    return { data: logs.rows.map(workerLogView) };
+  }
+
+  async appendLog(
+    principal: Principal,
+    input: {
+      readonly level: WorkerLogLevel;
+      readonly message: string;
+      readonly context: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<WorkerLog> {
+    await this.assertWorkerPrincipal(principal);
+    const inserted = await this.database.query<WorkerLogRow>(
+      `INSERT INTO worker_logs (user_id, device_id, level, message, context)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id, device_id, level, message, context, created_at`,
+      [
+        principal.userId,
+        principal.deviceId!,
+        input.level,
+        input.message,
+        JSON.stringify(input.context),
+      ],
+    );
+    return workerLogView(inserted.rows[0]!);
+  }
+
+  async startDreamAttempt(
+    principal: Principal,
+    recordId: string,
+  ): Promise<DreamAttempt> {
+    assertRecordPublicId(recordId);
+    await this.assertDreamerPrincipal(principal);
+    const attempt = await this.database.transaction(async (client) => {
+      const record = await client.query<{ readonly id: string }>(
+        `SELECT id
+         FROM records
+         WHERE user_id = $1 AND public_id = $2 AND deleted_at IS NULL
+         FOR SHARE`,
+        [principal.userId, recordId],
+      );
+      const internalId = record.rows[0]?.id;
+      if (internalId === undefined) throw dreamSourceNotFound();
+      const updated = await client.query<{ readonly attempts: number }>(
+        `INSERT INTO worker_dream_attempts (
+           user_id, device_id, record_id, attempts
+         ) VALUES ($1, $2, $3, 1)
+         ON CONFLICT (user_id, device_id, record_id)
+         DO UPDATE SET
+           attempts = worker_dream_attempts.attempts + 1,
+           updated_at = now()
+         RETURNING attempts`,
+        [principal.userId, principal.deviceId!, internalId],
+      );
+      return updated.rows[0]!.attempts;
+    });
+    return {
+      recordId,
+      attempt,
+      maxAttempts: 3,
+      allowed: attempt <= 3,
+    };
   }
 
   async update(
@@ -193,6 +325,108 @@ export class WorkerService {
       );
       const refreshed = await workerRows(client, principal.userId, deviceId);
       return workerView(refreshed.rows[0] ?? updated.rows[0]!);
+    });
+  }
+
+  async resetThumbCam(
+    principal: Principal,
+    deviceId: string,
+  ): Promise<WorkerReset> {
+    if (principal.kind !== "jwt") {
+      throw new HttpProblem({
+        status: 403,
+        code: "jwt_required",
+        title: "Forbidden",
+        type: "urn:exeligmos:problem:jwt-required",
+        detail: "Resetting a worker requires an authenticated user session.",
+      });
+    }
+    return this.database.transaction(async (client) => {
+      const device = await client.query<{
+        readonly metadata: unknown;
+      }>(
+        `SELECT metadata
+         FROM devices
+         WHERE user_id = $1 AND id = $2 AND kind = 'agent'
+           AND revoked_at IS NULL
+           AND metadata->>'source' = 'THUMB_CAM'
+         FOR UPDATE`,
+        [principal.userId, deviceId],
+      );
+      const row = device.rows[0];
+      if (row === undefined) throw workerNotFound();
+      const removed = await client.query<{
+        readonly jobs: string | number;
+        readonly items: string | number;
+      }>(
+        `SELECT count(DISTINCT j.id)::bigint AS jobs,
+                count(i.id)::bigint AS items
+         FROM ingestion_jobs j
+         LEFT JOIN ingestion_job_items i
+           ON i.user_id = j.user_id AND i.device_id = j.device_id
+          AND i.job_id = j.id
+         WHERE j.user_id = $1 AND j.device_id = $2`,
+        [principal.userId, deviceId],
+      );
+      await client.query(
+        `DELETE FROM ingestion_jobs
+         WHERE user_id = $1 AND device_id = $2`,
+        [principal.userId, deviceId],
+      );
+      await client.query(
+        `DELETE FROM idempotency_keys stored
+         USING api_keys key
+         WHERE stored.user_id = $1
+           AND stored.actor_type = 'api_key'
+           AND stored.actor_id = key.id
+           AND key.user_id = $1 AND key.device_id = $2
+           AND stored.operation_id IN (
+             'createIngestionJob', 'updateIngestionJobItem'
+           )`,
+        [principal.userId, deviceId],
+      );
+      const cacheGeneration = workerCacheGeneration(row.metadata) + 1;
+      const updated = await client.query<{
+        readonly reset_at: Date | string;
+      }>(
+        `UPDATE devices
+         SET metadata = metadata || jsonb_build_object(
+               'thumbCamReset', jsonb_build_object(
+                 'generation', $3::integer,
+                 'at', clock_timestamp()
+               )
+             ),
+             revision = revision + 1,
+             updated_at = now()
+         WHERE user_id = $1 AND id = $2
+         RETURNING metadata#>>'{thumbCamReset,at}' AS reset_at`,
+        [principal.userId, deviceId, cacheGeneration],
+      );
+      const resetAt = timestamp(updated.rows[0]!.reset_at)!;
+      const counts = removed.rows[0]!;
+      const removedJobs = Number(counts.jobs);
+      const removedItems = Number(counts.items);
+      await client.query(
+        `INSERT INTO worker_logs (user_id, device_id, level, message, context)
+         VALUES ($1, $2, 'info', 'THUMB worker cache reset by owner.', $3::jsonb)`,
+        [
+          principal.userId,
+          deviceId,
+          JSON.stringify({
+            event: "worker_cache_reset",
+            cacheGeneration,
+            removedJobs,
+            removedItems,
+          }),
+        ],
+      );
+      return {
+        deviceId,
+        cacheGeneration,
+        resetAt,
+        removedJobs,
+        removedItems,
+      };
     });
   }
 
@@ -287,7 +521,8 @@ export class WorkerService {
         code: "jwt_required",
         title: "Forbidden",
         type: "urn:exeligmos:problem:jwt-required",
-        detail: "Reading a dream request requires an authenticated user session.",
+        detail:
+          "Reading a dream request requires an authenticated user session.",
       });
     }
     const result = await this.database.query<DreamRequestRow>(
@@ -388,7 +623,8 @@ export class WorkerService {
         ],
       );
       const row = inserted.rows[0];
-      if (row === undefined) throw new Error("Dream request insert returned no row.");
+      if (row === undefined)
+        throw new Error("Dream request insert returned no row.");
       return dreamRequestView(row);
     });
   }
@@ -477,25 +713,34 @@ export class WorkerService {
   }
 
   private async assertDreamerPrincipal(principal: Principal): Promise<void> {
+    const source = await this.assertWorkerPrincipal(principal);
+    if (source !== "DREAMER") throw workerNotFound();
+  }
+
+  private async assertWorkerPrincipal(
+    principal: Principal,
+  ): Promise<"THUMB_CAM" | "DREAMER"> {
     if (principal.kind !== "api_key" || principal.deviceId === undefined) {
       throw workerNotFound();
     }
-    const device = await this.database.query<{ readonly source: string | null }>(
+    const device = await this.database.query<{
+      readonly source: string | null;
+    }>(
       `SELECT metadata->>'source' AS source
        FROM devices
        WHERE user_id = $1 AND id = $2 AND kind = 'agent'
          AND revoked_at IS NULL`,
       [principal.userId, principal.deviceId],
     );
-    if (device.rows[0]?.source !== "DREAMER") throw workerNotFound();
+    const source = device.rows[0]?.source;
+    if (source !== "THUMB_CAM" && source !== "DREAMER") {
+      throw workerNotFound();
+    }
+    return source;
   }
 }
 
-function workerRows(
-  queryable: Queryable,
-  userId: string,
-  deviceId?: string,
-) {
+function workerRows(queryable: Queryable, userId: string, deviceId?: string) {
   return queryable.query<WorkerRow>(
     `SELECT d.id, d.name, d.revision,
             GREATEST(
@@ -507,22 +752,34 @@ function workerRows(
             ) AS last_seen_at,
             d.metadata,
             (SELECT count(*) FROM ingestion_jobs j
-             WHERE j.user_id = d.user_id AND j.device_id = d.id)::bigint AS jobs,
+             WHERE j.user_id = d.user_id AND j.device_id = d.id
+               AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                 OR j.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz))::bigint AS jobs,
             (SELECT count(*) FROM media_objects m
              WHERE m.user_id = d.user_id AND m.device_id = d.id
-               AND m.status = 'ready')::bigint AS media,
+               AND m.status = 'ready'
+               AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                 OR m.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz))::bigint AS media,
             (SELECT count(*) FROM records r
              WHERE r.user_id = d.user_id AND r.device_id = d.id
-               AND r.deleted_at IS NULL)::bigint AS records,
+               AND r.deleted_at IS NULL
+               AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                 OR r.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz))::bigint AS records,
             (SELECT count(*) FROM ingestion_job_items i
              WHERE i.user_id = d.user_id AND i.device_id = d.id
-               AND i.status = 'failed')::bigint AS failed_media,
+               AND i.status = 'failed'
+               AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                 OR i.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz))::bigint AS failed_media,
             GREATEST(
               (SELECT max(j.created_at) FROM ingestion_jobs j
-               WHERE j.user_id = d.user_id AND j.device_id = d.id),
+               WHERE j.user_id = d.user_id AND j.device_id = d.id
+                 AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                   OR j.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz)),
               (SELECT max(r.created_at) FROM records r
                WHERE r.user_id = d.user_id AND r.device_id = d.id
-                 AND r.deleted_at IS NULL)
+                 AND r.deleted_at IS NULL
+                 AND (d.metadata#>>'{thumbCamReset,at}' IS NULL
+                   OR r.created_at >= (d.metadata#>>'{thumbCamReset,at}')::timestamptz))
             ) AS last_job_at
      FROM devices d
      WHERE d.user_id = $1
@@ -541,6 +798,7 @@ function workerView(row: WorkerRow): WorkerView {
     name: row.name,
     type: workerType(row.metadata),
     revision: Number(row.revision),
+    cacheGeneration: workerCacheGeneration(row.metadata),
     lastSeenAt: timestamp(row.last_seen_at),
     config: workerConfig(row.metadata),
     runtime:
@@ -553,8 +811,18 @@ function workerView(row: WorkerRow): WorkerView {
       records: Number(row.records),
       failedMedia: Number(row.failed_media),
       lastJobAt: timestamp(row.last_job_at),
+      resetAt: workerStatsResetAt(row.metadata),
     },
   };
+}
+
+function workerCacheGeneration(metadata: unknown): number {
+  return integer(object(object(metadata).thumbCamReset).generation, 0);
+}
+
+function workerStatsResetAt(metadata: unknown): string | null {
+  const value = object(object(metadata).thumbCamReset).at;
+  return typeof value === "string" ? timestamp(value) : null;
 }
 
 function workerConfig(metadata: unknown): WorkerConfig {
@@ -571,7 +839,8 @@ function workerConfig(metadata: unknown): WorkerConfig {
         }
       : DEFAULT_CONFIG;
   return {
-    enabled: typeof saved.enabled === "boolean" ? saved.enabled : fallback.enabled,
+    enabled:
+      typeof saved.enabled === "boolean" ? saved.enabled : fallback.enabled,
     mountName: text(saved.mountName, fallback.mountName),
     pollIntervalMs: integer(saved.pollIntervalMs, fallback.pollIntervalMs),
     descriptionProvider: provider(
@@ -583,15 +852,15 @@ function workerConfig(metadata: unknown): WorkerConfig {
       fallback.descriptionBaseUrl,
     ),
     descriptionModel: text(saved.descriptionModel, fallback.descriptionModel),
-    descriptionPrompt: text(saved.descriptionPrompt, fallback.descriptionPrompt),
+    descriptionPrompt: text(
+      saved.descriptionPrompt,
+      fallback.descriptionPrompt,
+    ),
     embeddingProvider: provider(
       saved.embeddingProvider,
       fallback.embeddingProvider,
     ),
-    embeddingBaseUrl: text(
-      saved.embeddingBaseUrl,
-      fallback.embeddingBaseUrl,
-    ),
+    embeddingBaseUrl: text(saved.embeddingBaseUrl, fallback.embeddingBaseUrl),
     embeddingModel: text(saved.embeddingModel, fallback.embeddingModel),
     whisperModel: text(saved.whisperModel, fallback.whisperModel),
     imageGenerationEnabled:
@@ -646,6 +915,17 @@ function dreamRequestView(row: DreamRequestRow): DreamRequest {
     finishedAt: timestamp(row.finished_at),
     dreamRecordId: nullableText(config.dreamRecordId),
     error: nullableText(config.error),
+  };
+}
+
+function workerLogView(row: WorkerLogRow): WorkerLog {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    level: row.level,
+    message: row.message,
+    context: object(row.context),
+    createdAt: new Date(row.created_at).toISOString(),
   };
 }
 

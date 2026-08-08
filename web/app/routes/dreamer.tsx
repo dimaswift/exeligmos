@@ -19,33 +19,38 @@ import {
   type OwnerRecord,
 } from "~/features/activity-stream/snapshots.server";
 import { activeSarosIntervals } from "~/features/temporal/solar-engine.server";
-import { readWorkers, updateWorker } from "~/features/workers/workers.server";
+import {
+  readWorkerLogs,
+  readWorkers,
+  updateWorker,
+  type WorkerLog,
+} from "~/features/workers/workers.server";
 import { assertSameOrigin, BackendRequestError } from "~/lib/auth.server";
 import { readRequestAuth } from "~/lib/auth-boundary.server";
 import { throwRouteError } from "~/lib/route-errors.server";
 
 import styles from "./dreamer.module.css";
 
-export const meta: Route.MetaFunction = () => [
-  { title: "Dreamer · Fractonica" },
-];
+export const meta: Route.MetaFunction = () => [{ title: "Dreamer · Fractonica" }];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   try {
     const auth = readRequestAuth(context).auth;
     const observedAt = Date.now() / 1_000;
-    const [workers, dreams] = await Promise.all([
-      readWorkers(auth, request.signal),
+    const workers = await readWorkers(auth, request.signal);
+    const dreamer = workers.find((worker) => worker.type === "dreamer") ?? null;
+    const [dreams, logs] = await Promise.all([
       readAllDreams(auth, request.signal),
+      dreamer === null
+        ? Promise.resolve([])
+        : readWorkerLogs(auth, dreamer.deviceId, 100, request.signal),
     ]);
     return {
-      dreamer: workers.find((worker) => worker.type === "dreamer") ?? null,
+      dreamer,
       dreams,
+      logs,
       observedAt,
-      rollovers: upcomingSarosRollovers(
-        activeSarosIntervals(observedAt),
-        observedAt,
-      ),
+      rollovers: upcomingSarosRollovers(activeSarosIntervals(observedAt), observedAt),
     };
   } catch (error) {
     return throwRouteError(error, request, { clearInvalidAuth: true });
@@ -73,8 +78,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     if (error instanceof Response) throw error;
     return data(
       {
-        error:
-          error instanceof Error ? error.message : "Dreamer update failed.",
+        error: error instanceof Error ? error.message : "Dreamer update failed.",
       },
       { status: 400 },
     );
@@ -82,7 +86,7 @@ export async function action({ context, request }: Route.ActionArgs) {
 }
 
 export default function Dreamer({ loaderData }: Route.ComponentProps) {
-  const { dreamer, dreams, rollovers } = loaderData;
+  const { dreamer, dreams, logs, rollovers } = loaderData;
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [search] = useSearchParams();
@@ -91,9 +95,7 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
   const creating = dreamer?.config.enabled === true && runtime?.state === "creating";
   const nextAt =
     runtime?.nextRolloverAt ??
-    (next === undefined
-      ? null
-      : new Date(next.epochSeconds * 1_000).toISOString());
+    (next === undefined ? null : new Date(next.epochSeconds * 1_000).toISOString());
 
   return (
     <main className={styles.page}>
@@ -102,8 +104,8 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
           <p className="eyebrow">Scheduled imagination</p>
           <h1>Dreamer</h1>
           <p>
-            One future dream at each native Tera rollover, sourced from the
-            oldest untouched record carrying that Saros spike.
+            One future dream at each native Tera rollover, sourced from the oldest untouched record
+            carrying that Saros spike.
           </p>
         </div>
         <div className={styles.status}>
@@ -122,13 +124,10 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
           {creating ? (
             <span>
               Saros {runtime?.saros ?? next?.saros}
-              {runtime?.sourceRecordId === null ||
-              runtime?.sourceRecordId === undefined ? null : (
+              {runtime?.sourceRecordId === null || runtime?.sourceRecordId === undefined ? null : (
                 <>
                   {" · "}
-                  <Link to={`/r/${runtime.sourceRecordId}`}>
-                    source {runtime.sourceRecordId}
-                  </Link>
+                  <Link to={`/r/${runtime.sourceRecordId}`}>source {runtime.sourceRecordId}</Link>
                 </>
               )}
             </span>
@@ -146,9 +145,7 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
         </div>
       </header>
 
-      {search.has("saved") ? (
-        <p className={styles.notice}>Dreamer settings saved.</p>
-      ) : null}
+      {search.has("saved") ? <p className={styles.notice}>Dreamer settings saved.</p> : null}
       {actionData?.error === undefined ? null : (
         <p className={styles.error} role="alert">
           {actionData.error}
@@ -166,15 +163,11 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
             <div>
               <h2>Creative direction</h2>
               <p>
-                This example is injected as a structural and stylistic reference
-                when the language agent writes the scene prompt.
+                This example is injected as a structural and stylistic reference when the language
+                agent writes the scene prompt.
               </p>
             </div>
-            <span
-              className={
-                dreamer.config.enabled ? styles.enabled : styles.disabled
-              }
-            >
+            <span className={dreamer.config.enabled ? styles.enabled : styles.disabled}>
               {dreamer.config.enabled ? "ON" : "OFF"}
             </span>
           </div>
@@ -182,11 +175,7 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
             <input name="deviceId" type="hidden" value={dreamer.deviceId} />
             <input name="revision" type="hidden" value={dreamer.revision} />
             <label className={styles.toggle}>
-              <input
-                defaultChecked={dreamer.config.enabled}
-                name="enabled"
-                type="checkbox"
-              />
+              <input defaultChecked={dreamer.config.enabled} name="enabled" type="checkbox" />
               Create dreams at scheduled Tera rollovers
             </label>
             <label>
@@ -204,9 +193,7 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
               disabled={navigation.state === "submitting"}
               type="submit"
             >
-              {navigation.state === "submitting"
-                ? "Saving…"
-                : "Save Dreamer"}
+              {navigation.state === "submitting" ? "Saving…" : "Save Dreamer"}
             </button>
           </Form>
         </section>
@@ -215,10 +202,20 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
           <div>
+            <h2>Worker logs</h2>
+            <p>Durable diagnostics from Dreamer, including source records and retry counters.</p>
+          </div>
+          <span className={styles.count}>{logs.length} recent</span>
+        </div>
+        <DreamerLogs logs={logs} />
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelHeading}>
+          <div>
             <h2>Upcoming Tera sequence</h2>
             <p>
-              One next <code>000000</code> rollover for every currently active
-              Saros series.
+              One next <code>000000</code> rollover for every currently active Saros series.
             </p>
           </div>
           <span className={styles.count}>{rollovers.length} rollovers</span>
@@ -228,9 +225,7 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
             const at = new Date(rollover.epochSeconds * 1_000).toISOString();
             return (
               <li key={rollover.id}>
-                <span className={styles.ordinal}>
-                  {String(index + 1).padStart(2, "0")}
-                </span>
+                <span className={styles.ordinal}>{String(index + 1).padStart(2, "0")}</span>
                 <strong>Saros {rollover.saros}</strong>
                 <code>{rollover.octalAddress}</code>
                 <time dateTime={at}>{formatDate(at)}</time>
@@ -255,18 +250,13 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
           <div className={styles.dreams}>
             {dreams.map((record) => {
               const payload = "payload" in record ? record.payload : undefined;
-              const occurredAt =
-                "occurredAt" in record ? record.occurredAt : record.createdAt;
+              const occurredAt = "occurredAt" in record ? record.occurredAt : record.createdAt;
               return (
                 <article key={record.id}>
-                  <span className={styles.emoji}>
-                    {payload?.emoji ?? "💭"}
-                  </span>
+                  <span className={styles.emoji}>{payload?.emoji ?? "💭"}</span>
                   <div>
                     <div className={styles.dreamMeta}>
-                      <time dateTime={occurredAt}>
-                        {formatDate(occurredAt)}
-                      </time>
+                      <time dateTime={occurredAt}>{formatDate(occurredAt)}</time>
                       <code>{record.id}</code>
                     </div>
                     <p>{payload?.text ?? "An untitled dream."}</p>
@@ -279,6 +269,41 @@ export default function Dreamer({ loaderData }: Route.ComponentProps) {
         )}
       </section>
     </main>
+  );
+}
+
+function DreamerLogs({ logs }: { readonly logs: readonly WorkerLog[] }) {
+  if (logs.length === 0) {
+    return <p className={styles.empty}>No Dreamer logs have been recorded yet.</p>;
+  }
+  return (
+    <ol className={styles.logs}>
+      {logs.map((log) => {
+        const sourceRecordId =
+          typeof log.context.sourceRecordId === "string" ? log.context.sourceRecordId : null;
+        return (
+          <li data-level={log.level} key={log.id}>
+            <div className={styles.logMeta}>
+              <time dateTime={log.createdAt}>{formatDate(log.createdAt)}</time>
+              <strong>{log.level}</strong>
+              {typeof log.context.attempt === "number" ? (
+                <span>
+                  attempt {log.context.attempt}/
+                  {typeof log.context.maxAttempts === "number" ? log.context.maxAttempts : 3}
+                </span>
+              ) : null}
+              {sourceRecordId === null ? null : (
+                <Link to={`/r/${sourceRecordId}`}>source {sourceRecordId}</Link>
+              )}
+            </div>
+            <p>{log.message}</p>
+            {Object.keys(log.context).length === 0 ? null : (
+              <pre>{JSON.stringify(log.context, null, 2)}</pre>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -312,9 +337,7 @@ async function readAllDreams(
     const page = await readOwnerRecords(auth, {
       sourceProvider: "dreamer",
       limit: recordPageLimit(25),
-      ...(cursor === undefined
-        ? {}
-        : { cursor: ownerRecordCursor(cursor) }),
+      ...(cursor === undefined ? {} : { cursor: ownerRecordCursor(cursor) }),
       signal,
     });
     records.push(...page.data);

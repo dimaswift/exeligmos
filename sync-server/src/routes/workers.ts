@@ -5,6 +5,7 @@ import type { Database } from "../db/database.js";
 import {
   type DreamerRuntime,
   type WorkerConfigPatch,
+  type WorkerLogLevel,
   WorkerService,
 } from "../resources/workers.js";
 import {
@@ -36,13 +37,50 @@ export async function registerWorkerRoutes(
   });
 
   app.get("/workers/current", async (request, reply) => {
-    const principal = await options.authenticator.authenticate(request, ["jobs:read"]);
+    const principal = await options.authenticator.authenticate(request, [
+      "jobs:read",
+    ]);
     await limiter.checkAuthenticatedRead(request, principal);
     const worker = await service.current(principal);
     return reply
       .header("etag", resourceEtag("worker", worker.deviceId, worker.revision))
       .send(worker);
   });
+
+  app.post<{
+    Body: {
+      level: WorkerLogLevel;
+      message: string;
+      context?: Readonly<Record<string, unknown>>;
+    };
+  }>(
+    "/workers/current/logs",
+    { schema: workerLogCreateSchema },
+    async (request, reply) => {
+      const principal = await options.authenticator.authenticate(request, [
+        "records:write",
+      ]);
+      await limiter.checkAuthenticatedWrite(request, principal);
+      const log = await service.appendLog(principal, {
+        level: request.body.level,
+        message: request.body.message,
+        context: request.body.context ?? {},
+      });
+      return reply.code(201).send(log);
+    },
+  );
+
+  app.post<{ Params: { recordId: string } }>(
+    "/workers/current/dream-attempts/:recordId",
+    { schema: { params: recordDreamPathSchema } },
+    async (request) => {
+      const principal = await options.authenticator.authenticate(request, [
+        "records:write",
+      ]);
+      await limiter.checkAuthenticatedWrite(request, principal);
+      return service.startDreamAttempt(principal, request.params.recordId);
+    },
+  );
 
   app.post<{ Params: { recordId: string } }>(
     "/workers/current/dreamed/:recordId",
@@ -115,16 +153,13 @@ export async function registerWorkerRoutes(
     },
   );
 
-  app.post(
-    "/workers/current/dream-requests/claim",
-    async (request) => {
-      const principal = await options.authenticator.authenticate(request, [
-        "records:write",
-      ]);
-      await limiter.checkAuthenticatedWrite(request, principal);
-      return { request: await service.claimDreamRequest(principal) };
-    },
-  );
+  app.post("/workers/current/dream-requests/claim", async (request) => {
+    const principal = await options.authenticator.authenticate(request, [
+      "records:write",
+    ]);
+    await limiter.checkAuthenticatedWrite(request, principal);
+    return { request: await service.claimDreamRequest(principal) };
+  });
 
   app.post<{
     Params: { jobId: string };
@@ -163,6 +198,23 @@ export async function registerWorkerRoutes(
     },
   );
 
+  app.get<{
+    Params: { deviceId: string };
+    Querystring: { limit?: number };
+  }>(
+    "/workers/:deviceId/logs",
+    { schema: workerLogListSchema },
+    async (request) => {
+      const principal = await options.authenticator.authenticate(request);
+      await limiter.checkAuthenticatedRead(request, principal);
+      return service.listLogs(
+        principal,
+        request.params.deviceId,
+        request.query.limit ?? 100,
+      );
+    },
+  );
+
   app.patch<{
     Params: { deviceId: string };
     Headers: { "if-match"?: string };
@@ -185,9 +237,22 @@ export async function registerWorkerRoutes(
           request.body,
         );
         return reply
-          .header("etag", resourceEtag("worker", worker.deviceId, worker.revision))
+          .header(
+            "etag",
+            resourceEtag("worker", worker.deviceId, worker.revision),
+          )
           .send(worker);
       }),
+  );
+
+  app.post<{ Params: { deviceId: string } }>(
+    "/workers/:deviceId/reset",
+    { schema: workerDevicePathSchema },
+    async (request) => {
+      const principal = await options.authenticator.authenticate(request);
+      await limiter.checkAuthenticatedWrite(request, principal);
+      return service.resetThumbCam(principal, request.params.deviceId);
+    },
   );
 }
 
@@ -215,7 +280,9 @@ const workerPatchSchema = {
   headers: {
     type: "object",
     required: ["if-match"],
-    properties: { "if-match": { type: "string", minLength: 3, maxLength: 200 } },
+    properties: {
+      "if-match": { type: "string", minLength: 3, maxLength: 200 },
+    },
   },
   body: {
     type: "object",
@@ -223,7 +290,12 @@ const workerPatchSchema = {
     additionalProperties: false,
     properties: {
       enabled: { type: "boolean" },
-      mountName: { type: "string", minLength: 1, maxLength: 80, pattern: "^[^/\\\\]+$" },
+      mountName: {
+        type: "string",
+        minLength: 1,
+        maxLength: 80,
+        pattern: "^[^/\\\\]+$",
+      },
       pollIntervalMs: { type: "integer", minimum: 100, maximum: 86400000 },
       descriptionProvider: { type: "string", enum: ["ollama", "speshu"] },
       descriptionBaseUrl: { type: "string", format: "uri", maxLength: 2048 },
@@ -238,10 +310,67 @@ const workerPatchSchema = {
       imageBaseUrl: { type: "string", format: "uri", maxLength: 2048 },
       imageModel: { type: "string", minLength: 1, maxLength: 120 },
       imagePromptReference: { type: "string", minLength: 1, maxLength: 4000 },
-      imageSize: { type: "string", pattern: "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$" },
+      imageSize: {
+        type: "string",
+        pattern: "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$",
+      },
       imageSteps: { type: "integer", minimum: 1, maximum: 200 },
       imageGuidance: { type: "number", minimum: 0, maximum: 100 },
       imageTimeoutMs: { type: "integer", minimum: 1, maximum: 600000 },
+    },
+  },
+} as const;
+
+const workerLogCreateSchema = {
+  body: {
+    type: "object",
+    required: ["level", "message"],
+    additionalProperties: false,
+    properties: {
+      level: {
+        type: "string",
+        enum: ["debug", "info", "warn", "error"],
+      },
+      message: {
+        type: "string",
+        minLength: 1,
+        maxLength: 4000,
+        pattern: "\\S",
+      },
+      context: {
+        type: "object",
+        maxProperties: 40,
+        additionalProperties: true,
+      },
+    },
+  },
+} as const;
+
+const workerLogListSchema = {
+  params: {
+    type: "object",
+    required: ["deviceId"],
+    additionalProperties: false,
+    properties: {
+      deviceId: { type: "string", format: "uuid" },
+    },
+  },
+  querystring: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+    },
+  },
+} as const;
+
+const workerDevicePathSchema = {
+  params: {
+    type: "object",
+    required: ["deviceId"],
+    additionalProperties: false,
+    properties: {
+      deviceId: { type: "string", format: "uuid" },
     },
   },
 } as const;

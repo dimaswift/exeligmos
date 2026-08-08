@@ -119,6 +119,45 @@ test("reads every device-bound job page with an opaque cursor", async () => {
   assert.equal(url.searchParams.get("cursor"), "opaque cursor/+");
 });
 
+test("persists worker diagnostics through the bound worker endpoint", async () => {
+  let request;
+  globalThis.fetch = async (input, init) => {
+    request = new Request(input, init);
+    return Response.json(
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        deviceId: "11111111-1111-4111-8111-111111111111",
+        level: "error",
+        message: "processing failed",
+        context: { sourceRecordId: "abc12", attempt: 2 },
+        createdAt: "2026-07-31T00:00:00.000Z",
+      },
+      { status: 201 },
+    );
+  };
+  const client = new FractonicaClient({
+    serverUrl: "https://fractonica.test",
+    apiKey: "exk_secret",
+    deviceId: "11111111-1111-4111-8111-111111111111",
+  });
+
+  await client.writeWorkerLog("error", "processing failed", {
+    sourceRecordId: "abc12",
+    attempt: 2,
+  });
+
+  assert.equal(request.method, "POST");
+  assert.equal(
+    new URL(request.url).pathname,
+    "/workers/current/logs",
+  );
+  assert.deepEqual(await request.json(), {
+    level: "error",
+    message: "processing failed",
+    context: { sourceRecordId: "abc12", attempt: 2 },
+  });
+});
+
 test("sends the final text vector with revision-specific idempotency", async () => {
   const requests = [];
   globalThis.fetch = async (input, init) => {

@@ -105,6 +105,10 @@ export class SnapshotStore {
     );
     await removeEmptyDirectory(this.root);
   }
+
+  async reset() {
+    await rm(this.root, { force: true, recursive: true });
+  }
 }
 
 export function snapshotPathFor(root, item) {

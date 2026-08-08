@@ -67,6 +67,13 @@ export class DreamerClient extends FractonicaClient {
     return response.request ?? null;
   }
 
+  async startDreamAttempt(recordId) {
+    return this.json(
+      "POST",
+      `/workers/current/dream-attempts/${encodeURIComponent(recordId)}`,
+    );
+  }
+
   async completeDreamRequest(jobId, dreamRecordId) {
     await this.json(
       "POST",

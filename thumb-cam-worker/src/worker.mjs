@@ -1,6 +1,7 @@
 import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
+import { CacheGenerationStore } from "./cache-generation.mjs";
 import {
   cleanupVisualArtifacts,
   fileNameForUpload,
@@ -19,6 +20,7 @@ import {
 } from "./agent-tasks.mjs";
 import { generateMirroredImage } from "./image-generation.mjs";
 import {
+  deduplicateMedia,
   groupMedia,
   isMounted,
   SAROS_GROUP_SECONDS,
@@ -26,6 +28,7 @@ import {
 } from "./scanner.mjs";
 import { FractonicaClient } from "./server-client.mjs";
 import { SnapshotStore } from "./snapshots.mjs";
+import { createWorkerLogger } from "./worker-logger.mjs";
 
 class JobRevisionConflict extends Error {
   constructor(jobId, options) {
@@ -41,7 +44,7 @@ export class ThumbCamWorker {
       sarosGroupSeconds: SAROS_GROUP_SECONDS,
     });
     this.client = options.client ?? new FractonicaClient(this.config);
-    this.log = options.log ?? console;
+    this.log = options.log ?? createWorkerLogger(this.client);
     this.sleep = options.sleep ?? delay;
     this.descriptionCache = options.descriptionCache ?? new Map();
     this.scanVolume = options.scanVolume ?? settledScanState;
@@ -49,6 +52,10 @@ export class ThumbCamWorker {
     this.groupObservedAt = options.groupObservedAt ?? new Map();
     this.completedSourceKeys = options.completedSourceKeys ?? new Set();
     this.sweptCompletedJobIds = options.sweptCompletedJobIds ?? new Set();
+    this.cacheGeneration = options.cacheGeneration;
+    this.cacheGenerationStore =
+      options.cacheGenerationStore ??
+      new CacheGenerationStore(this.config.workRoot ?? ".thumb-cam-worker");
     this.snapshotStore =
       options.snapshotStore ??
       new SnapshotStore(this.config, {
@@ -60,12 +67,20 @@ export class ThumbCamWorker {
     this.stopped = false;
   }
 
-  stop() {
+  stop(signal = "stop requested") {
     this.stopped = true;
+    void this.log.info?.(`THUMB worker stopping: ${signal}.`, {
+      event: "worker_stopping",
+      signal,
+    });
   }
 
   async run() {
     await ensureDirectory(this.config.workRoot);
+    await this.log.info?.("THUMB worker started.", {
+      event: "worker_started",
+      mountName: this.config.mountName,
+    });
     if (this.config.once) {
       if (!(await isMounted(this.config.mountPath))) {
         throw new Error(
@@ -138,6 +153,16 @@ export class ThumbCamWorker {
     if (typeof this.client.getCurrentWorker !== "function") return;
     try {
       const worker = await this.client.getCurrentWorker();
+      if (this.cacheGeneration === undefined) {
+        this.cacheGeneration = await this.cacheGenerationStore.read();
+      }
+      const remoteCacheGeneration = Number(worker.cacheGeneration ?? 0);
+      if (
+        Number.isSafeInteger(remoteCacheGeneration) &&
+        remoteCacheGeneration > this.cacheGeneration
+      ) {
+        await this.resetLocalCache(remoteCacheGeneration);
+      }
       const remote = worker.config ?? {};
       this.config = Object.freeze({
         ...this.config,
@@ -156,13 +181,27 @@ export class ThumbCamWorker {
     }
   }
 
+  async resetLocalCache(cacheGeneration) {
+    this.descriptionCache.clear();
+    this.groupObservedAt.clear();
+    this.completedSourceKeys.clear();
+    this.sweptCompletedJobIds.clear();
+    await this.snapshotStore.reset();
+    await this.cacheGenerationStore.write(cacheGeneration);
+    this.cacheGeneration = cacheGeneration;
+    await this.log.info?.("THUMB worker local cache cleared.", {
+      event: "worker_cache_cleared",
+      cacheGeneration,
+    });
+  }
+
   async processMountedVolume() {
     const scan = await this.scanVolume(
       this.config,
       this.sleep,
       this.descriptionCache,
     );
-    const scanned = scan.items;
+    const scanned = deduplicateMedia(scan.items);
     const sourceBySourceKey = new Map(
       scanned.map((item) => [item.sourceKey, item]),
     );
@@ -451,8 +490,12 @@ export class ThumbCamWorker {
               stage: "describing",
               outputMode,
             });
-            observation = await this.withHeartbeat(job, item, "describing", () =>
-              describeVisual(this.config, transformed.descriptionImagePath),
+            observation = await this.withHeartbeat(
+              job,
+              item,
+              "describing",
+              () =>
+                describeVisual(this.config, transformed.descriptionImagePath),
             );
           }
         }
@@ -464,11 +507,13 @@ export class ThumbCamWorker {
           });
         }
 
-        const uploads = transformed?.outputs ?? [{
-          absolutePath: item.absolutePath,
-          contentType: mediaTypeForUpload(item),
-          fileName: fileNameForUpload(item),
-        }];
+        const uploads = transformed?.outputs ?? [
+          {
+            absolutePath: item.absolutePath,
+            contentType: mediaTypeForUpload(item),
+            fileName: fileNameForUpload(item),
+          },
+        ];
         await this.updateItem(job, item, {
           status: "processing",
           stage: "uploading",
@@ -476,22 +521,26 @@ export class ThumbCamWorker {
         });
         const completedOutputs = [];
         for (const upload of uploads) {
-          const completed = await this.withHeartbeat(job, item, "uploading", () =>
-            this.client.uploadMedia(
-              item,
-              upload,
-              completedOutputs.length === 0
-                ? async (reservation) => {
-                    item.uploadId = reservation.id;
-                    await this.updateItem(job, item, {
-                      status: "processing",
-                      stage: "uploading",
-                      ...(outputMode === undefined ? {} : { outputMode }),
-                      uploadId: reservation.id,
-                    });
-                  }
-                : undefined,
-            ),
+          const completed = await this.withHeartbeat(
+            job,
+            item,
+            "uploading",
+            () =>
+              this.client.uploadMedia(
+                item,
+                upload,
+                completedOutputs.length === 0
+                  ? async (reservation) => {
+                      item.uploadId = reservation.id;
+                      await this.updateItem(job, item, {
+                        status: "processing",
+                        stage: "uploading",
+                        ...(outputMode === undefined ? {} : { outputMode }),
+                        uploadId: reservation.id,
+                      });
+                    }
+                  : undefined,
+              ),
           );
           completedOutputs.push(completed);
           media.push(completed);

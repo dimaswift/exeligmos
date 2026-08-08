@@ -142,6 +142,23 @@ test("refuses to process media directly from the mounted camera", async () => {
   assert.doesNotThrow(() => store.assertProcessingPath(snapshot));
 });
 
+test("resets every verified local snapshot", async () => {
+  const root = await temporaryRoot();
+  const sourcePath = path.join(root, "photo.jpg");
+  const content = Buffer.from("resettable photo bytes");
+  await writeFile(sourcePath, content);
+  const item = declaration(sourcePath, content, "PHOTO/photo.jpg");
+  const store = new SnapshotStore({
+    workRoot: path.join(root, "work"),
+    snapshotConcurrency: 1,
+  });
+  const snapshot = await store.ensure(item, sourcePath);
+
+  await store.reset();
+
+  await assert.rejects(stat(snapshot.absolutePath), { code: "ENOENT" });
+});
+
 test("removes snapshots when a completed job is replayed", async () => {
   const root = await temporaryRoot();
   const sourcePath = path.join(root, "photo.jpg");

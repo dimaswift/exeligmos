@@ -5,7 +5,11 @@ import { DreamerWorker } from "./worker.mjs";
 
 const config = await loadConfig();
 const worker = new DreamerWorker(config);
-const stop = () => worker.stop();
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
-await worker.run();
+process.once("SIGINT", () => worker.stop("SIGINT"));
+process.once("SIGTERM", () => worker.stop("SIGTERM"));
+try {
+  await worker.run();
+} catch (error) {
+  console.error(error instanceof Error ? error.stack : String(error));
+  process.exitCode = 1;
+}

@@ -7,17 +7,29 @@ import {
   createImagePrompt,
 } from "../../thumb-cam-worker/src/agent-tasks.mjs";
 import { generateMirroredImage } from "../../thumb-cam-worker/src/image-generation.mjs";
+import { createWorkerLogger } from "../../thumb-cam-worker/src/worker-logger.mjs";
 import { sarosRolloverScheduleAt } from "./schedule.mjs";
 import { DreamerClient } from "./server-client.mjs";
 
 export const ROLLOVER_MILLISECONDS = 1_111_260_000;
+export const MAX_DREAM_ATTEMPTS = 3;
 const ON_DEMAND_POLL_MILLISECONDS = 5_000;
+
+export class DreamAttemptFailure extends Error {
+  constructor(message, { sourceRecordId, attempt, exhausted, cause }) {
+    super(message, { cause });
+    this.name = "DreamAttemptFailure";
+    this.sourceRecordId = sourceRecordId;
+    this.attempt = attempt;
+    this.exhausted = exhausted;
+  }
+}
 
 export class DreamerWorker {
   constructor(config, options = {}) {
     this.config = config;
     this.client = options.client ?? new DreamerClient(config);
-    this.log = options.log ?? console;
+    this.log = options.log ?? createWorkerLogger(this.client);
     this.sleep = options.sleep ?? delay;
     this.now = options.now ?? Date.now;
     this.scheduleAt = options.scheduleAt ?? sarosRolloverScheduleAt;
@@ -25,12 +37,19 @@ export class DreamerWorker {
     this.stopped = false;
   }
 
-  stop() {
+  stop(signal = "stop requested") {
     this.stopped = true;
+    void this.log.info?.(`Dreamer worker stopping: ${signal}.`, {
+      event: "worker_stopping",
+      signal,
+    });
   }
 
   async run() {
     await mkdir(this.config.workRoot, { recursive: true });
+    await this.log.info?.("Dreamer worker started.", {
+      event: "worker_started",
+    });
     do {
       await this.refreshConfig();
       if (this.config.enabled === false) {
@@ -78,17 +97,36 @@ export class DreamerWorker {
           await this.client.completeDreamRequest(request.jobId, record.id);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          this.log.error(`On-demand dream failed: ${message}`);
-          try {
-            await this.client.failDreamRequest(request.jobId, message);
-          } catch (reportError) {
-            this.log.warn?.(
-              `Could not mark on-demand dream ${request.jobId} failed: ${
-                reportError instanceof Error
-                  ? reportError.message
-                  : String(reportError)
-              }`,
-            );
+          const willRetry =
+            error instanceof DreamAttemptFailure && !error.exhausted;
+          await this.log.error?.(`On-demand dream failed: ${message}`, {
+            event: "dream_failed",
+            requestKind: "on-demand",
+            jobId: request.jobId,
+            sourceRecordId: request.recordId,
+            attempt:
+              error instanceof DreamAttemptFailure ? error.attempt : null,
+            maxAttempts: MAX_DREAM_ATTEMPTS,
+            willRetry,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+          if (!willRetry) {
+            try {
+              await this.client.failDreamRequest(request.jobId, message);
+            } catch (reportError) {
+              await this.log.warn?.(
+                `Could not mark on-demand dream ${request.jobId} failed: ${
+                  reportError instanceof Error
+                    ? reportError.message
+                    : String(reportError)
+                }`,
+                {
+                  event: "dream_job_update_failed",
+                  jobId: request.jobId,
+                  sourceRecordId: request.recordId,
+                },
+              );
+            }
           }
           await this.reportRuntime({
             ...waitingRuntime(schedule),
@@ -130,12 +168,28 @@ export class DreamerWorker {
         this.scheduledRollover = undefined;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.log.error(`Dreamer cycle failed: ${message}`);
+        const exhausted =
+          error instanceof DreamAttemptFailure && error.exhausted;
+        await this.log.error?.(`Dreamer cycle failed: ${message}`, {
+          event: "dream_failed",
+          requestKind: "scheduled",
+          scheduleId: schedule.id,
+          sourceRecordId:
+            error instanceof DreamAttemptFailure
+              ? error.sourceRecordId
+              : null,
+          attempt:
+            error instanceof DreamAttemptFailure ? error.attempt : null,
+          maxAttempts: MAX_DREAM_ATTEMPTS,
+          willRetry: !exhausted,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         await this.reportRuntime({
           ...waitingRuntime(schedule),
           state: "error",
           message,
         });
+        if (exhausted) this.scheduledRollover = undefined;
       }
       if (this.config.once) break;
       await this.sleep(Math.min(this.config.pollIntervalMs, 1_000));
@@ -233,6 +287,56 @@ export class DreamerWorker {
       await this.client.markDreamed(source.id);
       return existing;
     }
+    const attempt = await this.client.startDreamAttempt(source.id);
+    if (
+      attempt.allowed !== true ||
+      attempt.attempt > MAX_DREAM_ATTEMPTS
+    ) {
+      await this.client.markDreamed(source.id);
+      throw dreamAttemptFailure(
+        source.id,
+        attempt.attempt,
+        true,
+        `Record ${source.id} already exhausted ${MAX_DREAM_ATTEMPTS} Dreamer attempts and was skipped.`,
+      );
+    }
+    await this.log.info?.(
+      `Dreaming record ${source.id}, attempt ${attempt.attempt}/${MAX_DREAM_ATTEMPTS}.`,
+      {
+        event: "dream_attempt_started",
+        requestKind: identity.kind,
+        identity: identity.id,
+        sourceRecordId: source.id,
+        attempt: attempt.attempt,
+        maxAttempts: MAX_DREAM_ATTEMPTS,
+      },
+    );
+    try {
+      return await this.processDreamSource(
+        identity,
+        source,
+        tag,
+        attempt.attempt,
+      );
+    } catch (cause) {
+      const exhausted = attempt.attempt >= MAX_DREAM_ATTEMPTS;
+      if (exhausted) {
+        await this.client.markDreamed(source.id);
+      }
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw dreamAttemptFailure(
+        source.id,
+        attempt.attempt,
+        exhausted,
+        exhausted
+          ? `Record ${source.id} failed Dreamer attempt ${attempt.attempt}/${MAX_DREAM_ATTEMPTS} and was skipped: ${detail}`
+          : `Record ${source.id} failed Dreamer attempt ${attempt.attempt}/${MAX_DREAM_ATTEMPTS}; it will retry: ${detail}`,
+        cause,
+      );
+    }
+  }
+
+  async processDreamSource(identity, source, tag, attempt) {
     const observations = [];
     const originalText =
       typeof source.payload?.text === "string" ? source.payload.text.trim() : "";
@@ -287,8 +391,16 @@ export class DreamerWorker {
         this.config.embeddingModel,
         embedding,
       );
-      this.log.info(
+      await this.log.info?.(
         `Dreamed record ${record.id} from ${source.id} at ${occurredAt}.`,
+        {
+          event: "dream_completed",
+          requestKind: identity.kind,
+          identity: identity.id,
+          sourceRecordId: source.id,
+          dreamRecordId: record.id,
+          attempt,
+        },
       );
       return record;
     } finally {
@@ -446,6 +558,21 @@ function firstEmoji(value) {
     if (isEmoji(segment)) return segment;
   }
   throw new Error("Dream emoji signature has no emoji.");
+}
+
+function dreamAttemptFailure(
+  sourceRecordId,
+  attempt,
+  exhausted,
+  message,
+  cause,
+) {
+  return new DreamAttemptFailure(message, {
+    sourceRecordId,
+    attempt,
+    exhausted,
+    cause,
+  });
 }
 
 function isEmoji(value) {

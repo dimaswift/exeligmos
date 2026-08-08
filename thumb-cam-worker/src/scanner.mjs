@@ -119,7 +119,7 @@ export async function settledScanState(
     if (item === undefined) unstable.push(stable[index]);
     else items.push(item);
   }
-  return { items, unstable };
+  return { items: deduplicateMedia(items), unstable };
 }
 
 export async function scanFileStats(mountPath) {
@@ -182,22 +182,28 @@ export function groupMedia(items, spanSeconds = SAROS_GROUP_SECONDS) {
   });
 }
 
-export function sourceKeyFor({
-  volumeId,
-  relativePath,
-  capturedAt,
-  byteLength,
-  contentSha256,
-}) {
-  return sha256Text(
-    [
-      volumeId,
-      relativePath.normalize("NFC"),
-      capturedAt,
-      String(byteLength),
-      contentSha256,
-    ].join("\0"),
-  );
+export function deduplicateMedia(items) {
+  const seen = new Set();
+  return [...items]
+    .sort(
+      (left, right) =>
+        Date.parse(left.capturedAt) - Date.parse(right.capturedAt) ||
+        left.relativePath.localeCompare(right.relativePath),
+    )
+    .filter((item) => {
+      if (seen.has(item.contentSha256)) return false;
+      seen.add(item.contentSha256);
+      return true;
+    });
+}
+
+export function sourceKeyFor({ contentSha256 }) {
+  if (!/^[a-f0-9]{64}$/.test(contentSha256)) {
+    throw new Error(
+      "Media SHA-256 must be 64 lowercase hexadecimal characters.",
+    );
+  }
+  return contentSha256;
 }
 
 async function describeFile(config, volumeId, item, descriptionCache) {
@@ -239,10 +245,6 @@ async function describeFile(config, volumeId, item, descriptionCache) {
     capturedAt,
     contentSha256,
     sourceKey: sourceKeyFor({
-      volumeId,
-      relativePath: item.relativePath,
-      capturedAt,
-      byteLength: item.byteLength,
       contentSha256,
     }),
   };

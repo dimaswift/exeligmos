@@ -25,6 +25,12 @@ export class FractonicaClient {
     return this.json("GET", "/workers/current");
   }
 
+  async writeWorkerLog(level, message, context = {}) {
+    return this.json("POST", "/workers/current/logs", {
+      body: { level, message, context },
+    });
+  }
+
   async listJobs(cursor) {
     const query = new URLSearchParams({
       deviceId: this.deviceId,

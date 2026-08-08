@@ -5,9 +5,11 @@ This macOS worker watches for an exact `THUMB_CAM` volume, scans its `AUDIO`,
 to the `THUMB` device. On macOS it verifies the path is a real diskutil mount,
 so a stale ordinary `/Volumes/THUMB_CAM` directory is never scanned.
 
-The server job-item table is the durable cache. Every source file gets a stable
-fingerprint, so files already accepted by the server are not queued again even
-after the worker or Mac restarts.
+The server job-item table is the durable cache. A source file's identity is its
+exact lowercase SHA-256 content digest, so files already accepted by the server
+are not queued again even after the worker or Mac restarts. Names and paths are
+metadata only: a new file reusing `IMG00001.JPG` is accepted when its bytes are
+different, while unchanged bytes are ignored even if renamed or moved.
 
 ## Processing behavior
 
@@ -19,8 +21,9 @@ after the worker or Mac restarts.
   by default. The worker also verifies its stat identity before and after
   hashing/probing. Any supported file that is young or still changing keeps the
   current Saros submission window open until a later fully settled poll.
-- Hash and ffprobe results are cached in memory while file identity is
-  unchanged. New descriptions are bounded to two concurrent files by default.
+- Hash and ffprobe results are cached in memory while the file's stat identity
+  is unchanged. New descriptions are bounded to two concurrent files by
+  default. Duplicate hashes within one scan keep only the earliest capture.
 - Before a job is submitted, every member of its mature batch is copied into a
   source-keyed worker snapshot. Each copy is atomically published only after its
   byte length and SHA-256 match the scan, with two concurrent copies by default.
@@ -189,6 +192,13 @@ The worker first resumes unfinished jobs from verified local snapshots, even
 while the camera is absent, then submits a current mounted scan. Completed
 media fingerprints remain in the server cache; failed groups can resume with
 their saved symmetry and upload state.
+
+Use **Reset cache and counters** on the server's `/workers` page when the
+camera should be treated as fresh. The reset deletes this worker's ingestion
+jobs and processed-source fingerprints, restarts its displayed statistics at
+zero, and advances a cache generation that makes the running worker clear its
+in-memory scan state and verified local snapshots on the next poll. Existing
+records, uploaded media, and worker logs are preserved.
 
 ## Canonical temporal runtime
 

@@ -11,6 +11,7 @@
     "start": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
     "boot": "node --env-file-if-exists=.env scripts/boot.mjs",
     "boot:dev": "node --env-file-if-exists=.env scripts/boot.mjs --dev",
+    "install-service": "node scripts/install-service.mjs",
     "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",

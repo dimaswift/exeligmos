@@ -109,10 +109,106 @@
   padding: 0.85rem 1.15rem 1.15rem;
 }
 
-.editor summary {
+.editor summary,
+.logs summary {
   color: #9ff7dc;
   cursor: pointer;
   font-weight: 700;
+}
+
+.logs {
+  border-top: 1px solid #2b343e;
+  padding: 0.85rem 1.15rem;
+}
+
+.logs > p {
+  color: #9ba6b5;
+  margin-bottom: 0;
+}
+
+.logs ol {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin: 0.85rem 0 0;
+  max-height: 28rem;
+  overflow: auto;
+  padding: 0;
+}
+
+.logs li {
+  background: #0b1015;
+  border-left: 3px solid #607080;
+  border-radius: 0.45rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.logs li[data-level="warn"] {
+  border-left-color: #ffd06a;
+}
+
+.logs li[data-level="error"] {
+  border-left-color: #ff7185;
+}
+
+.logs li > div {
+  align-items: center;
+  color: #9ba6b5;
+  display: flex;
+  font-size: 0.72rem;
+  gap: 0.6rem;
+}
+
+.logs li strong {
+  text-transform: uppercase;
+}
+
+.logs li p {
+  margin: 0.35rem 0 0;
+  white-space: pre-wrap;
+}
+
+.logs pre {
+  color: #9ba6b5;
+  font-size: 0.72rem;
+  margin: 0.5rem 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.reset {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+}
+
+.reset button {
+  background: transparent;
+  border: 1px solid #ff7373;
+  border-radius: 0.65rem;
+  color: #ff9a9a;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.65rem 0.8rem;
+  width: max-content;
+}
+
+.reset button:hover:not(:disabled) {
+  background: rgb(255 115 115 / 10%);
+}
+
+.reset button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.reset p {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0;
 }
 
 .form {
@@ -172,11 +268,23 @@
   padding: 0.75rem 1rem;
 }
 
-.notice { background: #17312b; color: #9ff7dc; }
-.error { background: #3a2025; color: #ffc0ca; }
-.empty { padding: 1.5rem; }
+.notice {
+  background: #17312b;
+  color: #9ff7dc;
+}
+.error {
+  background: #3a2025;
+  color: #ffc0ca;
+}
+.empty {
+  padding: 1.5rem;
+}
 
 @media (max-width: 720px) {
-  .fields { grid-template-columns: 1fr; }
-  .stats { grid-template-columns: repeat(2, 1fr); }
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }

@@ -54,7 +54,9 @@
 
 .countdown {
   color: #9bffd9;
-  font: 700 clamp(1.35rem, 3vw, 2.15rem) ui-monospace, monospace;
+  font:
+    700 clamp(1.35rem, 3vw, 2.15rem) ui-monospace,
+    monospace;
 }
 
 .runtimeError,
@@ -97,7 +99,9 @@
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 0.35rem 0.65rem;
-  font: 700 0.72rem ui-monospace, monospace;
+  font:
+    700 0.72rem ui-monospace,
+    monospace;
   letter-spacing: 0.08em;
 }
 
@@ -179,11 +183,71 @@
 .dreamMeta,
 .schedule code {
   color: #93a0ae;
-  font: 0.78rem ui-monospace, monospace;
+  font:
+    0.78rem ui-monospace,
+    monospace;
 }
 
 .schedule code {
   color: #9bffd9;
+}
+
+.logs {
+  display: grid;
+  gap: 0.6rem;
+  list-style: none;
+  margin: 0;
+  max-height: 34rem;
+  overflow: auto;
+  padding: 1rem 1.25rem;
+}
+
+.logs li {
+  background: #090d10;
+  border-left: 3px solid #607080;
+  border-radius: 0.6rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.logs li[data-level="warn"] {
+  border-left-color: #ffd071;
+}
+
+.logs li[data-level="error"] {
+  border-left-color: #ff8585;
+}
+
+.logMeta {
+  align-items: center;
+  color: #93a0ae;
+  display: flex;
+  flex-wrap: wrap;
+  font:
+    0.75rem ui-monospace,
+    monospace;
+  gap: 0.7rem;
+}
+
+.logMeta strong {
+  text-transform: uppercase;
+}
+
+.logMeta a {
+  color: #9bffd9;
+}
+
+.logs p {
+  color: #edf1f4;
+  margin: 0.45rem 0 0;
+  white-space: pre-wrap;
+}
+
+.logs pre {
+  color: #93a0ae;
+  font-size: 0.72rem;
+  margin: 0.55rem 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .dreams {

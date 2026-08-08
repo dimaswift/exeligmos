@@ -45,7 +45,11 @@ const baselineTables = [
 // Append future tables here without changing baselineTables. Existing
 // databases are upgraded by ordered db/migrations files before this final
 // shape is verified.
-const canonicalTables = [...baselineTables] as const;
+const canonicalTables = [
+  ...baselineTables,
+  "worker_dream_attempts",
+  "worker_logs",
+] as const;
 const migrationTable = "schema_migrations";
 
 export type DatabaseSetupResult = "created" | "migrated" | "ready";

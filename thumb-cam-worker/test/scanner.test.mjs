@@ -13,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  deduplicateMedia,
   groupMedia,
   isMounted,
   mapConcurrent,
@@ -48,7 +49,7 @@ test("uses the exact catalog-derived Saros duration", () => {
   assert.equal(SAROS_GROUP_SECONDS, 271.30686904907225);
 });
 
-test("source key changes when content or camera path changes", () => {
+test("source key is exactly the content hash regardless of camera name or timestamps", () => {
   const base = {
     volumeId: "volume",
     relativePath: "PHOTO/ONE.JPG",
@@ -61,10 +62,36 @@ test("source key changes when content or camera path changes", () => {
     sourceKeyFor(base),
     sourceKeyFor({ ...base, contentSha256: "b".repeat(64) }),
   );
-  assert.notEqual(
+  assert.equal(
     sourceKeyFor(base),
     sourceKeyFor({ ...base, relativePath: "PHOTO/TWO.JPG" }),
   );
+  assert.equal(
+    sourceKeyFor(base),
+    sourceKeyFor({
+      ...base,
+      capturedAt: "2027-01-01T00:00:00.000Z",
+      byteLength: 999,
+      volumeId: "another-volume",
+    }),
+  );
+  assert.equal(sourceKeyFor(base), base.contentSha256);
+});
+
+test("keeps only the earliest path when one hash appears more than once", () => {
+  const contentSha256 = "a".repeat(64);
+  const later = {
+    relativePath: "PHOTO/LATER.JPG",
+    capturedAt: "2026-07-29T10:01:00.000Z",
+    contentSha256,
+  };
+  const earlier = {
+    relativePath: "PHOTO/EARLIER.JPG",
+    capturedAt: "2026-07-29T10:00:00.000Z",
+    contentSha256,
+  };
+
+  assert.deepEqual(deduplicateMedia([later, earlier]), [earlier]);
 });
 
 test("parses EXIF timestamps and explicit zones", () => {

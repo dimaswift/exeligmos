@@ -93,6 +93,101 @@ test("waits a full Saros after discovery and resets when a late capture joins", 
   assert.equal(observed.has("group-a"), false);
 });
 
+test("clears every local cache when the server advances the cache generation", async () => {
+  const cleared = [];
+  const resets = [];
+  const logs = [];
+  const descriptionCache = new Map([["description", {}]]);
+  const groupObservedAt = new Map([["group", 1]]);
+  const completedSourceKeys = new Set(["source"]);
+  const sweptCompletedJobIds = new Set(["job"]);
+  const worker = new ThumbCamWorker(
+    { mountRoot: "/Volumes", mountName: "THUMB_CAM" },
+    {
+      cacheGeneration: 2,
+      cacheGenerationStore: {
+        async read() {
+          return 2;
+        },
+        async write(generation) {
+          cleared.push(`generation:${generation}`);
+        },
+      },
+      descriptionCache,
+      groupObservedAt,
+      completedSourceKeys,
+      sweptCompletedJobIds,
+      client: {
+        async getCurrentWorker() {
+          return { cacheGeneration: 3, config: {} };
+        },
+      },
+      snapshotStore: {
+        async reset() {
+          resets.push(true);
+        },
+      },
+      log: {
+        async info(message, context) {
+          logs.push({ message, context });
+        },
+        warn(message) {
+          cleared.push(message);
+        },
+      },
+    },
+  );
+
+  await worker.refreshWorkerConfig();
+
+  assert.equal(descriptionCache.size, 0);
+  assert.equal(groupObservedAt.size, 0);
+  assert.equal(completedSourceKeys.size, 0);
+  assert.equal(sweptCompletedJobIds.size, 0);
+  assert.equal(worker.cacheGeneration, 3);
+  assert.deepEqual(resets, [true]);
+  assert.deepEqual(cleared, ["generation:3"]);
+  assert.deepEqual(logs, [
+    {
+      message: "THUMB worker local cache cleared.",
+      context: { event: "worker_cache_cleared", cacheGeneration: 3 },
+    },
+  ]);
+});
+
+test("does not clear snapshots again after a restart acknowledges the reset", async () => {
+  let resets = 0;
+  const worker = new ThumbCamWorker(
+    { mountRoot: "/Volumes", mountName: "THUMB_CAM" },
+    {
+      client: {
+        async getCurrentWorker() {
+          return { cacheGeneration: 3, config: {} };
+        },
+      },
+      cacheGenerationStore: {
+        async read() {
+          return 3;
+        },
+        async write() {
+          throw new Error("generation should not be rewritten");
+        },
+      },
+      snapshotStore: {
+        async reset() {
+          resets += 1;
+        },
+      },
+      log: { info() {}, warn() {} },
+    },
+  );
+
+  await worker.refreshWorkerConfig();
+
+  assert.equal(worker.cacheGeneration, 3);
+  assert.equal(resets, 0);
+});
+
 test("merges compact item progress responses into the local resumable job", async () => {
   const requests = [];
   const worker = new ThumbCamWorker(

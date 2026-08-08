@@ -576,6 +576,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workers/current/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Persist a diagnostic event from the API key's bound worker */
+        post: operations["createWorkerLog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/current/dream-attempts/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically increment the bound Dreamer's durable attempt counter
+         * @description Counters survive worker and server restarts. Attempts one through three
+         *     are allowed; later claims tell the worker to skip the source record.
+         */
+        post: operations["startDreamAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workers/current/dreamed/{recordId}": {
         parameters: {
             query?: never;
@@ -698,6 +736,45 @@ export interface paths {
         patch: operations["updateWorker"];
         trace?: never;
     };
+    "/workers/{deviceId}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent durable logs for one owned worker */
+        get: operations["listWorkerLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workers/{deviceId}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear a THUMB worker cache and restart its statistics
+         * @description Deletes the worker's ingestion jobs and processed-source fingerprints,
+         *     advances the local-cache generation, and starts record/media statistics
+         *     from zero. Existing records, media objects, and logs are preserved.
+         */
+        post: operations["resetThumbCamWorker"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs": {
         parameters: {
             query?: never;
@@ -718,6 +795,8 @@ export interface paths {
          *     sourceKey only once per user and device, permanently preserving the
          *     processed-file cache across worker restarts. Previously seen entries
          *     are returned in `skippedItems` and are not inserted into the new job.
+         *     THUMB workers use the lowercase SHA-256 file digest itself as sourceKey,
+         *     so camera filenames and paths can be safely reused.
          */
         post: operations["createIngestionJob"];
         delete?: never;
@@ -2208,6 +2287,34 @@ export interface components {
         DreamRequestEnvelope: {
             request: components["schemas"]["DreamRequest"] | null;
         };
+        DreamAttempt: {
+            recordId: components["schemas"]["RecordPublicId"];
+            attempt: number;
+            /** @constant */
+            maxAttempts: 3;
+            allowed: boolean;
+        };
+        /** @enum {string} */
+        WorkerLogLevel: "debug" | "info" | "warn" | "error";
+        CreateWorkerLog: {
+            level: components["schemas"]["WorkerLogLevel"];
+            message: string;
+            context?: components["schemas"]["ResourceMetadata"];
+        };
+        WorkerLog: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            deviceId: string;
+            level: components["schemas"]["WorkerLogLevel"];
+            message: string;
+            context: components["schemas"]["ResourceMetadata"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkerLogPage: {
+            data: components["schemas"]["WorkerLog"][];
+        };
         WorkerStats: {
             jobs: number;
             media: number;
@@ -2215,6 +2322,8 @@ export interface components {
             failedMedia: number;
             /** Format: date-time */
             lastJobAt: string | null;
+            /** Format: date-time */
+            resetAt: string | null;
         };
         Worker: {
             /** Format: uuid */
@@ -2224,11 +2333,21 @@ export interface components {
             type: "thumb-cam" | "dreamer";
             /** Format: int64 */
             revision: number;
+            cacheGeneration: number;
             /** Format: date-time */
             lastSeenAt: string | null;
             config: components["schemas"]["WorkerConfig"];
             runtime: components["schemas"]["DreamerRuntime"] | null;
             stats: components["schemas"]["WorkerStats"];
+        };
+        WorkerReset: {
+            /** Format: uuid */
+            deviceId: string;
+            cacheGeneration: number;
+            /** Format: date-time */
+            resetAt: string;
+            removedJobs: number;
+            removedItems: number;
         };
         WorkerPage: {
             data: components["schemas"]["Worker"][];
@@ -2249,7 +2368,8 @@ export interface components {
         IngestionItemDeclaration: {
             /**
              * @description Stable camera-file identity. Accepted only once per user and device,
-             *     independently of later job or record lifecycle.
+             *     independently of later job or record lifecycle. THUMB workers set
+             *     this to the exact lowercase contentSha256 value.
              */
             sourceKey: components["schemas"]["Sha256"];
             /** @description Stable identity shared by media grouped into one record. */
@@ -4295,6 +4415,63 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    createWorkerLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkerLog"];
+            };
+        };
+        responses: {
+            /** @description Worker log stored. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerLog"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    startDreamAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordId: components["schemas"]["RecordPublicId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated per-record attempt counter. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamAttempt"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     markRecordDreamed: {
         parameters: {
             query?: never;
@@ -4536,6 +4713,62 @@ export interface operations {
             412: components["responses"]["PreconditionFailed"];
         };
     };
+    listWorkerLogs: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest worker logs first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerLogPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    resetThumbCamWorker: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description THUMB worker cache reset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerReset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listIngestionJobs: {
         parameters: {
             query?: {
@@ -4602,7 +4835,7 @@ export interface operations {
                  *       },
                  *       "items": [
                  *         {
-                 *           "sourceKey": "847b668fdcbf5fbe1b47ae5d01cf3f45eb9cd57475e030bff559b9d576c3fda2",
+                 *           "sourceKey": "6e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc01",
                  *           "groupKey": "3e5a61dfd4b107d14f1fbcf31ed02c5f377ae245b7bf7af1eca604f06a25cc0f",
                  *           "relativePath": "PHOTO/IMG_0001.JPG",
                  *           "kind": "photo",
