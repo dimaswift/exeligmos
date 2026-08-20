@@ -14,17 +14,21 @@ import {
   disconnectedBitIndices,
   digitToBits,
   findGlyphCollisions,
+  formatRadixDigits,
   freeformStrokeIsVisible,
+  incrementDigits,
   makeCoreShellSegments,
   makeLayout,
   makeStrokeSegments,
   normalizeDigits,
   parseDigitInput,
+  parseValueInBase,
   radixForBitWidth,
   segmentPathData,
   segmentIsVisible,
   snapPointToGrid,
   tracedStrokeIsVisible,
+  valueToDigits,
 } from "./glyph-engine";
 import type { FreeformStroke, StrokeSegment, TracedStroke } from "./types";
 
@@ -55,6 +59,26 @@ describe("radix and bit encoding", () => {
   it("pads, truncates, and reverses assembly order deterministically", () => {
     expect(normalizeDigits("ACE", 4, 5, "msb-first")).toEqual([0, 0, 10, 12, 14]);
     expect(normalizeDigits("123456", 4, 4, "lsb-first")).toEqual([6, 5, 4, 3]);
+  });
+
+  it("strictly parses values from small and tokenized large bases", () => {
+    expect(parseValueInBase("101010", 2)).toBe(42n);
+    expect(parseValueInBase("FACE", 16)).toBe(0xFACEn);
+    expect(parseValueInBase("1 0 255", 256)).toBe(65_791n);
+    expect(parseValueInBase("2", 2)).toBeNull();
+    expect(parseValueInBase("256", 256)).toBeNull();
+  });
+
+  it("converts integers to target-base digits and formats large-base tokens", () => {
+    expect(valueToDigits(255n, 16)).toEqual([15, 15]);
+    expect(valueToDigits(255n, 256)).toEqual([255]);
+    expect(valueToDigits(0n, 16)).toEqual([0]);
+    expect(formatRadixDigits([1, 0, 255], 256)).toBe("1 0 255");
+  });
+
+  it("increments fixed-width digit vectors with carry and wraparound", () => {
+    expect(incrementDigits([0, 15, 15], 16)).toEqual([1, 0, 0]);
+    expect(incrementDigits([15, 15], 16)).toEqual([0, 0]);
   });
 });
 

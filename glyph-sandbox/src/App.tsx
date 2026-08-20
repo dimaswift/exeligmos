@@ -23,13 +23,17 @@ import {
   endpointLabel,
   formatAddress,
   formatDigit,
+  formatRadixDigits,
+  incrementDigits,
   makeLayout,
   makeStrokeSegments,
   MAX_BIT_WIDTH,
   normalizeDigits,
+  parseValueInBase,
   radixForBitWidth,
   segmentIsVisible,
   snapPointsToGrid,
+  valueToDigits,
 } from "./glyph-engine";
 import type {
   AssemblyLayout,
@@ -51,7 +55,7 @@ import type {
 
 const STORAGE_KEY = "glyph-foundry.config.v1";
 const DEFAULT_CONFIG: SandboxConfig = {
-  version: 8,
+  version: 9,
   bitWidth: 4,
   layoutPreset: "square",
   points: makeLayout("square", 4),
@@ -71,7 +75,9 @@ const DEFAULT_CONFIG: SandboxConfig = {
   readingDirection: "clockwise",
   startAngle: 0,
   fanSpread: 150,
+  radialRadius: 48,
   lineSpacing: 140,
+  incrementSpeed: 2,
   coreStyle: "ring",
   strokeWidth: 8,
   rounded: true,
@@ -109,6 +115,9 @@ function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [atlasOpen, setAtlasOpen] = useState(false);
+  const [isIncrementing, setIsIncrementing] = useState(false);
+  const [converterBase, setConverterBase] = useState(10);
+  const [converterInput, setConverterInput] = useState("");
   const svgRef = useRef<SVGSVGElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const radix = radixForBitWidth(config.bitWidth);
@@ -123,6 +132,14 @@ function App() {
     () => config.freeformStrokes.filter((stroke) => stroke.digit === sampleDigit),
     [config.freeformStrokes, sampleDigit],
   );
+  const converterValue = useMemo(
+    () => parseValueInBase(converterInput, converterBase),
+    [converterBase, converterInput],
+  );
+  const convertedDigits = useMemo(
+    () => converterValue === null ? null : valueToDigits(converterValue, radix),
+    [converterValue, radix],
+  );
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
@@ -133,6 +150,14 @@ function App() {
     const timer = window.setTimeout(() => setToast(null), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!isIncrementing) return;
+    const timer = window.setInterval(() => {
+      setConfig((current) => ({ ...current, address: incrementAddress(current) }));
+    }, 1000 / config.incrementSpeed);
+    return () => window.clearInterval(timer);
+  }, [config.incrementSpeed, isIncrementing]);
 
   const patchConfig = (patch: Partial<SandboxConfig>) => {
     setConfig((current) => ({ ...current, ...patch }));
@@ -258,6 +283,15 @@ function App() {
     patchConfig({ address: formatAddress(values, config.bitWidth) });
   };
 
+  const applyConvertedValue = () => {
+    if (convertedDigits === null || convertedDigits.length > 12) return;
+    const digitCount = Math.max(config.digitCount, convertedDigits.length);
+    patchConfig({
+      address: addressFromDigits(convertedDigits, digitCount, config.inputDirection, config.bitWidth),
+      digitCount,
+    });
+  };
+
   const copyConfig = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
@@ -285,6 +319,7 @@ function App() {
     try {
       const parsed: unknown = JSON.parse(await file.text());
       setConfig(normalizeImportedConfig(parsed));
+      setIsIncrementing(false);
       setToast("Configuration imported");
     } catch {
       setToast("That configuration could not be read");
@@ -295,6 +330,7 @@ function App() {
 
   const reset = () => {
     setConfig(DEFAULT_CONFIG);
+    setIsIncrementing(false);
     setSampleDigit(10);
     setToast("Hexadecimal defaults restored");
   };
@@ -398,6 +434,84 @@ function App() {
                 value={config.digitCount}
               />
             </Field>
+            <Field label="Increment animation" value={`${formatSpeed(config.incrementSpeed)} / sec`}>
+              <div className="increment-actions">
+                <button
+                  aria-pressed={isIncrementing}
+                  className="secondary-button"
+                  onClick={() => setIsIncrementing((current) => !current)}
+                  type="button"
+                >
+                  {isIncrementing ? "Pause" : "Play"}
+                </button>
+                <button
+                  aria-label="Increment value once"
+                  className="secondary-button"
+                  onClick={() => setConfig((current) => ({ ...current, address: incrementAddress(current) }))}
+                  type="button"
+                >
+                  +1
+                </button>
+              </div>
+              <input
+                aria-label="Increment speed"
+                max="30"
+                min="0.25"
+                onChange={(event) => patchConfig({ incrementSpeed: Number(event.target.value) })}
+                step="0.25"
+                type="range"
+                value={config.incrementSpeed}
+              />
+            </Field>
+            <div className="converter-card">
+              <header>
+                <span>Base converter</span>
+                <strong>→ BASE {radix}</strong>
+              </header>
+              <label>
+                <span>Source base</span>
+                <input
+                  aria-label="Converter source base"
+                  className="text-input"
+                  max="65536"
+                  min="2"
+                  onChange={(event) => setConverterBase(Number(event.target.value))}
+                  type="number"
+                  value={converterBase}
+                />
+              </label>
+              <label>
+                <span>Value</span>
+                <input
+                  aria-label="Value to convert"
+                  className="text-input converter-value-input"
+                  onChange={(event) => setConverterInput(event.target.value.toUpperCase())}
+                  placeholder={converterBase > 36 ? "1 0 255" : "255 or FF"}
+                  spellCheck="false"
+                  value={converterInput}
+                />
+              </label>
+              <div aria-live="polite" className="converter-result">
+                <span>Base {radix}</span>
+                <output>
+                  {convertedDigits === null
+                    ? converterInput.trim().length === 0 ? "—" : "Invalid value"
+                    : formatRadixDigits(convertedDigits, radix)}
+                </output>
+              </div>
+              {converterBase > 36 ? <p className="field-hint">Use decimal digit tokens separated by spaces.</p> : null}
+              {convertedDigits !== null && convertedDigits.length > 12
+                ? <p className="converter-error">This value needs {convertedDigits.length} digits; glyphs support up to 12.</p>
+                : null}
+              <button
+                className="secondary-button converter-apply"
+                disabled={convertedDigits === null || convertedDigits.length > 12}
+                onClick={applyConvertedValue}
+                type="button"
+              >
+                Use in glyph
+              </button>
+            </div>
           </ControlSection>
 
           <ControlSection number="02" title="Assembly">
@@ -455,6 +569,19 @@ function App() {
                   onChange={(event) => patchConfig({ fanSpread: Number(event.target.value) })}
                   type="range"
                   value={config.fanSpread}
+                />
+              </Field>
+            ) : null}
+            {config.assemblyLayout === "radial" ? (
+              <Field label="Radial radius" value={`${config.radialRadius} units`}>
+                <input
+                  aria-label="Radial radius"
+                  max="220"
+                  min="0"
+                  onChange={(event) => patchConfig({ radialRadius: Number(event.target.value) })}
+                  step="4"
+                  type="range"
+                  value={config.radialRadius}
                 />
               </Field>
             ) : null}
@@ -1131,6 +1258,31 @@ function resizeFreeformStrokes(
   return strokes.filter((stroke) => stroke.digit >= 0 && stroke.digit < radix);
 }
 
+function addressFromDigits(
+  digits: readonly number[],
+  digitCount: number,
+  direction: InputDirection,
+  bitWidth: number,
+): string {
+  const count = Math.min(12, Math.max(1, Math.trunc(digitCount)));
+  const padded = [...Array(Math.max(0, count - digits.length)).fill(0), ...digits.slice(-count)];
+  return formatAddress(direction === "lsb-first" ? padded.reverse() : padded, bitWidth);
+}
+
+function incrementAddress(config: SandboxConfig): string {
+  const digits = normalizeDigits(config.address, config.bitWidth, config.digitCount, config.inputDirection);
+  return addressFromDigits(
+    incrementDigits(digits, radixForBitWidth(config.bitWidth)),
+    config.digitCount,
+    config.inputDirection,
+    config.bitWidth,
+  );
+}
+
+function formatSpeed(speed: number): string {
+  return Number.isInteger(speed) ? String(speed) : speed.toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "");
+}
+
 function loadConfig(): SandboxConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -1180,7 +1332,7 @@ function normalizeImportedConfig(value: unknown): SandboxConfig {
     : [];
 
   return {
-    version: 8,
+    version: 9,
     bitWidth,
     layoutPreset,
     points,
@@ -1204,7 +1356,9 @@ function normalizeImportedConfig(value: unknown): SandboxConfig {
     readingDirection: isOneOf(input.readingDirection, ["clockwise", "counterclockwise"] as const) ? input.readingDirection : DEFAULT_CONFIG.readingDirection,
     startAngle: clampNumber(input.startAngle, -180, 180, DEFAULT_CONFIG.startAngle),
     fanSpread: clampNumber(input.fanSpread, 30, 320, DEFAULT_CONFIG.fanSpread),
+    radialRadius: clampNumber(input.radialRadius, 0, 220, DEFAULT_CONFIG.radialRadius),
     lineSpacing: clampNumber(input.lineSpacing, 40, 280, DEFAULT_CONFIG.lineSpacing),
+    incrementSpeed: clampNumber(input.incrementSpeed, 0.25, 30, DEFAULT_CONFIG.incrementSpeed),
     coreStyle: isOneOf(input.coreStyle, ["ring", "polygon", "dot", "none"] as const) ? input.coreStyle : DEFAULT_CONFIG.coreStyle,
     strokeWidth: clampNumber(input.strokeWidth, 2, 18, DEFAULT_CONFIG.strokeWidth),
     rounded: typeof input.rounded === "boolean" ? input.rounded : DEFAULT_CONFIG.rounded,

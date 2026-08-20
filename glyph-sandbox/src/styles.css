@@ -257,6 +257,103 @@ select:focus-visible,
   margin-top: 18px;
 }
 
+.increment-actions {
+  display: grid;
+  grid-template-columns: 1fr 64px;
+  gap: 6px;
+}
+
+.secondary-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--paper-bright);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.secondary-button:hover,
+.secondary-button[aria-pressed="true"] {
+  color: var(--paper-bright);
+  background: var(--ink);
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.converter-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(251 250 245 / 58%);
+}
+
+.converter-card > header,
+.converter-card > label,
+.converter-result {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.converter-card > header span,
+.converter-card > header strong,
+.converter-card > label > span,
+.converter-result > span {
+  color: var(--ink-soft);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 8px;
+}
+
+.converter-card > header strong {
+  color: var(--violet);
+  text-align: right;
+}
+
+.converter-card .text-input {
+  width: 100%;
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.converter-result {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--paper-bright);
+  background: var(--ink);
+}
+
+.converter-result > span {
+  color: rgb(255 255 255 / 60%);
+}
+
+.converter-result output {
+  overflow-wrap: anywhere;
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 10px;
+  text-align: right;
+}
+
+.converter-error {
+  margin: 0;
+  color: #9f3d2e;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.converter-apply {
+  width: 100%;
+}
+
 .field-label {
   display: flex;
   align-items: center;

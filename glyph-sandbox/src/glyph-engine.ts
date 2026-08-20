@@ -88,6 +88,55 @@ export function formatAddress(digits: readonly number[], bitWidth: number): stri
   return digits.map((digit) => formatDigit(digit, bitWidth)).join(separator);
 }
 
+/** Strictly parses an unsigned value in any supported glyph radix. */
+export function parseValueInBase(input: string, radix: number): bigint | null {
+  if (!Number.isInteger(radix) || radix < 2 || radix > 65_536) return null;
+  const normalized = input.trim();
+  if (normalized.length === 0) return null;
+  let digits: readonly number[];
+  if (radix <= DIGIT_ALPHABET.length) {
+    digits = [...normalized.toUpperCase()].map((character) => DIGIT_ALPHABET.indexOf(character));
+  } else {
+    const tokens = normalized.split(/[\s,;:]+/u);
+    if (tokens.some((token) => !/^\d+$/u.test(token))) return null;
+    digits = tokens.map(Number);
+  }
+  if (digits.some((digit) => !Number.isInteger(digit) || digit < 0 || digit >= radix)) return null;
+  return digits.reduce((value, digit) => value * BigInt(radix) + BigInt(digit), 0n);
+}
+
+/** Converts a non-negative integer to canonical, MSB-first digits. */
+export function valueToDigits(value: bigint, radix: number): readonly number[] {
+  if (value < 0n || !Number.isInteger(radix) || radix < 2 || radix > 65_536) return Object.freeze([]);
+  if (value === 0n) return Object.freeze([0]);
+  const base = BigInt(radix);
+  const digits: number[] = [];
+  let remaining = value;
+  while (remaining > 0n) {
+    digits.push(Number(remaining % base));
+    remaining /= base;
+  }
+  return Object.freeze(digits.reverse());
+}
+
+/** Formats arbitrary-radix digits; large bases use unambiguous decimal tokens. */
+export function formatRadixDigits(digits: readonly number[], radix: number): string {
+  const separator = radix > DIGIT_ALPHABET.length ? " " : "";
+  return digits.map((digit) => radix <= DIGIT_ALPHABET.length ? DIGIT_ALPHABET[digit] ?? "0" : String(digit)).join(separator);
+}
+
+/** Adds one to a fixed-width, MSB-first digit vector and wraps on overflow. */
+export function incrementDigits(digits: readonly number[], radix: number): readonly number[] {
+  if (!Number.isInteger(radix) || radix < 2 || digits.length === 0) return Object.freeze([...digits]);
+  const result = digits.map((digit) => Math.min(radix - 1, Math.max(0, Math.trunc(digit))));
+  for (let index = result.length - 1; index >= 0; index -= 1) {
+    const next = (result[index] ?? 0) + 1;
+    result[index] = next % radix;
+    if (next < radix) break;
+  }
+  return Object.freeze(result);
+}
+
 export function makeLayout(preset: Exclude<LayoutPreset, "custom">, bitWidth: number): readonly Point[] {
   const count = clampBitWidth(bitWidth);
   switch (preset) {

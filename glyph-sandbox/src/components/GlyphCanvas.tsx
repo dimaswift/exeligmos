@@ -37,19 +37,14 @@ export const GlyphCanvas = forwardRef<SVGSVGElement, GlyphCanvasProps>(function 
       xmlns="http://www.w3.org/2000/svg"
     >
       <title>{title}</title>
-      <defs>
-        <filter id="soft-glow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="3.2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
       <g color={readableTextColor(config.canvasColor)}>
         {arms.map((arm) => {
           const stroke = glyphColor(config, arm.sourceIndex, arm.digit);
-          const rootOffset = config.assemblyLayout === "linear" ? 0 : -coreRadius;
+          const rootOffset = config.assemblyLayout === "linear"
+            ? 0
+            : config.assemblyLayout === "radial"
+              ? -config.radialRadius
+              : -coreRadius;
           return (
             <g
               key={`${arm.sourceIndex}-${arm.digit}`}
@@ -58,24 +53,22 @@ export const GlyphCanvas = forwardRef<SVGSVGElement, GlyphCanvasProps>(function 
               transform={`translate(${arm.x} ${arm.y}) rotate(${arm.rotation})`}
             >
               <g transform={`translate(0 ${rootOffset}) scale(${arm.scale})`}>
-                <g filter="url(#soft-glow)">
-                  <ArmDrawing
-                    bitWidth={config.bitWidth}
-                    bottomBit={config.bottomBit}
-                    corePoint={config.corePoint}
-                    digit={arm.digit}
-                    freeformStrokes={config.freeformStrokes}
-                    points={config.points}
-                    rounded={config.rounded}
-                    segments={config.segments}
-                    strokePreset={config.strokePreset}
-                    tracedStrokes={config.tracedStrokes}
-                    showGuides={config.showGuides}
-                    showDisconnectedBitDots={config.showDisconnectedBitDots}
-                    stroke={stroke}
-                    strokeWidth={config.strokeWidth}
-                  />
-                </g>
+                <ArmDrawing
+                  bitWidth={config.bitWidth}
+                  bottomBit={config.bottomBit}
+                  corePoint={config.corePoint}
+                  digit={arm.digit}
+                  freeformStrokes={config.freeformStrokes}
+                  points={config.points}
+                  rounded={config.rounded}
+                  segments={config.segments}
+                  strokePreset={config.strokePreset}
+                  tracedStrokes={config.tracedStrokes}
+                  showGuides={config.showGuides}
+                  showDisconnectedBitDots={config.showDisconnectedBitDots}
+                  stroke={stroke}
+                  strokeWidth={config.strokeWidth}
+                />
               </g>
             </g>
           );

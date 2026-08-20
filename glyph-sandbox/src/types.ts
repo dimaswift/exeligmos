@@ -47,7 +47,7 @@ export interface FreeformStroke {
 }
 
 export interface SandboxConfig {
-  readonly version: 8;
+  readonly version: 9;
   readonly bitWidth: number;
   readonly layoutPreset: LayoutPreset;
   readonly points: readonly Point[];
@@ -67,7 +67,9 @@ export interface SandboxConfig {
   readonly readingDirection: ReadingDirection;
   readonly startAngle: number;
   readonly fanSpread: number;
+  readonly radialRadius: number;
   readonly lineSpacing: number;
+  readonly incrementSpeed: number;
   readonly coreStyle: CoreStyle;
   readonly strokeWidth: number;
   readonly rounded: boolean;
