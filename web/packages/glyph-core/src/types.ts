@@ -31,6 +31,12 @@ export interface GlyphPath {
   readonly socketIndex?: number;
   readonly digitIndex?: number;
   readonly digit?: number;
+  /** Present on stacked higher-base arms. */
+  readonly layerIndex?: number;
+  /** Octal geometry used by this layer (0...7). */
+  readonly layerDigit?: number;
+  /** Radix declared for this socket by a mixed-radix glyph. */
+  readonly radix?: number;
 }
 
 export interface GlyphFrameBounds {
@@ -47,7 +53,7 @@ export interface GlyphAccessibility {
 }
 
 export interface GlyphModel {
-  readonly kind: "octal";
+  readonly kind: "octal" | "mixed-radix";
   readonly depth: number;
   readonly normalizedValue: string;
   readonly viewBox: readonly [x: number, y: number, width: number, height: number];
@@ -65,6 +71,30 @@ interface OctalGlyphInput {
 
 /** Color semantics must be explicit until the canonical catalog defines a glyph default. */
 export type CreateOctalGlyphOptions = OctalGlyphInput &
+  (
+    | {
+        readonly style: GlyphStyle;
+        readonly rarityId?: never;
+      }
+    | {
+        readonly rarityId: unknown;
+        readonly style?: never;
+      }
+  );
+
+interface MixedRadixGlyphInput {
+  /** Digits and radices are both supplied most-significant carrier first. */
+  readonly digits: readonly number[];
+  readonly radices: readonly number[];
+  /** Lateral continuation adjustment in glyph geometry units. */
+  readonly stackOffsetX?: number;
+  /** Outward continuation adjustment in glyph geometry units; negative values pull inward. */
+  readonly stackOffsetY?: number;
+  readonly accessibilityLabel?: string;
+}
+
+/** Color semantics stay explicit while the mixed-radix grammar is experimental. */
+export type CreateMixedRadixGlyphOptions = MixedRadixGlyphInput &
   (
     | {
         readonly style: GlyphStyle;

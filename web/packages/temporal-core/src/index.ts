@@ -7,6 +7,31 @@ import {
   type TemporalUnitId,
 } from "@fractonica/domain-catalog";
 
+export {
+  formatMixedRadixAddress,
+  MEAN_TROPICAL_YEAR_SECONDS,
+  MIXED_RADIX_BASES,
+  MIXED_RADIX_MAX_SIGNIFICANCE_DEPTH,
+  MIXED_RADIX_RESIDUE_PERIOD,
+  MIXED_RADIX_SAROS_BIN_COUNT,
+  MIXED_RADIX_SERIES_ADDRESS_COUNT,
+  MIXED_RADIX_SERIES_PHASE_COUNT,
+  mixedRadixBinForDigits,
+  mixedRadixBinsForDigits,
+  mixedRadixClockReading,
+  mixedRadixRepdigitMetadata,
+  mixedRadixSignificanceLayers,
+  mixedRadixSignificanceLayersForBases,
+  mixedRadixState,
+} from "./mixed-radix.js";
+export type {
+  MixedRadixClockInput,
+  MixedRadixClockReading,
+  MixedRadixRepdigitMetadata,
+  MixedRadixRepdigitRarity,
+  MixedRadixState,
+} from "./mixed-radix.js";
+
 /** A depth accepted by Saros clock calculations. Clock depths are validated, not clamped. */
 export type CalculationDepth = number & { readonly __calculationDepth: unique symbol };
 

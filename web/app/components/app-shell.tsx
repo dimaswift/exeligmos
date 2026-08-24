@@ -22,6 +22,7 @@ const primaryNavigation = [
 const dataNavigation = [
   { to: "/records", label: "Records" },
   { to: "/events", label: "Events" },
+  { to: "/history", label: "History" },
   { to: "/tags", label: "Tags" },
 ] as const;
 

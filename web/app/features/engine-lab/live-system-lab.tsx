@@ -15,6 +15,7 @@ import {
 } from "@fractonica/temporal-core";
 import { GlyphRenderer } from "@fractonica/ui";
 
+import { MixedRadixEpoch } from "./mixed-radix-epoch";
 import styles from "~/routes/engine-lab.module.css";
 
 interface LiveSystemLabProps {
@@ -35,7 +36,7 @@ export function LiveSystemLab({
   solarData,
 }: LiveSystemLabProps) {
   const [snapshotInstant, setSnapshotInstant] = useState(observedAt);
-  const [selectedSaros, setSelectedSaros] = useState<number | null>(null);
+  const [selectedSaros, setSelectedSaros] = useState(141);
 
   useEffect(() => {
     const timer = window.setInterval(() => setSnapshotInstant(Date.now() / 1_000), 5_000);
@@ -80,12 +81,20 @@ export function LiveSystemLab({
           <p className="eyebrow">Realtime temporal engine</p>
           <h1>System lab</h1>
           <p className={styles.lede}>
-            The same eclipse intervals, octal clock, repdigit rules, pulse, and four-spike context
-            used by the native app and web-created records.
+            A live laboratory for the mixed-radix Saros carrier, exact eclipse intervals, waveform,
+            pulse, and the legacy octal engine it will replace.
           </p>
         </div>
         <LiveClock observedAt={observedAt} />
       </header>
+
+      <MixedRadixEpoch
+        instant={snapshotInstant}
+        interval={selectedInterval(intervals, selected)}
+        intervals={intervals}
+        key={selected?.saros}
+        onSelectSaros={setSelectedSaros}
+      />
 
       <section aria-labelledby="temporal-now" className={`${styles.panel} ${styles.nowPanel}`}>
         <div className={styles.sectionHeading}>
@@ -168,8 +177,8 @@ export function LiveSystemLab({
       <section aria-labelledby="octal-periods" className={styles.panel}>
         <div className={styles.sectionHeading}>
           <div>
-            <p className="eyebrow">Nested phase clock</p>
-            <h2 id="octal-periods">Octal periods</h2>
+            <p className="eyebrow">Migration reference</p>
+            <h2 id="octal-periods">Legacy octal periods</h2>
           </div>
           <span className={styles.status}>actual interval durations</span>
         </div>

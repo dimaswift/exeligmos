@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   clampGlyphDepth,
+  createMixedRadixGlyph,
   createOctalGlyph,
+  DEFAULT_MIXED_RADIX_STACK_OFFSET_X,
+  DEFAULT_MIXED_RADIX_STACK_OFFSET_Y,
   glyphFrameBounds,
   glyphSocketDigitIndices,
   glyphStyleForRarity,
@@ -219,6 +222,110 @@ describe("input and semantic style normalization", () => {
     expect(() => semanticGlyphStyle("color.unregistered")).toThrow(
       "Unknown glyph semantic color token",
     );
+  });
+});
+
+describe("stacked mixed-radix geometry", () => {
+  const radices = [11, 9, 8, 7, 5, 13] as const;
+
+  it("continues values above seven from the seven-arm anchor", () => {
+    const model = createMixedRadixGlyph({
+      digits: [10, 8, 7, 6, 4, 12],
+      radices,
+      style: semanticGlyphStyle("color.digit.7"),
+    });
+    expect(model.kind).toBe("mixed-radix");
+    expect(model.normalizedValue).toBe("10·8·7·6·4·12");
+    const arms = model.paths.filter((path) => path.id.startsWith("arm-"));
+    expect(arms).toHaveLength(9);
+    expect(arms.filter((path) => path.digit === 8).map((path) => path.layerDigit)).toEqual([7, 1]);
+    expect(arms.filter((path) => path.digit === 12).map((path) => path.layerDigit)).toEqual([7, 5]);
+  });
+
+  it("uses a stable frame for every value in the declared bases", () => {
+    const low = createMixedRadixGlyph({
+      digits: [0, 0, 0, 0, 0, 0],
+      radices,
+      style: semanticGlyphStyle("color.digit.7"),
+    });
+    const high = createMixedRadixGlyph({
+      digits: [10, 8, 7, 6, 4, 12],
+      radices,
+      style: semanticGlyphStyle("color.digit.7"),
+    });
+    expect(high.viewBox).toEqual(low.viewBox);
+    for (const path of high.paths) {
+      for (const contour of path.contours) {
+        for (const point of contour.points) {
+          expect(point.x).toBeGreaterThanOrEqual(high.viewBox[0]);
+          expect(point.y).toBeGreaterThanOrEqual(high.viewBox[1]);
+          expect(point.x).toBeLessThanOrEqual(high.viewBox[0] + high.viewBox[2]);
+          expect(point.y).toBeLessThanOrEqual(high.viewBox[1] + high.viewBox[3]);
+        }
+      }
+    }
+  });
+
+  it("continues additive seven-stacks through base 24", () => {
+    const model = createMixedRadixGlyph({
+      digits: [23, 0, 0],
+      radices: [24, 24, 24],
+      rarityId: "common",
+    });
+    expect(model.paths.filter((path) => path.digit === 23).map((path) => path.layerDigit)).toEqual([
+      7, 7, 7, 2,
+    ]);
+    const base64 = createMixedRadixGlyph({
+      digits: [63, 0, 0],
+      radices: [64, 64, 64],
+      rarityId: "common",
+    });
+    expect(base64.paths.filter((path) => path.digit === 63)).toHaveLength(9);
+  });
+
+  it("exposes independent lateral and outward continuation offsets", () => {
+    const baseline = createMixedRadixGlyph({
+      digits: [8, 0, 0, 0, 0, 0],
+      radices,
+      rarityId: "common",
+    });
+    const shifted = createMixedRadixGlyph({
+      digits: [8, 0, 0, 0, 0, 0],
+      radices,
+      stackOffsetX: DEFAULT_MIXED_RADIX_STACK_OFFSET_X + 3,
+      stackOffsetY: DEFAULT_MIXED_RADIX_STACK_OFFSET_Y + 4,
+      rarityId: "common",
+    });
+    const baselineRoot = baseline.paths.find((path) => path.id === "arm-0-layer-0");
+    const shiftedRoot = shifted.paths.find((path) => path.id === "arm-0-layer-0");
+    const baselineContinuation = baseline.paths.find((path) => path.id === "arm-0-layer-1");
+    const shiftedContinuation = shifted.paths.find((path) => path.id === "arm-0-layer-1");
+
+    expect(shiftedRoot?.contours).toEqual(baselineRoot?.contours);
+    expect(
+      shiftedContinuation?.contours[0]?.points.map((point, index) => {
+        const baselinePoint = baselineContinuation?.contours[0]?.points[index];
+        return [point.x - (baselinePoint?.x ?? 0), point.y - (baselinePoint?.y ?? 0)];
+      }),
+    ).toEqual(baselineContinuation?.contours[0]?.points.map(() => [3, -4]));
+    expect(() =>
+      createMixedRadixGlyph({
+        digits: [8, 0, 0, 0, 0, 0],
+        radices,
+        stackOffsetX: Number.NaN,
+        rarityId: "common",
+      }),
+    ).toThrow("stack X offset");
+  });
+
+  it("rejects a digit outside its declared base", () => {
+    expect(() =>
+      createMixedRadixGlyph({
+        digits: [0, 0, 0, 0, 0, 13],
+        radices,
+        rarityId: "common",
+      }),
+    ).toThrow("outside base 13");
   });
 });
 

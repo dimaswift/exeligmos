@@ -10,7 +10,7 @@ export const meta: Route.MetaFunction = () => [
   { title: "System lab · Fractonica" },
   {
     name: "description",
-    content: "Realtime Saros Grid, waveform, repdigit periods, and octal pulse inspection.",
+    content: "Mixed-radix Saros epoch design, realtime grid, waveform, and pulse inspection.",
   },
 ];
 

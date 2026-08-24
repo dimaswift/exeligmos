@@ -17,6 +17,7 @@ export default [
     route("records", "routes/records.tsx"),
     route("records/:recordId", "routes/record-detail.tsx"),
     route("events", "routes/events.tsx"),
+    route("history", "routes/history.tsx"),
     route("tags", "routes/tags.tsx"),
     route("jobs", "routes/jobs.tsx"),
     route("jobs/poll", "routes/jobs-poll.ts"),

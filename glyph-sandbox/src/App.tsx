@@ -4,6 +4,7 @@ import { BitPatternEditor } from "./components/BitPatternEditor";
 import { GlyphAtlas } from "./components/GlyphAtlas";
 import { bitSignature, GlyphCanvas } from "./components/GlyphCanvas";
 import { PrintTemplate } from "./components/PrintTemplate";
+import { PolyRadixPlayground } from "./components/PolyRadixPlayground";
 import { SpecimenGrid } from "./components/SpecimenGrid";
 import {
   DEFAULT_CANVAS_COLOR,
@@ -111,6 +112,9 @@ const STROKE_OPTIONS: readonly {
 
 function App() {
   const [config, setConfig] = useState<SandboxConfig>(loadConfig);
+  const [workspaceMode, setWorkspaceMode] = useState<"poly-radix" | "foundry">(
+    () => window.location.hash === "#foundry" ? "foundry" : "poly-radix",
+  );
   const [sampleDigit, setSampleDigit] = useState(() => Math.min(10, radixForBitWidth(config.bitWidth) - 1));
   const [toast, setToast] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
@@ -335,6 +339,15 @@ function App() {
     setToast("Hexadecimal defaults restored");
   };
 
+  const changeWorkspace = (mode: "poly-radix" | "foundry") => {
+    window.location.hash = mode === "foundry" ? "foundry" : "poly-radix";
+    setWorkspaceMode(mode);
+  };
+
+  if (workspaceMode === "poly-radix") {
+    return <PolyRadixPlayground armConfig={config} onOpenFoundry={() => changeWorkspace("foundry")} />;
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -357,6 +370,9 @@ function App() {
             onChange={(event) => void importConfig(event.target.files?.[0])}
             type="file"
           />
+          <button className="quiet-button" onClick={() => changeWorkspace("poly-radix")} type="button">
+            Poly-radix
+          </button>
           <button className="quiet-button" onClick={() => importRef.current?.click()} type="button">
             Import
           </button>

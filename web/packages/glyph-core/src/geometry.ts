@@ -3,6 +3,7 @@ import { canonicalCatalog } from "@fractonica/domain-catalog";
 import { glyphStyleForRarity, normalizeGlyphStyle } from "./style.js";
 import type {
   CreateOctalGlyphOptions,
+  CreateMixedRadixGlyphOptions,
   GlyphColorRole,
   GlyphContour,
   GlyphFrameBounds,
@@ -28,6 +29,15 @@ const glyphCatalog = canonicalCatalog.glyph;
 const presentationDepth = canonicalCatalog.harmonics.presentationDepth;
 const radixDigits = new Set([...canonicalCatalog.radix.digits]);
 const geometryCache = new Map<string, Geometry>();
+const mixedGeometryCache = new Map<string, Pick<Geometry, "depth" | "frame" | "core">>();
+const STACK_MAX_DIGIT = 7;
+const STACK_OFFSET_LIMIT = 64;
+export const DEFAULT_MIXED_RADIX_STACK_OFFSET_X = 0.25;
+export const DEFAULT_MIXED_RADIX_STACK_OFFSET_Y = 2.5;
+/** Pull each continuation a full arm width inward so its root is buried in the seven-arm body. */
+const STACK_ANCHOR_ADVANCE =
+  Math.max(...glyphCatalog.arms.find((arm) => arm.digit === 7)!.points.map((point) => point[1])) -
+  glyphCatalog.constants.socketWidth;
 
 export function clampGlyphDepth(rawDepth: unknown): number {
   const numeric = coerceFiniteNumber(rawDepth);
@@ -133,6 +143,78 @@ export function createOctalGlyph(options: CreateOctalGlyphOptions): GlyphModel {
   });
 }
 
+/**
+ * Builds the experimental mixed-radix glyph. Values above seven retain a full
+ * seven arm and continue from its outer anchor with another octal layer.
+ */
+export function createMixedRadixGlyph(options: CreateMixedRadixGlyphOptions): GlyphModel {
+  const { digits, radices } = normalizeMixedRadixInput(options.digits, options.radices);
+  const stackOffsetX = normalizeStackOffset(options.stackOffsetX, "X");
+  const stackOffsetY = normalizeStackOffset(options.stackOffsetY, "Y");
+  const depth = digits.length;
+  const geometry = getMixedGeometry(radices, stackOffsetX, stackOffsetY);
+  const sockets = makeSockets(depth);
+  const hasStyle = options.style !== undefined;
+  const hasRarity = Object.hasOwn(options, "rarityId");
+  if (hasStyle === hasRarity) {
+    throw new TypeError("Mixed-radix glyphs require exactly one explicit style or rarityId.");
+  }
+  const style = normalizeGlyphStyle(
+    hasStyle ? options.style : glyphStyleForRarity(options.rarityId),
+    depth,
+  );
+  const digitIndices = glyphSocketDigitIndices(depth);
+  const paths: GlyphPath[] = [
+    freezePath({
+      id: "core",
+      contours: geometry.core,
+      colorRole: "secondary",
+      fillRule: glyphCatalog.fillRule === "even-odd" ? "evenodd" : "nonzero",
+    }),
+  ];
+
+  for (let socketIndex = 0; socketIndex < depth; socketIndex += 1) {
+    const digitIndex = digitIndices[socketIndex];
+    if (digitIndex === undefined) continue;
+    const digit = digits[digitIndex] ?? 0;
+    const radix = radices[digitIndex] ?? STACK_MAX_DIGIT + 1;
+    const contours = stackedArmContours(digit, socketIndex, sockets, stackOffsetX, stackOffsetY);
+    contours.forEach((contour, layerIndex) => {
+      const layerDigit = stackedLayerDigits(digit)[layerIndex] ?? 0;
+      paths.push(
+        freezePath({
+          id: `arm-${socketIndex}-layer-${layerIndex}`,
+          contours: [contour],
+          colorRole: colorRoleForDigitIndex(style, digitIndex),
+          fillRule: "nonzero",
+          socketIndex,
+          digitIndex,
+          digit,
+          layerIndex,
+          layerDigit,
+          radix,
+        }),
+      );
+    });
+  }
+
+  const normalizedValue = digits.join("·");
+  const rawLabel = options.accessibilityLabel?.trim();
+  return deepFreezeModel({
+    kind: "mixed-radix",
+    depth,
+    normalizedValue,
+    viewBox: [geometry.frame.x, geometry.frame.y, geometry.frame.width, geometry.frame.height],
+    aspectRatio: geometry.frame.aspectRatio,
+    paths,
+    paints: { primary: style.primary, secondary: style.secondary },
+    accessibility: {
+      label: rawLabel === undefined || rawLabel === "" ? "Mixed-radix glyph" : rawLabel,
+      value: digits.map((digit, index) => `${digit} base ${radices[index]}`).join(", "),
+    },
+  });
+}
+
 /** Serializes all contours into a single SVG path, retaining even-odd holes. */
 export function pathData(path: Pick<GlyphPath, "contours">): string {
   return path.contours
@@ -161,6 +243,41 @@ function getGeometry(depth: number): Geometry {
   }
   const geometry = makeGeometry(depth);
   geometryCache.set(key, geometry);
+  return geometry;
+}
+
+function getMixedGeometry(
+  radices: readonly number[],
+  stackOffsetX: number,
+  stackOffsetY: number,
+): Pick<Geometry, "depth" | "frame" | "core"> {
+  const key = `${radices.join(".")}|${stackOffsetX}|${stackOffsetY}`;
+  const cached = mixedGeometryCache.get(key);
+  if (cached !== undefined) return cached;
+  const depth = radices.length;
+  const octalGeometry = getGeometry(depth);
+  const sockets = makeSockets(depth);
+  const points = octalGeometry.core.flatMap((contour) => [...contour.points]);
+  radices.forEach((radix, digitIndex) => {
+    const socketIndex = digitIndex === 0 ? 0 : depth - digitIndex;
+    for (let digit = 0; digit < radix; digit += 1) {
+      for (const contour of stackedArmContours(
+        digit,
+        socketIndex,
+        sockets,
+        stackOffsetX,
+        stackOffsetY,
+      )) {
+        points.push(...contour.points);
+      }
+    }
+  });
+  const geometry = Object.freeze({
+    depth,
+    frame: paddedFrameBounds(points),
+    core: octalGeometry.core,
+  });
+  mixedGeometryCache.set(key, geometry);
   return geometry;
 }
 
@@ -215,6 +332,10 @@ function makeFrameBounds(
       points.push(...armToWorldPoints(arm.points.map(tupleToPoint), socketIndex, sockets));
     }
   }
+  return paddedFrameBounds(points);
+}
+
+function paddedFrameBounds(points: readonly GlyphPoint[]): GlyphFrameBounds {
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
   const minX = Math.min(...xs);
@@ -238,6 +359,106 @@ function makeFrameBounds(
     height: halfHeight * 2,
     aspectRatio: halfWidth / halfHeight,
   });
+}
+
+function stackedArmContours(
+  digit: number,
+  socketIndex: number,
+  sockets: readonly Socket[],
+  stackOffsetX: number,
+  stackOffsetY: number,
+): readonly GlyphContour[] {
+  const layers = stackedLayerDigits(digit);
+  return Object.freeze(
+    layers.flatMap((layerDigit, layerIndex) => {
+      if (layerDigit === 0) return [];
+      const offsetX = layerIndex * stackOffsetX;
+      const offsetY = layerIndex * (STACK_ANCHOR_ADVANCE + stackOffsetY);
+      const localPoints = (
+        glyphCatalog.arms.find((arm) => arm.digit === layerDigit)?.points ?? []
+      ).map(([x, y]) => ({ x: x + offsetX, y: y + offsetY }));
+      const worldPoints = localArmToWorldPoints(localPoints, socketIndex, sockets);
+      return worldPoints.length < 3 ? [] : [freezeContour(worldPoints)];
+    }),
+  );
+}
+
+function stackedLayerDigits(digit: number): readonly number[] {
+  if (digit <= STACK_MAX_DIGIT) return Object.freeze([digit]);
+  const completeLayers = Math.floor(digit / STACK_MAX_DIGIT);
+  const remainder = digit % STACK_MAX_DIGIT;
+  return Object.freeze([
+    ...Array.from({ length: completeLayers }, () => STACK_MAX_DIGIT),
+    ...(remainder === 0 ? [] : [remainder]),
+  ]);
+}
+
+function localArmToWorldPoints(
+  points: readonly GlyphPoint[],
+  socketIndex: number,
+  sockets: readonly Socket[],
+): readonly GlyphPoint[] {
+  const socket = sockets[socketIndex];
+  if (socket === undefined) return Object.freeze([]);
+  const center = midpoint(socket.start, socket.end);
+  const dx = socket.end.x - socket.start.x;
+  const dy = socket.end.y - socket.start.y;
+  const length = Math.max(Math.hypot(dx, dy), 0.001);
+  const tangent = { x: dx / length, y: dy / length };
+  let outward = { x: tangent.y, y: -tangent.x };
+  if (outward.x * center.x + outward.y * center.y < 0) {
+    outward = { x: -outward.x, y: -outward.y };
+  }
+  return Object.freeze(
+    points.map((point) =>
+      Object.freeze({
+        x: center.x + tangent.x * point.x + outward.x * point.y,
+        y: center.y + tangent.y * point.x + outward.y * point.y,
+      }),
+    ),
+  );
+}
+
+function normalizeMixedRadixInput(
+  rawDigits: readonly number[],
+  rawRadices: readonly number[],
+): { readonly digits: readonly number[]; readonly radices: readonly number[] } {
+  if (rawDigits.length !== rawRadices.length) {
+    throw new RangeError("Mixed-radix digits and radices must be equal-length arrays.");
+  }
+  if (
+    rawDigits.length < glyphCatalog.supportedDepth.minimum ||
+    rawDigits.length > glyphCatalog.supportedDepth.maximum
+  ) {
+    throw new RangeError(
+      `Mixed-radix glyph depth must be ${glyphCatalog.supportedDepth.minimum}...${glyphCatalog.supportedDepth.maximum}.`,
+    );
+  }
+  const radices = rawRadices.map((radix) => {
+    if (!Number.isSafeInteger(radix) || radix < 2 || radix > 64) {
+      throw new RangeError("Mixed-radix bases must be safe integers from 2 through 64.");
+    }
+    return radix;
+  });
+  const digits = rawDigits.map((digit, index) => {
+    if (!Number.isSafeInteger(digit) || digit < 0 || digit >= (radices[index] ?? 0)) {
+      throw new RangeError(`Digit ${digit} is outside base ${radices[index] ?? "?"}.`);
+    }
+    return digit;
+  });
+  return { digits: Object.freeze(digits), radices: Object.freeze(radices) };
+}
+
+function normalizeStackOffset(rawValue: number | undefined, axis: "X" | "Y"): number {
+  const value =
+    rawValue ??
+    (axis === "X" ? DEFAULT_MIXED_RADIX_STACK_OFFSET_X : DEFAULT_MIXED_RADIX_STACK_OFFSET_Y);
+  if (!Number.isFinite(value) || Math.abs(value) > STACK_OFFSET_LIMIT) {
+    throw new RangeError(
+      `Mixed-radix stack ${axis} offset must be finite and within -${STACK_OFFSET_LIMIT}...${STACK_OFFSET_LIMIT}.`,
+    );
+  }
+  return Object.is(value, -0) ? 0 : value;
 }
 
 function armToWorldPoints(

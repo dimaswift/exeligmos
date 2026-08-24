@@ -85,6 +85,9 @@ export function GlyphRenderer({
           data-digit={path.digit}
           data-digit-index={path.digitIndex}
           data-glyph-part={path.id}
+          data-layer-digit={path.layerDigit}
+          data-layer-index={path.layerIndex}
+          data-radix={path.radix}
           data-socket-index={path.socketIndex}
           fill={colorForRole(path.colorRole, model.paints[path.colorRole], model)}
           fillRule={path.fillRule}

@@ -44,6 +44,7 @@ COPY --from=api-build /src/sync-server/package-lock.json api/package-lock.json
 COPY --from=api-build /src/sync-server/node_modules api/node_modules
 
 COPY --from=web-build /src/web/build web/build
+COPY --from=web-build /src/web/data web/data
 COPY --from=web-build /src/web/packages web/packages
 COPY --from=web-build /src/web/package.json web/package.json
 COPY --from=web-build /src/web/package-lock.json web/package-lock.json
