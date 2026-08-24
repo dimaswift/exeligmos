@@ -268,6 +268,27 @@ export function mixedRadixClockReading(input: MixedRadixClockInput): MixedRadixC
   });
 }
 
+/** Frequency of one score position when a complete residue cycle fills one Saros day. */
+export function mixedRadixSarosDayTickFrequency(
+  sarosDayDurationSeconds: number,
+  rawTickCount: number = MIXED_RADIX_RESIDUE_PERIOD,
+): number {
+  assertFinite(sarosDayDurationSeconds, "Saros day duration");
+  if (sarosDayDurationSeconds <= 0) {
+    throw new RangeError("Saros day duration must be positive.");
+  }
+  assertFinite(rawTickCount, "Saros day score tick count");
+  const tickCount = Math.trunc(rawTickCount);
+  if (tickCount <= 0) {
+    throw new RangeError("Saros day score tick count must be positive.");
+  }
+  const frequency = tickCount / sarosDayDurationSeconds;
+  if (!Number.isFinite(frequency)) {
+    throw new RangeError("Saros day score frequency is too large.");
+  }
+  return frequency;
+}
+
 export function formatMixedRadixAddress(
   digits: readonly number[],
   radices: readonly number[],

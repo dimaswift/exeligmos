@@ -581,6 +581,277 @@
 .subPeriodWide code {
   text-align: center;
 }
+.sonifier {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(circle at 12% 0%, rgb(139 215 193 / 10%), transparent 22rem),
+    radial-gradient(circle at 92% 100%, rgb(175 82 222 / 8%), transparent 24rem), rgb(0 0 0 / 18%);
+}
+.sonifier > header {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.8fr) minmax(26rem, 1.2fr);
+  gap: var(--space-4);
+  align-items: end;
+}
+.sonifier h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.sonifier header p:not(:global(.eyebrow)) {
+  max-width: 39rem;
+  margin: 0.35rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+.sonifierMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(7.5rem, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: var(--color-border);
+}
+.sonifierMetrics article {
+  display: grid;
+  min-width: 0;
+  gap: 0.24rem;
+  padding: 0.65rem;
+  background: var(--color-canvas);
+}
+.sonifierMetrics span,
+.sonifierMetrics small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sonifierMetrics strong {
+  color: white;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.sonifierDepths {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+.sonifierDepthControl {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255 / 2.5%);
+}
+.sonifierDepthControl:focus-within {
+  border-color: rgb(139 215 193 / 55%);
+}
+.sonifierDepthControl[data-selected="true"] {
+  border-color: rgb(139 215 193 / 72%);
+  box-shadow: inset 0 0 0 1px rgb(139 215 193 / 8%);
+}
+.sonifierDepths button {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+  padding: 0.7rem;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.sonifierDepths button:hover {
+  background: rgb(139 215 193 / 5%);
+}
+.sonifierDepths button[aria-pressed="true"] {
+  color: white;
+  background: rgb(139 215 193 / 9%);
+}
+.sonifierDepths strong {
+  color: currentcolor;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.sonifierDepths span,
+.sonifierDepths small {
+  overflow: hidden;
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sonifierDepths small {
+  color: var(--color-accent-strong);
+}
+.sonifierDepthControl label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4.2rem, 0.6fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.5rem 0.65rem;
+}
+.sonifierDepthControl label span {
+  color: var(--color-text-muted);
+}
+.sonifierDepthControl label + label {
+  border-top: 1px solid var(--color-border);
+}
+.sonifierDepthControl input,
+.sonifierDepthControl select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.38rem;
+  color: white;
+  background: rgb(0 0 0 / 24%);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+.sonifierDepthControl input {
+  text-align: right;
+}
+.sonifierTransport {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(10rem, 0.65fr) minmax(14rem, 1fr);
+  gap: 0.55rem;
+  align-items: end;
+}
+.sonifierTransport button {
+  min-height: 2.4rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.52rem;
+  color: var(--color-text);
+  background: rgb(255 255 255 / 4%);
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+.sonifierTransport button:hover:not(:disabled) {
+  border-color: rgb(139 215 193 / 65%);
+}
+.sonifierTransport button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.sonifierTransport .sonifierPlay {
+  border-color: rgb(139 215 193 / 62%);
+  color: rgb(192 255 237);
+  background: rgb(139 215 193 / 10%);
+}
+.sonifierTransport label {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+.sonifierTransport label span {
+  color: var(--color-text-muted);
+  font-size: 0.5rem;
+}
+.sonifierTransport input {
+  width: 100%;
+  accent-color: var(--color-accent);
+}
+.sonifierTransport output {
+  align-self: center;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sonifier[data-playing="true"] .sonifierTransport output {
+  color: var(--color-accent-strong);
+}
+.sonifierError {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid rgb(255 59 48 / 48%);
+  border-radius: 0.5rem;
+  color: #ff9b95;
+  background: rgb(255 59 48 / 8%);
+  font-size: 0.6rem;
+}
+.sonifierPreview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem;
+}
+.sonifierPreview figure {
+  --sonifier-color: #fff;
+
+  display: grid;
+  min-width: 0;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--sonifier-color) 38%, var(--color-border));
+  border-radius: 0.58rem;
+  color: var(--sonifier-color);
+  background: color-mix(in srgb, var(--sonifier-color) 3.5%, rgb(0 0 0 / 18%));
+}
+.sonifierPreview figure[data-rarity="rare"] {
+  --sonifier-color: #007aff;
+}
+.sonifierPreview figure[data-rarity="epic"] {
+  --sonifier-color: #af52de;
+}
+.sonifierPreview figure[data-rarity="legendary"] {
+  --sonifier-color: #ffcc00;
+}
+.sonifierPreview figure[data-rarity="mythic"] {
+  --sonifier-color: #ff3b30;
+}
+.sonifierPreview figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.55rem;
+  align-items: baseline;
+}
+.sonifierPreview figcaption strong {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+.sonifierPreview figcaption span {
+  color: var(--color-text-muted);
+  font-size: 0.5rem;
+  text-transform: capitalize;
+}
+.sonifierPreview figure > div:not(.glyphMeta) {
+  --glyph-primary: currentcolor;
+  --glyph-secondary: currentcolor;
+
+  width: 11rem;
+  height: 11rem;
+  justify-self: center;
+  contain: size layout;
+}
+.sonifierPreview svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.sonifierPreview code {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.5rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mixedReadout > header {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1560,6 +1831,9 @@
   .subPeriod > header {
     display: grid;
   }
+  .sonifier > header {
+    grid-template-columns: 1fr;
+  }
   .timelineRange {
     justify-self: start;
     text-align: left;
@@ -1588,6 +1862,22 @@
   }
   .subPeriodStats {
     grid-template-columns: 1fr;
+  }
+  .sonifierMetrics {
+    grid-template-columns: 1fr;
+  }
+  .sonifierDepths {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sonifierTransport {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sonifierTransport label,
+  .sonifierTransport output {
+    grid-column: 1 / -1;
+  }
+  .sonifierTransport output {
+    text-align: left;
   }
   .mixedHeaderActions,
   .atlasPagination {

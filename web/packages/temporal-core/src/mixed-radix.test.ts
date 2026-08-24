@@ -6,6 +6,7 @@ import {
   mixedRadixBinForDigits,
   mixedRadixBinsForDigits,
   mixedRadixClockReading,
+  mixedRadixSarosDayTickFrequency,
   mixedRadixRepdigitMetadata,
   mixedRadixSignificanceLayers,
   mixedRadixSignificanceLayersForBases,
@@ -68,6 +69,13 @@ describe("mixed-radix Saros carrier", () => {
     expect(reading.binDurationSeconds).toBe(10);
     expect(reading.nextFlipEpochSeconds).toBe(130);
     expect(() => mixedRadixState(0, 1, 0)).toThrow("at least 1");
+  });
+
+  it("fits one complete residue score inside the active Saros day", () => {
+    expect(mixedRadixSarosDayTickFrequency(60_060)).toBeCloseTo(6);
+    expect(mixedRadixSarosDayTickFrequency(120, 12)).toBeCloseTo(0.1);
+    expect(() => mixedRadixSarosDayTickFrequency(0)).toThrow("must be positive");
+    expect(() => mixedRadixSarosDayTickFrequency(120, 0)).toThrow("must be positive");
   });
 
   it("exposes higher-significance sets independently for every radix", () => {

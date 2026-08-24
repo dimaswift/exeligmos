@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 
 import {
   createMixedRadixGlyph,
@@ -11,10 +19,12 @@ import {
   MEAN_TROPICAL_YEAR_SECONDS,
   MIXED_RADIX_BASES,
   MIXED_RADIX_MAX_SIGNIFICANCE_DEPTH,
+  MIXED_RADIX_RESIDUE_PERIOD,
   MIXED_RADIX_SAROS_BIN_COUNT,
   MIXED_RADIX_SERIES_PHASE_COUNT,
   mixedRadixBinsForDigits,
   mixedRadixClockReading,
+  mixedRadixSarosDayTickFrequency,
   mixedRadixRepdigitMetadata,
   mixedRadixSignificanceLayersForBases,
   mixedRadixState,
@@ -51,11 +61,38 @@ const ATLAS_MAX_COLUMNS = 8;
 const ATLAS_MAX_ROWS = 8;
 const TIMELINE_WINDOW_BIN_COUNT = 42;
 const DEEP_RARITY_SIGNIFICANCE_DEPTH = 6;
+const SONIFICATION_DEPTHS = [0, 1, 2, 3, 4, 5] as const;
+const SONIFICATION_CARRIERS_HZ = [2_880, 1_440, 720, 360, 180, 90] as const;
+const SONIFICATION_CARRIER_OPTIONS_HZ = [90, 180, 360, 720, 1_440, 2_880] as const;
+const SONIFICATION_FREQUENCY_OFFSET_LIMIT_HZ = 12;
+const EQUAL_TEMPERED_STEP_RATIO = 2 ** (1 / 12);
 const ATLAS_LAYOUT_STORAGE_KEY = "fractonica.mixed-radix.atlas-layout.v1";
 const BIN_COUNT_STORAGE_KEY = "fractonica.mixed-radix.bin-count.v1";
 const BASES_STORAGE_KEY = "fractonica.mixed-radix.bases-by-socket.v1";
 const EXPERIMENTAL_BIN_COUNT_MAX = 1_000_000;
 const PERSISTENT_SETTINGS_EVENT = "fractonica-mixed-radix-settings";
+
+type SonificationDepth = (typeof SONIFICATION_DEPTHS)[number];
+
+interface WideSonifierVoice {
+  readonly depth: SonificationDepth;
+  readonly digitIndex: number;
+  readonly gain: GainNode;
+  readonly oscillator: OscillatorNode;
+  readonly periodTicks: bigint;
+  readonly radix: number;
+  nextBoundaryTick: bigint;
+}
+
+interface WideSonifierRuntime {
+  readonly context: AudioContext;
+  readonly master: GainNode;
+  readonly startAt: number;
+  readonly startDayTick: bigint;
+  readonly tickRateHz: number;
+  readonly timer: number;
+  readonly voices: readonly WideSonifierVoice[];
+}
 
 export function MixedRadixEpoch({
   instant,
@@ -472,6 +509,19 @@ function MixedRadixEpochContent({
             stackOffsetY={stackOffsetY}
           />
 
+          {compositionMode === "wide" ? (
+            <MixedRadixWideSonifier
+              followingLive={followingLive}
+              key={`wide-sonifier-${liveReading.binDurationSeconds}-${followingLive ? "live" : state.serialBinIndex}-${radices.join("-")}`}
+              observedAtEpochSeconds={instant}
+              outerBinDurationSeconds={liveReading.binDurationSeconds}
+              outerProgress={followingLive ? liveReading.progressWithinBin : 0}
+              radices={radices}
+              stackOffsetX={stackOffsetX}
+              stackOffsetY={stackOffsetY}
+            />
+          ) : null}
+
           <MixedRadixConverter
             binCount={binCount}
             followingLive={followingLive}
@@ -815,6 +865,425 @@ function MixedRadixSubPeriod({
         />
       )}
       <GlyphRepdigitMeta metadata={metadata} />
+    </section>
+  );
+}
+
+function MixedRadixWideSonifier({
+  followingLive,
+  observedAtEpochSeconds,
+  outerBinDurationSeconds,
+  outerProgress,
+  radices,
+  stackOffsetX,
+  stackOffsetY,
+}: {
+  readonly followingLive: boolean;
+  readonly observedAtEpochSeconds: number;
+  readonly outerBinDurationSeconds: number;
+  readonly outerProgress: number;
+  readonly radices: readonly number[];
+  readonly stackOffsetX: number;
+  readonly stackOffsetY: number;
+}) {
+  const [selectedDepths, setSelectedDepths] =
+    useState<readonly SonificationDepth[]>(SONIFICATION_DEPTHS);
+  const [bandCarriersHz, setBandCarriersHz] = useState<readonly number[]>(SONIFICATION_CARRIERS_HZ);
+  const [bandOffsetsHz, setBandOffsetsHz] = useState<readonly number[]>(() =>
+    SONIFICATION_DEPTHS.map(() => 0),
+  );
+  const [playing, setPlaying] = useState(false);
+  const [soundError, setSoundError] = useState<string>();
+  const [volume, setVolume] = useState(0.55);
+  const [visualDayTick, setVisualDayTick] = useState<bigint | null>(null);
+  const runtimeRef = useRef<WideSonifierRuntime | undefined>(undefined);
+  const visualTimerRef = useRef<number | undefined>(undefined);
+  const tickRateHz = mixedRadixSarosDayTickFrequency(outerBinDurationSeconds);
+  const idleDayTick = sarosDayTickIndex(outerProgress);
+  const previewDayTick = visualDayTick ?? idleDayTick;
+  const detunedBandCount = bandOffsetsHz.filter((offsetHz) => offsetHz !== 0).length;
+  const remappedBandCount = bandCarriersHz.filter(
+    (carrierHz, depth) => carrierHz !== SONIFICATION_CARRIERS_HZ[depth],
+  ).length;
+
+  const stopSonifier = useCallback((updateUi = true) => {
+    if (visualTimerRef.current !== undefined) {
+      window.clearTimeout(visualTimerRef.current);
+      visualTimerRef.current = undefined;
+    }
+    const runtime = runtimeRef.current;
+    runtimeRef.current = undefined;
+    if (runtime !== undefined) {
+      window.clearInterval(runtime.timer);
+      const now = runtime.context.currentTime;
+      runtime.master.gain.cancelScheduledValues(now);
+      runtime.master.gain.setTargetAtTime(0, now, 0.012);
+      for (const voice of runtime.voices) {
+        voice.oscillator.frequency.cancelScheduledValues(now);
+        try {
+          voice.oscillator.stop(now + 0.06);
+        } catch {
+          // A voice may already be stopped while the context is closing.
+        }
+      }
+      window.setTimeout(() => void runtime.context.close(), 90);
+    }
+    if (updateUi) {
+      setPlaying(false);
+      setVisualDayTick(null);
+    }
+  }, []);
+
+  useEffect(() => () => stopSonifier(false), [stopSonifier]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (runtime === undefined) return;
+    runtime.master.gain.setTargetAtTime(
+      sonifierMasterGain(volume),
+      runtime.context.currentTime,
+      0.018,
+    );
+  }, [volume]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (runtime === undefined) return;
+    const now = runtime.context.currentTime;
+    for (const voice of runtime.voices) {
+      const detune = voice.oscillator.detune;
+      detune.cancelScheduledValues(now);
+      detune.setTargetAtTime(
+        sonifierBandTuningCents(
+          voice.depth,
+          bandCarriersHz[voice.depth] ?? SONIFICATION_CARRIERS_HZ[voice.depth],
+          bandOffsetsHz[voice.depth] ?? 0,
+        ),
+        now,
+        0.015,
+      );
+    }
+  }, [bandCarriersHz, bandOffsetsHz]);
+
+  async function startSonifier(depths: readonly SonificationDepth[]) {
+    stopSonifier(false);
+    setSoundError(undefined);
+    let context: AudioContext | undefined;
+    try {
+      const audioContext = new AudioContext({ latencyHint: "interactive" });
+      context = audioContext;
+      await audioContext.resume();
+      const startProgress = sarosDayProgressAtPlayback({
+        followingLive,
+        observedAtEpochSeconds,
+        outerBinDurationSeconds,
+        outerProgress,
+      });
+      const startDayTick = sarosDayTickIndex(startProgress);
+      const startAt = audioContext.currentTime + 0.04;
+      const master = audioContext.createGain();
+      const compressor = audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -18;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.004;
+      compressor.release.value = 0.18;
+      master.gain.setValueAtTime(0, audioContext.currentTime);
+      master.gain.linearRampToValueAtTime(sonifierMasterGain(volume), startAt + 0.08);
+      master.connect(compressor).connect(audioContext.destination);
+
+      const voiceGainValue = 0.042 / Math.sqrt(depths.length);
+      const voices = depths.flatMap((depth) =>
+        SOCKET_TO_DIGIT_INDEX.map((digitIndex): WideSonifierVoice => {
+          const radix = radices[digitIndex] ?? 2;
+          const periodTicks = BigInt(radix) ** BigInt(depth);
+          const digit = carrierDigit(startDayTick, radix, depth);
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(sonifierVoiceFrequency(depth, digit), startAt);
+          oscillator.detune.setValueAtTime(
+            sonifierBandTuningCents(
+              depth,
+              bandCarriersHz[depth] ?? SONIFICATION_CARRIERS_HZ[depth],
+              bandOffsetsHz[depth] ?? 0,
+            ),
+            startAt,
+          );
+          gain.gain.setValueAtTime(voiceGainValue, startAt);
+          oscillator.connect(gain).connect(master);
+          oscillator.start(startAt);
+          return {
+            depth,
+            digitIndex,
+            gain,
+            oscillator,
+            periodTicks,
+            radix,
+            nextBoundaryTick: ticksUntilNextSongBoundary(startDayTick, periodTicks),
+          };
+        }),
+      );
+
+      const songTickCount = BigInt(MIXED_RADIX_RESIDUE_PERIOD);
+      const schedule = () => {
+        if (audioContext.state === "closed") return;
+        const elapsedSeconds = Math.max(audioContext.currentTime - startAt, 0);
+        const currentTick = BigInt(Math.floor(elapsedSeconds * tickRateHz));
+        const horizonTick = BigInt(
+          Math.ceil(Math.max(audioContext.currentTime + 0.28 - startAt, 0) * tickRateHz),
+        );
+        for (const voice of voices) {
+          let skippedEvents = 0;
+          while (voice.nextBoundaryTick < currentTick && skippedEvents < 4_096) {
+            const skippedDayTick = (startDayTick + voice.nextBoundaryTick) % songTickCount;
+            voice.nextBoundaryTick += ticksUntilNextSongBoundary(skippedDayTick, voice.periodTicks);
+            skippedEvents += 1;
+          }
+          let scheduledEvents = 0;
+          while (voice.nextBoundaryTick <= horizonTick && scheduledEvents < 4_096) {
+            const dayTick = (startDayTick + voice.nextBoundaryTick) % songTickCount;
+            const digit = carrierDigit(dayTick, voice.radix, voice.depth);
+            const eventTime = startAt + Number(voice.nextBoundaryTick) / tickRateHz;
+            voice.oscillator.frequency.setValueAtTime(
+              sonifierVoiceFrequency(voice.depth, digit),
+              Math.max(eventTime, audioContext.currentTime + 0.002),
+            );
+            voice.nextBoundaryTick += ticksUntilNextSongBoundary(dayTick, voice.periodTicks);
+            scheduledEvents += 1;
+          }
+        }
+      };
+      schedule();
+      const timer = window.setInterval(schedule, 40);
+      runtimeRef.current = {
+        context: audioContext,
+        master,
+        startAt,
+        startDayTick,
+        tickRateHz,
+        timer,
+        voices,
+      };
+      const updateVisualAtScoreBoundary = () => {
+        if (audioContext.state === "closed") return;
+        const elapsedSeconds = Math.max(audioContext.currentTime - startAt, 0);
+        const elapsedTick = Math.floor(elapsedSeconds * tickRateHz);
+        setVisualDayTick((startDayTick + BigInt(elapsedTick)) % songTickCount);
+        const nextBoundaryAt = startAt + (elapsedTick + 1) / tickRateHz;
+        const delayMilliseconds = Math.max(
+          4,
+          Math.ceil((nextBoundaryAt - audioContext.currentTime) * 1_000),
+        );
+        visualTimerRef.current = window.setTimeout(updateVisualAtScoreBoundary, delayMilliseconds);
+      };
+      updateVisualAtScoreBoundary();
+      setPlaying(true);
+    } catch {
+      if (context !== undefined && context.state !== "closed") void context.close();
+      setSoundError("This browser could not start the Wide chord sonifier.");
+      setPlaying(false);
+      setVisualDayTick(null);
+    }
+  }
+
+  const toggleDepth = (depth: SonificationDepth) => {
+    const nextDepths = selectedDepths.includes(depth)
+      ? selectedDepths.filter((candidate) => candidate !== depth)
+      : [...selectedDepths, depth].sort((left, right) => left - right);
+    if (nextDepths.length === 0) return;
+    setSelectedDepths(nextDepths);
+    if (runtimeRef.current !== undefined) void startSonifier(nextDepths);
+  };
+
+  const setBandCarrier = (depth: SonificationDepth, rawCarrierHz: number) => {
+    const carrierHz = SONIFICATION_CARRIER_OPTIONS_HZ.find(
+      (candidate) => candidate === rawCarrierHz,
+    );
+    if (carrierHz === undefined) return;
+    setBandCarriersHz((currentCarriers) =>
+      SONIFICATION_DEPTHS.map((candidateDepth) =>
+        candidateDepth === depth
+          ? carrierHz
+          : (currentCarriers[candidateDepth] ?? SONIFICATION_CARRIERS_HZ[candidateDepth]),
+      ),
+    );
+  };
+
+  const setBandOffset = (depth: SonificationDepth, rawOffsetHz: number) => {
+    const offsetHz = clampNumber(
+      rawOffsetHz,
+      -SONIFICATION_FREQUENCY_OFFSET_LIMIT_HZ,
+      SONIFICATION_FREQUENCY_OFFSET_LIMIT_HZ,
+    );
+    setBandOffsetsHz((currentOffsets) =>
+      SONIFICATION_DEPTHS.map((candidateDepth) =>
+        candidateDepth === depth ? offsetHz : (currentOffsets[candidateDepth] ?? 0),
+      ),
+    );
+  };
+
+  return (
+    <section aria-labelledby="mixed-sonifier" className={styles.sonifier} data-playing={playing}>
+      <header>
+        <div>
+          <p className="eyebrow">One Saros Day · 360,360 score positions</p>
+          <h3 id="mixed-sonifier">Wide chord sonifier</h3>
+          <p>
+            Playback begins at the current Saros Day phase and wraps after exactly one day. Each
+            digit raises its arm by one equal-tempered step; base 13 reaches +12.
+          </p>
+        </div>
+        <div className={styles.sonifierMetrics}>
+          <article>
+            <span>Saros Day score</span>
+            <strong>{formatDuration(outerBinDurationSeconds)}</strong>
+            <small>
+              {MIXED_RADIX_RESIDUE_PERIOD.toLocaleString("en-US")} positions · exact loop
+            </small>
+          </article>
+          <article>
+            <span>Current position</span>
+            <strong>
+              #{(Number(previewDayTick) + 1).toLocaleString("en-US")} /{" "}
+              {MIXED_RADIX_RESIDUE_PERIOD.toLocaleString("en-US")}
+            </strong>
+            <small>{formatSarosDayPosition(previewDayTick)} through this day</small>
+          </article>
+          <article>
+            <span>Shortest P0 tick</span>
+            <strong>{formatFrequency(tickRateHz)}</strong>
+            <small>{formatSonificationDuration(1 / tickRateHz)} per score position</small>
+          </article>
+        </div>
+      </header>
+
+      <div aria-label="Sonification depth layers" className={styles.sonifierDepths} role="group">
+        {SONIFICATION_DEPTHS.map((depth) => {
+          const selected = selectedDepths.includes(depth);
+          const carrierHz = bandCarriersHz[depth] ?? SONIFICATION_CARRIERS_HZ[depth];
+          const bandOffsetHz = bandOffsetsHz[depth] ?? 0;
+          const fastestPeriod = Math.min(...radices.map((radix) => radix ** depth / tickRateHz));
+          return (
+            <div className={styles.sonifierDepthControl} data-selected={selected} key={depth}>
+              <button
+                aria-label={`${selected ? "Remove" : "Include"} P${depth} sonification layer`}
+                aria-pressed={selected}
+                onClick={() => toggleDepth(depth)}
+                type="button"
+              >
+                <strong>
+                  P{depth} · {formatFrequency(carrierHz)}
+                </strong>
+                <span>{formatSonificationDuration(fastestPeriod)} fastest hold</span>
+                <small>{selected ? "in chord" : "add layer"}</small>
+              </button>
+              <label>
+                <span>Carrier</span>
+                <select
+                  aria-label={`P${depth} carrier`}
+                  onChange={(event) => setBandCarrier(depth, Number(event.target.value))}
+                  value={carrierHz}
+                >
+                  {SONIFICATION_CARRIER_OPTIONS_HZ.map((candidateCarrierHz) => (
+                    <option key={candidateCarrierHz} value={candidateCarrierHz}>
+                      {candidateCarrierHz.toLocaleString("en-US")}
+                    </option>
+                  ))}
+                </select>
+                <small>Hz</small>
+              </label>
+              <label>
+                <span>Band offset</span>
+                <input
+                  aria-label={`P${depth} frequency offset`}
+                  max={SONIFICATION_FREQUENCY_OFFSET_LIMIT_HZ}
+                  min={-SONIFICATION_FREQUENCY_OFFSET_LIMIT_HZ}
+                  onChange={(event) => setBandOffset(depth, Number(event.target.value))}
+                  step="0.01"
+                  type="number"
+                  value={bandOffsetHz}
+                />
+                <small>Hz</small>
+              </label>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className={styles.sonifierTransport}>
+        <button
+          aria-label={playing ? "Resync Wide sonification to now" : "Play current Saros Day phase"}
+          className={styles.sonifierPlay}
+          onClick={() => void startSonifier(selectedDepths)}
+          type="button"
+        >
+          {playing ? "Resync to now" : "Play current phase"}
+        </button>
+        <button disabled={!playing} onClick={() => stopSonifier()} type="button">
+          Stop
+        </button>
+        <button
+          disabled={detunedBandCount === 0}
+          onClick={() => setBandOffsetsHz(SONIFICATION_DEPTHS.map(() => 0))}
+          type="button"
+        >
+          Zero offsets
+        </button>
+        <label>
+          <span>Volume</span>
+          <input
+            aria-label="Wide sonifier volume"
+            max="1"
+            min="0"
+            onChange={(event) => setVolume(Number(event.target.value))}
+            step="0.01"
+            type="range"
+            value={volume}
+          />
+        </label>
+        <output aria-live="polite">
+          {playing
+            ? `${selectedDepths.map((depth) => `P${depth}`).join(" + ")} · ${selectedDepths.length * radices.length} voices · ${detunedBandCount} offset · ${remappedBandCount} remapped`
+            : "ready · starts from the current score position"}
+        </output>
+      </div>
+
+      {soundError === undefined ? null : (
+        <p className={styles.sonifierError} role="alert">
+          {soundError}
+        </p>
+      )}
+
+      <div className={styles.sonifierPreview}>
+        {selectedDepths.map((depth) => {
+          const digits = carrierWideDigits(previewDayTick, depth, radices);
+          const metadata = mixedRadixRepdigitMetadata(digits);
+          return (
+            <figure data-rarity={metadata.rarity} key={depth}>
+              <figcaption>
+                <strong>P{depth}</strong>
+                <span>{metadata.rarity} chord</span>
+              </figcaption>
+              <div>
+                <GlyphRenderer
+                  model={createMixedRadixGlyph({
+                    digits,
+                    radices,
+                    stackOffsetX,
+                    stackOffsetY,
+                    style: RARITY_GLYPH_STYLES[metadata.rarity],
+                    accessibilityLabel: `Sonified P${depth} Wide glyph, ${metadata.rarity}`,
+                  })}
+                  size="100%"
+                />
+              </div>
+              <code>{formatSpatialAddress(digits, radices)}</code>
+              <GlyphRepdigitMeta metadata={metadata} />
+            </figure>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -1845,6 +2314,83 @@ function renderableDeepDigits(digits: readonly number[], minimumDepth = 3) {
 
 function formatDeepAddress(digits: readonly number[], radix: number) {
   return `B${radix} · ${digits.map((digit, place) => `P${place} ${digit}`).join(" · ")}`;
+}
+
+function sarosDayProgressAtPlayback({
+  followingLive,
+  observedAtEpochSeconds,
+  outerBinDurationSeconds,
+  outerProgress,
+}: {
+  readonly followingLive: boolean;
+  readonly observedAtEpochSeconds: number;
+  readonly outerBinDurationSeconds: number;
+  readonly outerProgress: number;
+}) {
+  const elapsedSinceObservation = followingLive
+    ? Math.max(Date.now() / 1_000 - observedAtEpochSeconds, 0)
+    : 0;
+  const progress = outerProgress + elapsedSinceObservation / outerBinDurationSeconds;
+  return ((progress % 1) + 1) % 1;
+}
+
+function sarosDayTickIndex(progress: number) {
+  const normalizedProgress = ((progress % 1) + 1) % 1;
+  return BigInt(Math.floor(normalizedProgress * MIXED_RADIX_RESIDUE_PERIOD));
+}
+
+function carrierDigit(carrierIndex: bigint, radix: number, depth: number) {
+  const base = BigInt(radix);
+  return Number((carrierIndex / base ** BigInt(depth)) % base);
+}
+
+function carrierWideDigits(carrierIndex: bigint, depth: number, radices: readonly number[]) {
+  return radices.map((radix) => carrierDigit(carrierIndex, radix, depth));
+}
+
+function ticksUntilNextSongBoundary(dayTick: bigint, periodTicks: bigint) {
+  const songTickCount = BigInt(MIXED_RADIX_RESIDUE_PERIOD);
+  const normalizedDayTick = ((dayTick % songTickCount) + songTickCount) % songTickCount;
+  const untilDayWrap = songTickCount - normalizedDayTick;
+  const periodRemainder = normalizedDayTick % periodTicks;
+  const untilDigitChange = periodRemainder === 0n ? periodTicks : periodTicks - periodRemainder;
+  return untilDigitChange < untilDayWrap ? untilDigitChange : untilDayWrap;
+}
+
+function sonifierVoiceFrequency(depth: SonificationDepth, digit: number) {
+  const carrierHz = SONIFICATION_CARRIERS_HZ[depth];
+  return clampNumber(carrierHz * EQUAL_TEMPERED_STEP_RATIO ** digit, 30, 12_000);
+}
+
+function sonifierBandTuningCents(
+  depth: SonificationDepth,
+  selectedCarrierHz: number,
+  offsetHz: number,
+) {
+  const referenceCarrierHz = SONIFICATION_CARRIERS_HZ[depth];
+  return 1_200 * Math.log2((selectedCarrierHz + offsetHz) / referenceCarrierHz);
+}
+
+function sonifierMasterGain(volume: number) {
+  return clampNumber(volume, 0, 1) * 0.28;
+}
+
+function formatFrequency(rawFrequency: number) {
+  if (rawFrequency >= 1_000) return `${(rawFrequency / 1_000).toFixed(2)} kHz`;
+  if (rawFrequency >= 100) return `${rawFrequency.toFixed(1)} Hz`;
+  if (rawFrequency >= 1) return `${rawFrequency.toFixed(2)} Hz`;
+  return `${rawFrequency.toPrecision(3)} Hz`;
+}
+
+function formatSonificationDuration(seconds: number) {
+  if (seconds >= 1) return formatDuration(seconds);
+  if (seconds >= 0.001) return `${(seconds * 1_000).toFixed(1)} ms`;
+  return `${(seconds * 1_000_000).toFixed(1)} μs`;
+}
+
+function formatSarosDayPosition(dayTick: bigint) {
+  const progress = Number(dayTick) / MIXED_RADIX_RESIDUE_PERIOD;
+  return `${(progress * 100).toFixed(3)}%`;
 }
 
 function formatSpatialAddress(digits: readonly number[], radices: readonly number[]) {

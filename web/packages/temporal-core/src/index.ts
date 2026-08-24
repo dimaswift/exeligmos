@@ -19,6 +19,7 @@ export {
   mixedRadixBinForDigits,
   mixedRadixBinsForDigits,
   mixedRadixClockReading,
+  mixedRadixSarosDayTickFrequency,
   mixedRadixRepdigitMetadata,
   mixedRadixSignificanceLayers,
   mixedRadixSignificanceLayersForBases,

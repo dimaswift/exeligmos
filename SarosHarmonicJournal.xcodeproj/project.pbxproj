@@ -51,12 +51,12 @@
 		A1B2C3D4E5F607182930A101 /* JournalEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A104 /* JournalEntry.swift */; };
 		A1B2C3D4E5F607182930A102 /* SarosEventContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A105 /* SarosEventContextService.swift */; };
 		A1B2C3D4E5F607182930A107 /* JournalEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930A108 /* JournalEntryViews.swift */; };
-		B30000000000000000000001 /* SharedMediaImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000002 /* SharedMediaImportService.swift */; };
-		B30000000000000000000003 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000004 /* ShareViewController.swift */; };
-		B30000000000000000000005 /* SarosHarmonicJournalShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AF2F8172F5AC4CAC4A118D42 /* EclipseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE3A5E9F6FBEA16641C6CE8 /* EclipseModels.swift */; };
 		B10000000000000000000001 /* ImageSonificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageSonificationEngine.swift */; };
 		B10000000000000000000002 /* ImageSonificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ImageSonificationView.swift */; };
+		B30000000000000000000001 /* SharedMediaImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000002 /* SharedMediaImportService.swift */; };
+		B30000000000000000000003 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000004 /* ShareViewController.swift */; };
+		B30000000000000000000005 /* SarosHarmonicJournalShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B4D1A2F43E6B4AF1920C1111 /* JournalTemporalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */; };
 		C0A9EBF9B47FDB7C9B8FB60F /* EclipseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC312585A4AEB8EF509C9A2 /* EclipseService.swift */; };
 		C0DE00000000000000000001 /* CubeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* CubeMapView.swift */; };
@@ -162,13 +162,13 @@
 		A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000011 /* LiveTrackingFlip.wav */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.wav; name = LiveTrackingFlip.wav; path = SarosHarmonicJournal/Resources/LiveTrackingFlip.wav; sourceTree = "<group>"; };
 		ACD8E5AA5E1EDB6242DC9C6D /* SarosHarmonicJournalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SarosHarmonicJournalApp.swift; path = SarosHarmonicJournal/App/SarosHarmonicJournalApp.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
 		B30000000000000000000002 /* SharedMediaImportService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedMediaImportService.swift; path = SarosHarmonicJournal/Services/SharedMediaImportService.swift; sourceTree = "<group>"; };
 		B30000000000000000000004 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		B30000000000000000000006 /* SarosHarmonicJournalShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SarosHarmonicJournalShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B30000000000000000000008 /* SarosHarmonicJournalShare.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = SarosHarmonicJournalShare.entitlements; sourceTree = "<group>"; };
-		B20000000000000000000001 /* ImageSonificationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationEngine.swift; path = SarosHarmonicJournal/Services/ImageSonificationEngine.swift; sourceTree = "<group>"; };
-		B20000000000000000000002 /* ImageSonificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImageSonificationView.swift; path = SarosHarmonicJournal/Views/ImageSonificationView.swift; sourceTree = "<group>"; };
 		B4D1A2F43E6B4AF1920C1110 /* JournalTemporalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JournalTemporalEngine.swift; path = SarosHarmonicJournal/Domain/JournalTemporalEngine.swift; sourceTree = "<group>"; };
 		BEAF4B1A7E9C65A1CEAC199E /* eclipse_times.db */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = eclipse_times.db; path = SarosHarmonicJournal/Resources/SolarData/eclipse_times.db; sourceTree = "<group>"; };
 		C0DE00000000000000000002 /* CubeMapView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CubeMapView.swift; path = SarosHarmonicJournal/Views/CubeMapView.swift; sourceTree = "<group>"; };
@@ -193,13 +193,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		B3000000000000000000000B /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		5079EED9392015210AD98763 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -208,6 +201,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A40000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3000000000000000000000B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -320,16 +320,6 @@
 			path = SarosHarmonicJournalWidgets;
 			sourceTree = "<group>";
 		};
-		B30000000000000000000012 /* SarosHarmonicJournalShare */ = {
-			isa = PBXGroup;
-			children = (
-				B30000000000000000000007 /* Info.plist */,
-				B30000000000000000000008 /* SarosHarmonicJournalShare.entitlements */,
-				B30000000000000000000004 /* ShareViewController.swift */,
-			);
-			path = SarosHarmonicJournalShare;
-			sourceTree = "<group>";
-		};
 		A6FAFA372ECA40B56820B7D1 = {
 			isa = PBXGroup;
 			children = (
@@ -340,6 +330,16 @@
 				B30000000000000000000012 /* SarosHarmonicJournalShare */,
 				35297F39DDF4E380238E428B /* SarosHarmonicJournalTests */,
 			);
+			sourceTree = "<group>";
+		};
+		B30000000000000000000012 /* SarosHarmonicJournalShare */ = {
+			isa = PBXGroup;
+			children = (
+				B30000000000000000000007 /* Info.plist */,
+				B30000000000000000000008 /* SarosHarmonicJournalShare.entitlements */,
+				B30000000000000000000004 /* ShareViewController.swift */,
+			);
+			path = SarosHarmonicJournalShare;
 			sourceTree = "<group>";
 		};
 		CBCFDD27257B252E345A21CB /* Frameworks */ = {
@@ -397,23 +397,6 @@
 			productReference = A20000000000000000000010 /* SarosHarmonicJournalWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		B30000000000000000000009 /* SarosHarmonicJournalShare */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */;
-			buildPhases = (
-				B3000000000000000000000A /* Sources */,
-				B3000000000000000000000B /* Frameworks */,
-				B3000000000000000000000C /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = SarosHarmonicJournalShare;
-			productName = SarosHarmonicJournalShare;
-			productReference = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		B1D227DBDE348C208CD4A1E5 /* SarosHarmonicJournalTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 290D409985D0D458E2ED2DE6 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalTests" */;
@@ -432,6 +415,23 @@
 			productReference = 6E74732CDAEDECE4CC6A34B5 /* SarosHarmonicJournalTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		B30000000000000000000009 /* SarosHarmonicJournalShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */;
+			buildPhases = (
+				B3000000000000000000000A /* Sources */,
+				B3000000000000000000000B /* Frameworks */,
+				B3000000000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SarosHarmonicJournalShare;
+			productName = SarosHarmonicJournalShare;
+			productReference = B30000000000000000000006 /* SarosHarmonicJournalShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -443,22 +443,22 @@
 				TargetAttributes = {
 					4589DE551739F91922B242AB = {
 						CreatedOnToolsVersion = 26.5;
-						DevelopmentTeam = 3477AQKK6R;
+						DevelopmentTeam = G23G724G3D;
 						ProvisioningStyle = Automatic;
 					};
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
-						DevelopmentTeam = 3477AQKK6R;
-						ProvisioningStyle = Automatic;
-					};
-					B30000000000000000000009 = {
-						CreatedOnToolsVersion = 26.5;
-						DevelopmentTeam = 3477AQKK6R;
+						DevelopmentTeam = G23G724G3D;
 						ProvisioningStyle = Automatic;
 					};
 					B1D227DBDE348C208CD4A1E5 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = 4589DE551739F91922B242AB;
+					};
+					B30000000000000000000009 = {
+						CreatedOnToolsVersion = 26.5;
+						DevelopmentTeam = G23G724G3D;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -636,9 +636,10 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournal/Resources/SarosHarmonicJournal.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -648,8 +649,9 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -666,7 +668,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -749,7 +751,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.exeligmos.sarosjournal.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -770,7 +772,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournal/Resources/Info.plist;
@@ -779,7 +781,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
@@ -854,7 +856,7 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalWidgets/SarosHarmonicJournalWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -862,7 +864,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -880,14 +882,14 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalWidgets/SarosHarmonicJournalWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournalWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -906,7 +908,7 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalShare/SarosHarmonicJournalShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -914,7 +916,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -932,14 +934,14 @@
 				CODE_SIGN_ENTITLEMENTS = SarosHarmonicJournalShare/SarosHarmonicJournalShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3477AQKK6R;
+				DEVELOPMENT_TEAM = G23G724G3D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SarosHarmonicJournalShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.exeligmos.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fractonica.app.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -971,20 +973,20 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B30000000000000000000010 /* Release */,
-				B3000000000000000000000F /* Debug */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		AC23209F804AD3420BA96C3F /* Build configuration list for PBXProject "SarosHarmonicJournal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4F7FADA4DF97B10868DC8A89 /* Debug */,
 				9F17529B632EBF8DA5769910 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B30000000000000000000011 /* Build configuration list for PBXNativeTarget "SarosHarmonicJournalShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B30000000000000000000010 /* Release */,
+				B3000000000000000000000F /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
