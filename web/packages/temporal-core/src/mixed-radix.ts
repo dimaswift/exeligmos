@@ -26,6 +26,7 @@ export const MEAN_TROPICAL_YEAR_SECONDS = 365.2422 * 86_400;
 
 export interface MixedRadixState {
   readonly binIndex: number;
+  readonly binCount: number;
   readonly sarosSequence: number;
   readonly seriesPhaseIndex: number;
   readonly serialBinIndex: number;
@@ -34,10 +35,12 @@ export interface MixedRadixState {
   readonly address: string;
   readonly base7Offset: number;
   readonly base11Offset: number;
-  readonly residueCycle: 0 | 1;
+  readonly residueCycle: number;
 }
 
 export interface MixedRadixClockInput {
+  /** Defaults to the canonical 9,360-bin Saros partition. */
+  readonly binCount?: number;
   readonly previousEpochSeconds: number;
   readonly nextEpochSeconds: number;
   readonly instantEpochSeconds: number;
@@ -71,29 +74,36 @@ export interface MixedRadixRepdigitMetadata {
 }
 
 /** Build one mixed-radix state from an eclipse sequence and a bin inside that Saros. */
-export function mixedRadixState(rawBinIndex: number, rawSarosSequence: number): MixedRadixState {
+export function mixedRadixState(
+  rawBinIndex: number,
+  rawSarosSequence: number,
+  rawBinCount: number = MIXED_RADIX_SAROS_BIN_COUNT,
+): MixedRadixState {
   assertSafeInteger(rawBinIndex, "Mixed-radix bin index");
   assertSafeInteger(rawSarosSequence, "Saros sequence");
   if (rawSarosSequence < 1) {
     throw new RangeError("Saros sequence must start at 1.");
   }
 
-  const binIndex = modulo(rawBinIndex, MIXED_RADIX_SAROS_BIN_COUNT);
+  const binCount = normalizeBinCount(rawBinCount);
+  const binIndex = modulo(rawBinIndex, binCount);
   const seriesPhaseIndex = modulo(rawSarosSequence - 1, MIXED_RADIX_SERIES_PHASE_COUNT);
-  const serialBinIndex = seriesPhaseIndex * MIXED_RADIX_SAROS_BIN_COUNT + binIndex;
+  const seriesBoundaryIndex = seriesPhaseIndex * binCount;
+  const serialBinIndex = seriesBoundaryIndex + binIndex;
   const digits = mixedRadixSignificanceLayers(serialBinIndex, 1)[0] ?? Object.freeze([]);
 
   return Object.freeze({
     binIndex,
+    binCount,
     sarosSequence: rawSarosSequence,
     seriesPhaseIndex,
     serialBinIndex,
     digits,
     radices: MIXED_RADIX_BASES,
     address: formatMixedRadixAddress(digits, MIXED_RADIX_BASES),
-    base7Offset: seriesPhaseIndex % 7,
-    base11Offset: modulo(-seriesPhaseIndex, 11),
-    residueCycle: Math.floor(serialBinIndex / MIXED_RADIX_RESIDUE_PERIOD) as 0 | 1,
+    base7Offset: seriesBoundaryIndex % 7,
+    base11Offset: seriesBoundaryIndex % 11,
+    residueCycle: Math.floor(serialBinIndex / MIXED_RADIX_RESIDUE_PERIOD),
   });
 }
 
@@ -137,8 +147,9 @@ export function mixedRadixBinForDigits(
   rawDigits: readonly number[],
   rawSarosSequence: number,
   rawBases: readonly number[] = MIXED_RADIX_BASES,
+  rawBinCount: number = MIXED_RADIX_SAROS_BIN_COUNT,
 ): number | null {
-  return mixedRadixBinsForDigits(rawDigits, rawSarosSequence, rawBases)[0] ?? null;
+  return mixedRadixBinsForDigits(rawDigits, rawSarosSequence, rawBases, rawBinCount)[0] ?? null;
 }
 
 /** Resolve every matching bin, exposing collisions for experimental basis sets. */
@@ -146,12 +157,14 @@ export function mixedRadixBinsForDigits(
   rawDigits: readonly number[],
   rawSarosSequence: number,
   rawBases: readonly number[] = MIXED_RADIX_BASES,
+  rawBinCount: number = MIXED_RADIX_SAROS_BIN_COUNT,
 ): readonly number[] {
   assertSafeInteger(rawSarosSequence, "Saros sequence");
   if (rawSarosSequence < 1) {
     throw new RangeError("Saros sequence must start at 1.");
   }
   const bases = normalizeProjectionBases(rawBases);
+  const binCount = normalizeBinCount(rawBinCount);
   if (rawDigits.length !== bases.length) {
     throw new RangeError(`Mixed-radix address must contain ${bases.length} digits.`);
   }
@@ -164,8 +177,8 @@ export function mixedRadixBinsForDigits(
 
   const matches: number[] = [];
   const seriesPhaseIndex = modulo(rawSarosSequence - 1, MIXED_RADIX_SERIES_PHASE_COUNT);
-  for (let binIndex = 0; binIndex < MIXED_RADIX_SAROS_BIN_COUNT; binIndex += 1) {
-    const serialBinIndex = seriesPhaseIndex * MIXED_RADIX_SAROS_BIN_COUNT + binIndex;
+  for (let binIndex = 0; binIndex < binCount; binIndex += 1) {
+    const serialBinIndex = seriesPhaseIndex * binCount + binIndex;
     if (bases.every((base, index) => serialBinIndex % base === rawDigits[index])) {
       matches.push(binIndex);
     }
@@ -233,23 +246,23 @@ export function mixedRadixClockReading(input: MixedRadixClockInput): MixedRadixC
   }
 
   const duration = input.nextEpochSeconds - input.previousEpochSeconds;
+  const binCount = normalizeBinCount(input.binCount ?? MIXED_RADIX_SAROS_BIN_COUNT);
   const rawPhase = (input.instantEpochSeconds - input.previousEpochSeconds) / duration;
   const phase = Math.max(0, Math.min(rawPhase, 1));
-  const scaledBin = phase * MIXED_RADIX_SAROS_BIN_COUNT;
-  const binIndex = Math.min(Math.floor(scaledBin), MIXED_RADIX_SAROS_BIN_COUNT - 1);
+  const scaledBin = phase * binCount;
+  const binIndex = Math.min(Math.floor(scaledBin), binCount - 1);
   const progressWithinBin = phase >= 1 ? 1 : scaledBin - binIndex;
-  const nextBinIndex = Math.min(binIndex + 1, MIXED_RADIX_SAROS_BIN_COUNT);
-  const nextFlipEpochSeconds =
-    input.previousEpochSeconds + (nextBinIndex / MIXED_RADIX_SAROS_BIN_COUNT) * duration;
+  const nextBinIndex = Math.min(binIndex + 1, binCount);
+  const nextFlipEpochSeconds = input.previousEpochSeconds + (nextBinIndex / binCount) * duration;
 
   return Object.freeze({
-    ...mixedRadixState(binIndex, input.sarosSequence),
+    ...mixedRadixState(binIndex, input.sarosSequence, binCount),
     previousEpochSeconds: input.previousEpochSeconds,
     nextEpochSeconds: input.nextEpochSeconds,
     instantEpochSeconds: input.instantEpochSeconds,
     phase,
     progressWithinBin,
-    binDurationSeconds: duration / MIXED_RADIX_SAROS_BIN_COUNT,
+    binDurationSeconds: duration / binCount,
     nextFlipEpochSeconds,
     timeUntilNextFlip: nextFlipEpochSeconds - input.instantEpochSeconds,
   });
@@ -282,6 +295,17 @@ function normalizeProjectionBases(rawBases: readonly number[]): readonly number[
   return Object.freeze(bases);
 }
 
+function normalizeBinCount(rawBinCount: number): number {
+  assertSafeInteger(rawBinCount, "Mixed-radix bin count");
+  if (rawBinCount < 1) {
+    throw new RangeError("Mixed-radix bin count must be at least 1.");
+  }
+  if (rawBinCount > Math.floor(Number.MAX_SAFE_INTEGER / MIXED_RADIX_SERIES_PHASE_COUNT)) {
+    throw new RangeError("Mixed-radix bin count is too large to address safely.");
+  }
+  return rawBinCount;
+}
+
 function repdigitRarityForFrequencies(rawFrequencies: readonly number[]): MixedRadixRepdigitRarity {
   const frequencies = [...rawFrequencies].sort((left, right) => right - left);
   const largest = frequencies[0] ?? 0;
@@ -289,8 +313,8 @@ function repdigitRarityForFrequencies(rawFrequencies: readonly number[]): MixedR
   const pairCount = frequencies.filter((count) => count === 2).length;
   if (largest >= 6 || tripleCount >= 2) return "mythic";
   if (largest >= 5 || (tripleCount >= 1 && pairCount >= 1)) return "legendary";
-  if (largest >= 4 || pairCount >= 2) return "epic";
-  if (largest >= 3) return "rare";
+  if (largest >= 3) return "epic";
+  if (pairCount >= 2) return "rare";
   return "common";
 }
 

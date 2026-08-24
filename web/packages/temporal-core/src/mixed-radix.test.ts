@@ -47,6 +47,29 @@ describe("mixed-radix Saros carrier", () => {
     expect(reading.digits).toEqual([0, 3, 4, 6, 2, 12]);
   });
 
+  it("supports an experimental bin count without changing the canonical default", () => {
+    const state = mixedRadixState(99, 2, 100);
+    expect(state).toMatchObject({
+      binCount: 100,
+      binIndex: 99,
+      serialBinIndex: 199,
+      base7Offset: 2,
+      base11Offset: 1,
+    });
+    const reading = mixedRadixClockReading({
+      binCount: 120,
+      previousEpochSeconds: 0,
+      nextEpochSeconds: 1_200,
+      instantEpochSeconds: 125,
+      sarosSequence: 1,
+    });
+    expect(reading.binIndex).toBe(12);
+    expect(reading.progressWithinBin).toBeCloseTo(0.5);
+    expect(reading.binDurationSeconds).toBe(10);
+    expect(reading.nextFlipEpochSeconds).toBe(130);
+    expect(() => mixedRadixState(0, 1, 0)).toThrow("at least 1");
+  });
+
   it("exposes higher-significance sets independently for every radix", () => {
     expect(mixedRadixSignificanceLayers(9_372, 2)).toEqual([
       [0, 3, 4, 6, 2, 12],
@@ -69,6 +92,7 @@ describe("mixed-radix Saros carrier", () => {
   it("returns every collision for a caller-selected projection basis", () => {
     expect(mixedRadixBinsForDigits([1, 1], 1, [2, 4]).slice(0, 4)).toEqual([1, 5, 9, 13]);
     expect(mixedRadixBinForDigits([1, 1], 1, [2, 4])).toBe(1);
+    expect(mixedRadixBinsForDigits([1, 1], 1, [2, 4], 10)).toEqual([1, 5, 9]);
   });
 
   it("classifies repetition among the six visible digits", () => {
@@ -82,13 +106,13 @@ describe("mixed-radix Saros carrier", () => {
       rarity: "legendary",
     });
     expect(mixedRadixRepdigitMetadata([5, 5, 5, 5, 5, 2]).rarity).toBe("legendary");
-    expect(mixedRadixRepdigitMetadata([1, 1, 4, 2, 2, 5]).rarity).toBe("epic");
+    expect(mixedRadixRepdigitMetadata([1, 1, 4, 2, 2, 5]).rarity).toBe("rare");
     expect(mixedRadixRepdigitMetadata([5, 5, 5, 5, 2, 1]).rarity).toBe("epic");
     expect(mixedRadixRepdigitMetadata([6, 6, 3, 3, 4, 0])).toMatchObject({
       pattern: "2+2+2",
-      rarity: "epic",
+      rarity: "rare",
     });
-    expect(mixedRadixRepdigitMetadata([1, 1, 1, 2, 3, 4]).rarity).toBe("rare");
+    expect(mixedRadixRepdigitMetadata([1, 1, 1, 2, 3, 4]).rarity).toBe("epic");
     expect(mixedRadixRepdigitMetadata([1, 1, 2, 3, 4, 5]).rarity).toBe("common");
     expect(mixedRadixRepdigitMetadata([0, 1, 2, 3, 4, 5])).toMatchObject({
       pattern: "2",
@@ -101,7 +125,7 @@ describe("mixed-radix Saros carrier", () => {
   it("counts every zero group as one larger without lowering an existing rarity", () => {
     expect(mixedRadixRepdigitMetadata([0, 0, 1, 2, 3, 4])).toMatchObject({
       pattern: "3",
-      rarity: "rare",
+      rarity: "epic",
     });
     expect(mixedRadixRepdigitMetadata([0, 0, 0, 1, 2, 3]).rarity).toBe("epic");
     expect(mixedRadixRepdigitMetadata([0, 0, 0, 0, 1, 2]).rarity).toBe("legendary");
